@@ -1,0 +1,45 @@
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+hpc_python_automation/.venv/
+
+# Node modules & build outputs
+node_modules/
+frontend/node_modules/
+frontend/dist/
+dist/
+
+# Python cache & artifacts
+__pycache__/
+*/__pycache__/
+*/*/__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+*.egg-info/
+*.sqlite3
+*.db
+backend/hhpc.db
+
+# IDE and OS
+.idea/
+.vscode/
+.git_bak/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Logs and temp
+*.log
+streamlit_live.log
+scratch/
+audit_evidence/
+reports/
+data/*.xlsx
+
+# Environment secrets
+.env
+backend/.env

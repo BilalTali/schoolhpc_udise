@@ -1,0 +1,160 @@
+"""
+Authentication Router: School Registration (One School = One UDISE) & Login
+"""
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
+from backend.database import get_db
+from backend.models.entities import School, Teacher
+from backend.schemas.schemas import (
+    SchoolRegisterRequest, SchoolResponse, LoginRequest, TokenResponse
+)
+from backend.services.auth_service import (
+    hash_password, verify_password, create_access_token, get_current_user
+)
+
+router = APIRouter(prefix="/auth", tags=["Authentication"])
+
+
+@router.post("/school/register", response_model=SchoolResponse, status_code=status.HTTP_201_CREATED)
+def register_school(payload: SchoolRegisterRequest, db: Session = Depends(get_db)):
+    """
+    Registers a new School.
+    STRICT RULE: One School = One Registration.
+    UDISE code must be unique across the entire system.
+    """
+    # 1. Enforce strict UDISE code uniqueness
+    existing_udise = db.query(School).filter(School.udise_code == payload.udise_code).first()
+    if existing_udise:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"A school with UDISE Code '{payload.udise_code}' is already registered (School: {existing_udise.school_name}). Each school can register only once."
+        )
+
+    # 2. Enforce admin email uniqueness
+    existing_email = db.query(School).filter(School.admin_email == payload.admin_email).first()
+    if existing_email:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"An account with admin email '{payload.admin_email}' already exists."
+        )
+
+    # 3. Create School entity with hashed password
+    new_school = School(
+        udise_code=payload.udise_code,
+        school_name=payload.school_name.strip(),
+        state=payload.state.strip(),
+        district=payload.district.strip(),
+        block=payload.block.strip() if payload.block else None,
+        admin_name=payload.admin_name.strip(),
+        admin_email=payload.admin_email.strip().lower(),
+        admin_phone=payload.admin_phone.strip() if payload.admin_phone else None,
+        hashed_password=hash_password(payload.password),
+        is_active=True
+    )
+    db.add(new_school)
+    db.commit()
+    db.refresh(new_school)
+    return new_school
+
+
+@router.post("/login", response_model=TokenResponse)
+def login(payload: LoginRequest, db: Session = Depends(get_db)):
+    """
+    Unified Login endpoint.
+    Supports:
+      1. School Admin: using 11-digit UDISE code or Admin Email
+      2. Teacher: using Username
+    """
+    identifier = payload.identifier.strip()
+    clean_id_lower = identifier.lower()
+
+    # Case 1: Try School Admin match (by UDISE or Email)
+    school = db.query(School).filter(
+        (School.udise_code == identifier) | (School.admin_email == clean_id_lower)
+    ).first()
+
+    if school and verify_password(payload.password, school.hashed_password):
+        if not school.is_active:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="School account is disabled.")
+
+        token = create_access_token({
+            "sub": school.id,
+            "role": "SCHOOL_ADMIN",
+            "name": school.admin_name,
+            "udise": school.udise_code,
+            "school_id": school.id,
+            "school_name": school.school_name
+        })
+        return TokenResponse(
+            access_token=token,
+            role="SCHOOL_ADMIN",
+            user_id=school.id,
+            name=school.admin_name,
+            school_id=school.id,
+            school_name=school.school_name
+        )
+
+    # Case 2: Try Teacher match (by username)
+    teacher = db.query(Teacher).filter(
+        Teacher.username == clean_id_lower
+    ).first()
+
+    if teacher and verify_password(payload.password, teacher.hashed_password):
+        if not teacher.is_active:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Teacher account is disabled.")
+
+        school_obj = teacher.school
+        token = create_access_token({
+            "sub": teacher.id,
+            "role": "TEACHER",
+            "name": teacher.teacher_name,
+            "username": teacher.username,
+            "school_id": teacher.school_id,
+            "school_name": school_obj.school_name if school_obj else "School"
+        })
+        return TokenResponse(
+            access_token=token,
+            role="TEACHER",
+            user_id=teacher.id,
+            name=teacher.teacher_name,
+            school_id=teacher.school_id,
+            school_name=school_obj.school_name if school_obj else None,
+            assigned_stage=teacher.assigned_stage,
+            assigned_grade=teacher.assigned_grade,
+            assigned_section=teacher.assigned_section
+        )
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid credentials. Please verify your UDISE/Username and Password."
+    )
+
+
+@router.get("/me")
+def get_my_profile(current=Depends(get_current_user)):
+    """Inspects active authenticated session and claims."""
+    u = current["user"]
+    role = current["role"]
+    if role == "SCHOOL_ADMIN":
+        return {
+            "role": role,
+            "id": u.id,
+            "name": u.admin_name,
+            "email": u.admin_email,
+            "udise_code": u.udise_code,
+            "school_name": u.school_name,
+            "state": u.state,
+            "district": u.district
+        }
+    else:
+        return {
+            "role": role,
+            "id": u.id,
+            "name": u.teacher_name,
+            "username": u.username,
+            "assigned_stage": u.assigned_stage,
+            "assigned_grade": u.assigned_grade,
+            "assigned_section": u.assigned_section,
+            "school_id": u.school_id,
+            "school_name": u.school.school_name if u.school else ""
+        }

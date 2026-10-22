@@ -1,0 +1,28 @@
+# Virtual environment
+.venv/
+
+# Browser profile (keeps session cookies between runs)
+.browser_profile/
+
+# Audit evidence and reports (generated, large, potentially sensitive)
+audit_evidence/
+reports/
+
+# Input data (student workbooks; never commit)
+data/
+*.xlsx
+*.csv
+*.db
+
+# Secrets
+.env
+
+# Generated audit artefacts
+hpc_field_audit.json
+network_log.json
+
+# Python caches
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
