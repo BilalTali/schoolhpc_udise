@@ -22,7 +22,7 @@ from backend.schemas.schemas import (
     HpcCaptchaRequest, HpcCredentialsRequest, HpcOtpRequest, HpcSessionStatusResponse, HpcStartSessionRequest,
     UploadJobResponse, ValidationReportResponse,
 )
-from backend.services import audit, hpc_sessions, upload_jobs
+from backend.services import audit, card_store, hpc_sessions, upload_jobs
 from backend.services.auth_service import require_teacher
 
 router = APIRouter(prefix="/teacher", tags=["Teacher"])
@@ -116,7 +116,25 @@ def verify_captcha(payload: HpcCaptchaRequest, teacher: Teacher = Depends(requir
     result = hpc_sessions.verify_captcha(KIND, teacher.id, payload.answer)
     if not result.get("success") and result.get("status") != "captcha_required":
         raise HTTPException(status.HTTP_400_BAD_REQUEST, result.get("error", "HPC login failed."))
+    _warm_up(teacher, result)
     return result
+
+
+def _warm_up(teacher: Teacher, result) -> None:
+    """Once connected: the class's cards are read quietly in the background, so the screens open at once."""
+    if result.get("status") != "authenticated":
+        return
+    from backend.hpc.stages import get_stage
+    try:
+        client = _portal(teacher)
+    except HTTPException:
+        return
+    for name in teacher_stages(teacher):
+        path = _roster_file(teacher, name)
+        students = json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
+        cols = [p.col for p in get_stage(name).PARTS if p.code in ("A1", "A3", "A4", "B", "C")]
+        if students:
+            card_store.warm(client, f"teacher_{teacher.id}", client.ay, name, [s["student_id"] for s in students], cols)
 
 
 @router.post("/hpc/new-captcha")
@@ -132,6 +150,7 @@ def verify_otp(payload: HpcOtpRequest, teacher: Teacher = Depends(require_teache
     result = hpc_sessions.verify_otp(KIND, teacher.id, payload.otp)
     if not result.get("success"):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, result.get("error", "Invalid OTP."))
+    _warm_up(teacher, result)
     return result
 
 
@@ -153,8 +172,10 @@ def sync_roster(stage: Optional[str] = Query(None), teacher: Teacher = Depends(r
     """
     stage = _stage(teacher, stage)
     stages = teacher_stages(teacher) or [stage]
+    client = _portal(teacher)
+    keep = lambda name, data: card_store.put_many(f"teacher_{teacher.id}", client.ay, name, data)   # screens open at once
     try:
-        _, by_stage = sync.export_workbook(_portal(teacher), stages, _workbook_path(teacher))
+        _, by_stage = sync.export_workbook(client, stages, _workbook_path(teacher), on_students=keep)
     except PortalError as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc))
     for name, students in by_stage.items():

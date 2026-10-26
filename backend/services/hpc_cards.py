@@ -22,7 +22,7 @@ from backend.hpc.stages.common import Lookups
 from backend.services import card_store, hpc_sessions
 
 LIST_KINDS = ("multi", "flags")
-_LOOKUP_TTL = 30 * 60
+_LOOKUP_TTL = 12 * 60 * 60                 # PARAKH's dropdown lists rarely change
 _lookup_cache: Dict[Tuple[str, str], Tuple[float, Lookups]] = {}
 _lock = threading.Lock()
 

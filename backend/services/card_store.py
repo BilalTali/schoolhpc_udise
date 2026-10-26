@@ -118,6 +118,59 @@ def check_view(owner: str, session: str, stage: str) -> Optional[Dict[str, Any]]
                                          for k, v in job.items() if k != "cols"}
 
 
+def _background(client):
+    """The same PARAKH connection, marked so its reads give way to a screen that is loading."""
+    import copy
+    bg = copy.copy(client)
+    bg.background = True
+    return bg
+
+
+def put_many(owner: str, session: str, stage: str, students) -> None:
+    """Keeps every part of cards just read from PARAKH (e.g. by "Fetch from PARAKH"), so the screens open
+    without reading them again; they also count as just checked."""
+    now = _now()
+    with _lock:
+        for d in students:
+            path = _path(owner, session, stage, d.student_id)
+            stored = _load(path)
+            stored["parts"].update(d.raw_parts)
+            stored["read_at"].update({c: now for c in d.raw_parts})
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(stored, ensure_ascii=False), encoding="utf-8")
+            tmp.replace(path)
+            for c in d.raw_parts:
+                _checked_at[(owner, str(session), stage.lower(), c)] = time.time()
+
+
+_warming: set = set()
+
+
+def warm(client, owner: str, session: str, stage: str, student_ids: List[str], cols: Iterable[str]) -> bool:
+    """Reads, in the background and only when no screen is loading, the parts not kept yet - so the screens
+    open at once later. Returns False when a warm-up for this stage is already running."""
+    key = (owner, str(session), stage.lower())
+    cols = list(cols)
+    with _lock:
+        if key in _warming:
+            return False
+        _warming.add(key)
+
+    def run():
+        try:
+            bg = _background(client)
+            for sid in student_ids:
+                parts(bg, owner, session, stage, sid, cols)
+        except Exception:
+            pass                                   # a screen reads what is missing itself
+        finally:
+            with _lock:
+                _warming.discard(key)
+    threading.Thread(target=run, daemon=True, name=f"warm-{stage}").start()
+    return True
+
+
 def start_check(client, owner: str, session: str, stage: str, student_ids: List[str], cols: Iterable[str]) -> Optional[Dict[str, Any]]:
     """Starts re-reading these parts from PARAKH unless they were checked in the last CHECK_EVERY_SECONDS or a
     check is running. Returns the check as check_view shows it."""
@@ -136,7 +189,7 @@ def start_check(client, owner: str, session: str, stage: str, student_ids: List[
         job = {"id": f"{int(now * 1000)}", "status": "RUNNING", "done": 0, "total": len(student_ids),
                "changed": [], "cols": due, "error": None, "finished_at": None}
         _checks[key] = job
-    threading.Thread(target=_run_check, args=(job, client, owner, session, stage, list(student_ids), due),
+    threading.Thread(target=_run_check, args=(job, _background(client), owner, session, stage, list(student_ids), due),
                      daemon=True).start()
     return check_view(owner, session, stage)
 

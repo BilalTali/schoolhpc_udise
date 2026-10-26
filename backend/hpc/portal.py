@@ -193,7 +193,8 @@ class Portal:
         self._lock = threading.Lock()
         login = str((session.staff or {}).get("staff_id") or (session.staff or {}).get("user_id") or "") or f"conn-{id(self)}"
         with Portal._pacers_lock:
-            self._pacer = Portal._pacers.setdefault(login, [threading.Lock(), 0.0])
+            self._pacer = Portal._pacers.setdefault(login, [threading.Lock(), 0.0, 0.0])   # lock, next slot, last screen request
+        self.background = False                  # background reads wait while a screen is loading
         self.min_interval = 1.0 / max(PORTAL_MAX_PER_SECOND, 0.1)
         self.relogin: Optional[Callable[[], Session]] = None   # fallback when the refresh token is rejected too
         staff = session.staff
@@ -232,6 +233,11 @@ class Portal:
         """Keeps this PARAKH login to PORTAL_MAX_PER_SECOND requests a second, across all its threads and
         connections (a background check and a screen together still keep to it)."""
         lock = self._pacer[0]
+        if self.background:
+            while time.monotonic() - self._pacer[2] < 2.0:      # a screen asked recently: let it go first
+                time.sleep(0.25)
+        else:
+            self._pacer[2] = time.monotonic()
         with lock:
             now = time.monotonic()
             wait = self._pacer[1] - now

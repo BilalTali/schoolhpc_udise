@@ -189,10 +189,11 @@ def roster(portal: Portal, stage: str, lookups: Lookups) -> List[Dict[str, Any]]
     return out
 
 
-def export_workbook(portal: Portal, stages: List[str], path):
+def export_workbook(portal: Portal, stages: List[str], path,
+                    on_students: Callable[[str, List["StudentData"]], None] = lambda stage, data: None):
     """
     Fetches every student's current HPC data for the given stages and writes one workbook.
-    Returns (path, {stage: students}).
+    Returns (path, {stage: students}). on_students gets each stage's cards (to keep them).
     """
     from backend.hpc import workbook
     sections, by_stage = [], {}
@@ -200,6 +201,7 @@ def export_workbook(portal: Portal, stages: List[str], path):
         lookups = Lookups(portal, stage_code(stage))
         students = roster(portal, stage, lookups)
         data = fetch_students(portal, stage, [s["student_id"] for s in students])
+        on_students(stage, data)
         for s, d in zip(students, data):
             add_details(s, d.record)
         rows = {d.student_id: to_row(stage, d, lookups) for d in data}

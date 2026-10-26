@@ -76,3 +76,58 @@ def test_request_pacing_is_shared_by_every_connection_of_one_login():
     b = portal.Portal(portal.Session(access_token="y", staff={"staff_id": 41}))
     c = portal.Portal(portal.Session(access_token="z", staff={"staff_id": 42}))
     assert a._pacer is b._pacer and a._pacer is not c._pacer
+
+
+def test_a_background_read_waits_while_a_screen_is_loading(monkeypatch):
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(portal.time, "monotonic", lambda: clock["t"])
+    monkeypatch.setattr(portal.time, "sleep", lambda s: clock.__setitem__("t", clock["t"] + s))
+    screen = portal.Portal(portal.Session(access_token="x", staff={"staff_id": 77}))
+    screen._pace()                                     # a screen just asked
+    asked = clock["t"]
+    bg = card_store._background(screen)
+    assert bg.background and not screen.background and bg._pacer is screen._pacer
+    bg._pace()
+    assert clock["t"] - asked >= 2.0                    # waited until the screen had been quiet for 2 s
+
+
+def test_fetch_from_parakh_fills_the_copy_so_screens_read_nothing_more(monkeypatch):
+    from types import SimpleNamespace
+    monkeypatch.setattr(card_store, "start_check", real_start_check)
+    fetched = [SimpleNamespace(student_id=sid, raw_parts={"part_b": f"b-{sid}", "part_c": f"c-{sid}"}) for sid in ("1", "2")]
+    card_store.put_many("teacher_f", "2627", "Preparatory", fetched)
+    fake = FakeCards()
+    raw, read_at = card_store.class_parts(fake, "teacher_f", "2627", "Preparatory", ["1", "2"], ["part_b", "part_c"])
+    assert raw["2"] == {"part_b": "b-2", "part_c": "c-2"} and read_at and fake.reads == []
+    assert card_store.start_check(fake, "teacher_f", "2627", "Preparatory", ["1", "2"], ["part_c"]) is None   # just read: no check
+
+
+def test_warm_up_reads_only_what_is_missing():
+    from types import SimpleNamespace
+    card_store.put_many("teacher_w", "2627", "Middle", [SimpleNamespace(student_id="1", raw_parts={"part_b": "kept"})])
+    fake = FakeCards()
+    assert card_store.warm(fake, "teacher_w", "2627", "Middle", ["1", "2"], ["part_b", "part_c"])
+    for _ in range(200):
+        if ("teacher_w", "2627", "middle") not in card_store._warming:
+            break
+        time.sleep(0.01)
+    assert sorted(fake.reads) == [("1", "part_c"), ("2", "part_b"), ("2", "part_c")]
+    assert card_store.parts(fake, "teacher_w", "2627", "Middle", "1", ["part_b"])["part_b"] == "kept"
+
+
+def test_the_fetch_route_keeps_the_cards_it_reads(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    from backend.routers import teachers as t
+    monkeypatch.setattr(t, "_portal", lambda teacher: SimpleNamespace(ay="2627"))
+    monkeypatch.setattr(t, "_stage", lambda teacher, stage: "Preparatory")
+    monkeypatch.setattr(t, "teacher_stages", lambda teacher: ["Preparatory"])
+    monkeypatch.setattr(t, "_workbook_path", lambda teacher: tmp_path / "w.xlsx")
+    monkeypatch.setattr(t, "_roster_file", lambda teacher, name: tmp_path / f"r_{name}.json")
+
+    def export(client, stages, path, on_students):
+        on_students("Preparatory", [SimpleNamespace(student_id="9", raw_parts={"part_c": "c9"})])
+        return path, {"Preparatory": [{"student_id": "9"}]}
+    monkeypatch.setattr(t.sync, "export_workbook", export)
+    t.sync_roster(stage="Preparatory", teacher=SimpleNamespace(id="T1"))
+    fake = FakeCards()
+    assert card_store.parts(fake, "teacher_T1", "2627", "Preparatory", "9", ["part_c"]) == {"part_c": "c9"} and fake.reads == []
