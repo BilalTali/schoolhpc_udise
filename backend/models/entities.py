@@ -1,14 +1,14 @@
 """
-SQLAlchemy Entity Models for Multi-Tenant School & Teacher System
-Both School Admins and Teachers maintain their own isolated HPC PARAKH sessions.
+Database tables: schools, their teachers, and upload jobs with one row per student.
 """
 import uuid
 from datetime import datetime
-from sqlalchemy import (
-    Column, String, Boolean, Integer, DateTime, ForeignKey, Text
-)
+
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import relationship
+
 from backend.database import Base
+from backend.services import secrets_box
 
 
 def generate_uuid() -> str:
@@ -19,8 +19,7 @@ class School(Base):
     __tablename__ = "schools"
 
     id = Column(String(36), primary_key=True, default=generate_uuid)
-    # Strictly unique official 11-digit UDISE+ code (One School = One Registration)
-    udise_code = Column(String(11), unique=True, nullable=False, index=True)
+    udise_code = Column(String(11), unique=True, nullable=False, index=True)   # one registration per school
     school_name = Column(String(255), nullable=False)
     state = Column(String(100), nullable=False)
     district = Column(String(100), nullable=False)
@@ -29,33 +28,22 @@ class School(Base):
     admin_email = Column(String(191), unique=True, nullable=False, index=True)
     admin_phone = Column(String(20), nullable=True)
     hashed_password = Column(String(255), nullable=False)
-    # School's own HPC PARAKH credentials (stored by school admin on their dashboard)
-    hpc_login_id = Column(String(100), nullable=True)           # Official HPC login ID for school
-    hpc_password_encrypted = Column(String(255), nullable=True) # Plain-text stored (will encrypt later)
+    # The school's own HPC portal login, used server-side only; the password is encrypted at rest
+    hpc_login_id = Column(String(100), nullable=True)
+    hpc_password_encrypted = Column(String(255), nullable=True)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    # Relationships
     teachers = relationship("Teacher", back_populates="school", cascade="all, delete-orphan")
-    hpc_session = relationship("SchoolHpcSession", back_populates="school", uselist=False, cascade="all, delete-orphan")
 
+    @property
+    def hpc_password(self):
+        return secrets_box.decrypt(self.hpc_password_encrypted)
 
-class SchoolHpcSession(Base):
-    """Stores the isolated HPC PARAKH session for a School Admin."""
-    __tablename__ = "school_hpc_sessions"
-
-    id = Column(String(36), primary_key=True, default=generate_uuid)
-    school_id = Column(String(36), ForeignKey("schools.id", ondelete="CASCADE"), unique=True, nullable=False)
-    hpc_user_name = Column(String(150), nullable=True)       # Name returned by PARAKH after login
-    hpc_school_name = Column(String(255), nullable=True)     # School name from PARAKH
-    hpc_role = Column(String(50), default="SCHOOL")
-    is_active = Column(Boolean, default=False)
-    session_storage_path = Column(String(512), nullable=False)  # Path to storage_state.json
-    last_authenticated_at = Column(DateTime, nullable=True)
-
-    # Relationships
-    school = relationship("School", back_populates="hpc_session")
+    @hpc_password.setter
+    def hpc_password(self, value):
+        self.hpc_password_encrypted = secrets_box.encrypt(value)
 
 
 class Teacher(Base):
@@ -65,81 +53,102 @@ class Teacher(Base):
     school_id = Column(String(36), ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True)
     teacher_name = Column(String(150), nullable=False)
     employee_code = Column(String(50), nullable=True)
-    username = Column(String(100), unique=True, nullable=False, index=True)  # Teacher login username
+    username = Column(String(100), unique=True, nullable=False, index=True)
     mobile_number = Column(String(20), nullable=True)
     hashed_password = Column(String(255), nullable=False)
-    assigned_stage = Column(String(30), default="Preparatory", nullable=False)  # Preparatory or Middle
-    assigned_grade = Column(String(20), default="Grade 3", nullable=False)      # e.g. Grade 3, Grade 6
-    assigned_section = Column(String(10), default="A", nullable=False)          # e.g. A, B
-    # Teacher's own HPC PARAKH credentials (set by teacher on their own dashboard)
-    hpc_login_id = Column(String(100), nullable=True)            # Official HPC login ID for teacher
-    hpc_password_encrypted = Column(String(255), nullable=True)  # Stored HPC password
+    plain_password = Column(String(255), nullable=True)      # legacy: no longer written; old values kept encrypted
+    assigned_stage = Column(String(150), default="Preparatory", nullable=False)   # e.g. "Preparatory, Middle"
+    assigned_grade = Column(String(150), default="Grade 3", nullable=False)
+    assigned_section = Column(String(50), default="A", nullable=False)
+    # The teacher's own HPC portal login, used server-side only; the password is encrypted at rest
+    hpc_login_id = Column(String(100), nullable=True)
+    hpc_password_encrypted = Column(String(255), nullable=True)
     is_active = Column(Boolean, default=True)
     last_login = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    # Relationships
     school = relationship("School", back_populates="teachers")
-    hpc_session = relationship("TeacherHpcSession", back_populates="teacher", uselist=False, cascade="all, delete-orphan")
     jobs = relationship("UploadJob", back_populates="teacher", cascade="all, delete-orphan")
 
+    @property
+    def hpc_password(self):
+        return secrets_box.decrypt(self.hpc_password_encrypted)
 
-class TeacherHpcSession(Base):
-    """Stores the isolated HPC PARAKH session for a Teacher (one per teacher)."""
-    __tablename__ = "teacher_hpc_sessions"
+    @hpc_password.setter
+    def hpc_password(self, value):
+        self.hpc_password_encrypted = secrets_box.encrypt(value)
 
-    id = Column(String(36), primary_key=True, default=generate_uuid)
-    teacher_id = Column(String(36), ForeignKey("teachers.id", ondelete="CASCADE"), unique=True, nullable=False)
-    hpc_user_name = Column(String(150), nullable=True)       # Name returned by PARAKH after login
-    hpc_school_name = Column(String(255), nullable=True)     # School name from PARAKH
-    hpc_role = Column(String(50), default="TEACHER")
-    is_active = Column(Boolean, default=False)
-    session_storage_path = Column(String(512), nullable=False)  # Path to storage_state.json
-    last_authenticated_at = Column(DateTime, nullable=True)
-
-    # Relationships
-    teacher = relationship("Teacher", back_populates="hpc_session")
+    @property
+    def stages(self):
+        return [s.strip() for s in (self.assigned_stage or "").split(",") if s.strip()] or ["Preparatory"]
 
 
-# ---------------------------------------------------------------------------
-# Legacy alias (kept for backward compatibility during migration)
-# ---------------------------------------------------------------------------
-TeacherParakhSession = TeacherHpcSession
+class RefreshToken(Base):
+    """A signed-in browser session; revoked on logout, rotation or suspected reuse."""
+    __tablename__ = "refresh_tokens"
+
+    id = Column(String(36), primary_key=True)            # the token's jti
+    user_id = Column(String(36), nullable=False, index=True)
+    role = Column(String(20), nullable=False)
+    remember = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    expires_at = Column(DateTime, nullable=False)
+    revoked_at = Column(DateTime, nullable=True)
 
 
 class UploadJob(Base):
+    """One uploaded workbook being synced to the portal."""
     __tablename__ = "upload_jobs"
 
     id = Column(String(36), primary_key=True, default=generate_uuid)
     teacher_id = Column(String(36), ForeignKey("teachers.id", ondelete="CASCADE"), nullable=False, index=True)
     original_filename = Column(String(255), nullable=False)
+    file_hash = Column(String(64), nullable=True)
     detected_stage = Column(String(30), nullable=False)
-    status = Column(String(30), default="PENDING")  # PENDING, IN_PROGRESS, COMPLETED, FAILED
+    status = Column(String(30), default="PENDING")   # PENDING, IN_PROGRESS, COMPLETED, PARTIAL_SUCCESS, FAILED
     total_students = Column(Integer, default=0)
     success_count = Column(Integer, default=0)
     failed_count = Column(Integer, default=0)
+    unverified_count = Column(Integer, default=0)     # kept for the web app; always 0 now
+    reconciliation_count = Column(Integer, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
     completed_at = Column(DateTime, nullable=True)
 
-    # Relationships
     teacher = relationship("Teacher", back_populates="jobs")
     records = relationship("StudentRecord", back_populates="job", cascade="all, delete-orphan")
 
 
 class StudentRecord(Base):
+    """The outcome for one student in an upload job."""
     __tablename__ = "student_records"
 
     id = Column(String(36), primary_key=True, default=generate_uuid)
     job_id = Column(String(36), ForeignKey("upload_jobs.id", ondelete="CASCADE"), nullable=False, index=True)
-    admission_number = Column(String(50), nullable=False)
+    row_number = Column(Integer, nullable=True)
+    admission_number = Column(String(50), nullable=False)    # holds the portal student id
     student_name = Column(String(150), nullable=False)
+    student_key = Column(String(100), nullable=True, index=True)
     grade = Column(String(20), nullable=True)
     section = Column(String(10), nullable=True)
-    status = Column(String(30), default="PENDING")  # PENDING, IN_PROGRESS, SUCCESS, FAILED
+    status = Column(String(30), default="PENDING")   # PENDING, IN_PROGRESS, SUCCESS, FAILED, INVALID, SKIPPED
+    attempt_count = Column(Integer, default=0)
+    verification_result = Column(String(255), nullable=True)
     error_message = Column(Text, nullable=True)
     screenshot_evidence = Column(String(255), nullable=True)
     completed_at = Column(DateTime, nullable=True)
 
-    # Relationships
     job = relationship("UploadJob", back_populates="records")
+
+
+def encrypt_stored_passwords(db) -> int:
+    """One-time migration: encrypts passwords that older versions stored as plain text."""
+    changed = 0
+    for row in [*db.query(School).all(), *db.query(Teacher).all()]:
+        for column in ("hpc_password_encrypted", "plain_password"):
+            value = getattr(row, column, None)
+            if value and not secrets_box.is_encrypted(value):
+                setattr(row, column, secrets_box.encrypt(value))
+                changed += 1
+    db.commit()
+    return changed

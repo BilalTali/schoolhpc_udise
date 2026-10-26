@@ -1,13 +1,5 @@
 from backend.schemas.schemas import (
-    SchoolRegisterRequest, SchoolResponse,
-    TeacherCreateRequest, TeacherResponse,
-    LoginRequest, TokenResponse,
-    ValidationReportResponse, UploadJobResponse
+    HpcCredentialsRequest, HpcOtpRequest, HpcSessionStatusResponse, HpcStartSessionRequest,
+    LoginRequest, SchoolRegisterRequest, SchoolResponse, TeacherCreateRequest, TeacherResponse,
+    TeacherUpdateRequest, TokenResponse, UploadJobResponse, ValidationReportResponse,
 )
-
-__all__ = [
-    "SchoolRegisterRequest", "SchoolResponse",
-    "TeacherCreateRequest", "TeacherResponse",
-    "LoginRequest", "TokenResponse",
-    "ValidationReportResponse", "UploadJobResponse"
-]

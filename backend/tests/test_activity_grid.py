@@ -1,0 +1,210 @@
+"""Part B from the Activities grid: grouping, keeping what PARAKH has, and the checks before a save."""
+import copy
+import json
+
+from backend.hpc import sync
+from backend.hpc.stages import activity_grid as grid
+from backend.hpc.stages import get_stage
+from backend.hpc.stages.activity import bank_dt
+from backend.tests.conftest import BANK_CONTENT, blank_student, filled_row, make_lookups
+
+PREP = get_stage("PREPARATORY")
+SUBJ = PREP.DOMAINS                                     # PSLS1 .. PSLS7
+
+
+def grid_row(**per_subject):
+    """filled_row with the grid replaced: per_subject[code] = (key, aw, sen, cre); others default."""
+    row = {k: v for k, v in filled_row("PREPARATORY").items() if not k.startswith(("b_act_", "b_lvl_"))}
+    for s in SUBJ:
+        key, *levels = per_subject.get(s, ("P85", "Proficient", "Proficient", "Proficient"))
+        row[grid.act_key(s)] = key
+        for (ability, _), level in zip(grid.ABILITIES, levels):
+            row[grid.level_key(s, ability)] = level
+    return row
+
+
+def portal_activity(bank, domains, levels=("proficient", "proficient", "proficient"), n=1, sa=None, nm=None):
+    dt = bank_dt(PREP.blank_activity, BANK_CONTENT, bank, True, lambda c: {}, list(levels))
+    dt.update({"domain": list(domains), "sa": sa or [1] * 8, "tfob": "kept notes"})
+    return {"nm": nm or f"Bank {bank}", "id": f"1001_{bank}_{n}", "is_complete": True, "is_modified": False, "dt": dt}
+
+
+def student_with(*activities):
+    data = blank_student("PREPARATORY")
+    data.raw_parts["part_b"] = list(activities)
+    return data
+
+
+def lookups_with(*bank_ids):
+    lk = make_lookups("PREPARATORY")
+    base = lk.activities[85]
+    for b in bank_ids:
+        lk.activities[b] = {**copy.deepcopy(base), "id": b, "activity_caption": f"Bank {b}"}
+    return lk
+
+
+def part_b(stage, data, row, lk, resolve=None):
+    payloads, errors = sync.build_payloads(stage, data, row, lk, resolve)
+    b = next(p for p in payloads if p["hpc_col"] == "part_b")
+    return b, [e for e in errors if e.startswith("Part B")]
+
+
+def test_one_activity_with_the_same_levels_is_sent_once():
+    b, errors = part_b("PREPARATORY", blank_student("PREPARATORY"), grid_row(), make_lookups("PREPARATORY"))
+    assert errors == []
+    assert len(b["formdata"]) == 1 and b["formdata"][0]["dt"]["domain"] == SUBJ
+
+
+def test_same_activity_with_different_levels_becomes_two_activities():
+    row = grid_row(PSLS3=("P85", "Advanced", "Beginner", "Proficient"), PSLS5=("P85", "Advanced", "Beginner", "Proficient"))
+    b, errors = part_b("PREPARATORY", blank_student("PREPARATORY"), row, make_lookups("PREPARATORY"))
+    assert errors == []
+    acts = b["formdata"]
+    assert [a["dt"]["domain"] for a in acts] == [["PSLS1", "PSLS2", "PSLS4", "PSLS6", "PSLS7"], ["PSLS3", "PSLS5"]]
+    assert [a["dt"]["act_bank_id"] for a in acts] == [85, 85]
+    assert [acts[1]["dt"][k][3] for k in ("awr", "sen", "cre")] == ["advance", "beginner", "proficient"]
+    assert acts[1]["dt"]["tf"] == ["3", "1", "2"]                    # Preparatory feedback follows the levels
+    assert len({a["id"] for a in acts}) == 2 and all(a["is_complete"] for a in acts)
+    assert [m["bank_id"] for m in b["act_bank_map"]] == ["85", "85"]
+
+
+def test_one_activity_per_subject():
+    lk = lookups_with(*range(201, 208))
+    row = grid_row(**{s: (f"P{201 + i}", "Beginner", "Proficient", "Advanced") for i, s in enumerate(SUBJ)})
+    b, errors = part_b("PREPARATORY", blank_student("PREPARATORY"), row, lk)
+    assert errors == []
+    assert [a["dt"]["domain"] for a in b["formdata"]] == [[s] for s in SUBJ]
+    assert [a["nm"] for a in b["formdata"]] == [f"Bank {201 + i}" for i in range(7)]
+
+
+def test_unchanged_grid_leaves_parakh_exactly_as_it_is():
+    a = portal_activity(85, SUBJ[:5], sa=[2] * 8, n=1)
+    b2 = portal_activity(91, SUBJ[5:], sa=[3] * 8, n=2)
+    data = student_with(a, b2)
+    lk = lookups_with(91)
+    row = {k: v for k, v in filled_row("PREPARATORY").items() if not k.startswith(("b_act_", "b_lvl_"))}
+    row.update(sync.to_row("PREPARATORY", data, lk))         # what the workbook shows: the first activity's answers
+    b, errors = part_b("PREPARATORY", data, row, lk)
+    assert errors == []
+    assert [x["id"] for x in b["formdata"]] == ["1001_85_1", "1001_91_2"]
+    assert b["formdata"][1]["dt"]["sa"] == [3] * 8                     # the second keeps its own answers
+
+
+def test_changed_activity_gets_the_students_answers_and_others_keep_theirs():
+    a = portal_activity(85, SUBJ[:5], sa=[2] * 8, n=1)
+    b2 = portal_activity(91, SUBJ[5:], sa=[3] * 8, n=2)
+    data = student_with(a, b2)
+    lk = lookups_with(91, 93)
+    row = grid_row(**{s: ("P85", "Proficient", "Proficient", "Proficient") for s in SUBJ[:5]},
+                   PSLS6=("P91", "Advanced", "Advanced", "Advanced"), PSLS7=("P93", "Beginner", "Beginner", "Beginner"))
+    row.update({f"b_self_{i}": "No" for i in range(1, 9)})            # the student's answers in Excel
+    b, errors = part_b("PREPARATORY", data, row, lk)
+    assert errors == []
+    acts = b["formdata"]
+    assert [x["dt"]["domain"] for x in acts] == [SUBJ[:5], ["PSLS6"], ["PSLS7"]]
+    assert acts[0]["id"] == "1001_85_1" and acts[1]["id"] == "1001_91_2" and acts[2]["dt"]["act_bank_id"] == 93
+    assert acts[0]["dt"]["sa"] == [2] * 8                     # first activity: Excel answers (2 = No)
+    assert acts[1]["dt"]["sa"] == [2] * 8 and acts[2]["dt"]["sa"] == [2] * 8   # changed and new: the student's answers
+    assert acts[1]["dt"]["awr"][3] == "advance"
+
+
+def test_an_activity_is_only_removed_with_replace():
+    data = student_with(portal_activity(85, SUBJ[:5], n=1), portal_activity(91, SUBJ[5:], n=2, nm="Old one"))
+    lk = lookups_with(91)
+    row = grid_row()                                         # every subject on 85: activity 91 is no longer used
+    _, errors = part_b("PREPARATORY", data, row, lk)
+    assert len(errors) == 1 and "would remove activity 'Old one'" in errors[0] and "Replace activities" in errors[0]
+    b, errors = part_b("PREPARATORY", data, {**row, grid.REPLACE_KEY: "Yes"}, lk)
+    assert errors == [] and [x["id"] for x in b["formdata"]] == ["1001_85_1"] and b["formdata"][0]["dt"]["domain"] == SUBJ
+
+
+def test_overlapping_activities_are_locked_until_replace():
+    data = student_with(portal_activity(85, SUBJ, n=1), portal_activity(91, ["PSLS4"], n=2))
+    lk = lookups_with(91)
+    now = grid.current(SUBJ, data.raw_parts["part_b"])
+    assert now.locked and now.values[grid.act_key("PSLS4")] == "P85"           # the first activity is shown
+    row = grid_row(PSLS4=("P91", "Advanced", "Advanced", "Advanced"))
+    _, errors = part_b("PREPARATORY", data, row, lk)
+    assert len(errors) == 1 and "share subjects" in errors[0]
+    b, errors = part_b("PREPARATORY", data, {**row, grid.REPLACE_KEY: "Yes"}, lk)
+    assert errors == [] and [x["dt"]["domain"] for x in b["formdata"]] == [[s for s in SUBJ if s != "PSLS4"], ["PSLS4"]]
+
+
+def test_unchanged_locked_student_is_left_alone():
+    data = student_with(portal_activity(85, SUBJ, n=1), portal_activity(91, ["PSLS4"], n=2))
+    lk = lookups_with(91)
+    row = {k: v for k, v in filled_row("PREPARATORY").items() if not k.startswith(("b_act_", "b_lvl_"))}
+    b, errors = part_b("PREPARATORY", data, row, lk)
+    assert errors == [] and len(b["formdata"]) == 2
+
+
+def test_missing_choices_are_listed_by_subject():
+    row = grid_row(PSLS3=("", "", "", ""), PSLS5=("P85", "Advanced", "", ""))
+    _, errors = part_b("PREPARATORY", blank_student("PREPARATORY"), row, make_lookups("PREPARATORY"))
+    assert errors == ["Part B - Activity: No activity chosen for: Mathematics",
+                      "Part B - Activity: Levels not chosen for: Art Education (Sensitivity, Creativity)"]
+
+
+def test_blank_levels_come_from_part_c():
+    row = grid_row()
+    for s in SUBJ:
+        for ability, _ in grid.ABILITIES:
+            row.pop(grid.level_key(s, ability))
+    for s in SUBJ:                                            # Part C: Proficient, Proficient, Advanced
+        row.update({f"c_{s}_awareness": "Proficient", f"c_{s}_sensitivity": "Proficient", f"c_{s}_creativity": "Advanced"})
+    b, errors = part_b("PREPARATORY", blank_student("PREPARATORY"), row, make_lookups("PREPARATORY"))
+    assert errors == []
+    assert [b["formdata"][0]["dt"][k][3] for k in ("awr", "sen", "cre")] == ["proficient", "proficient", "advance"]
+
+
+def test_picture_activity_cannot_be_added_but_can_be_kept():
+    lk = make_lookups("PREPARATORY")
+
+    def resolve(key):
+        if key == "P1":
+            return {"portal_id": 1, "caption": "Has pictures", "content": BANK_CONTENT, "usable": False,
+                    "reason": "Has pictures - choose it on the PARAKH website instead."}
+        return grid.resolver_from_lookups(lk)(key)
+    _, errors = part_b("PREPARATORY", blank_student("PREPARATORY"), grid_row(PSLS1=("P1", "Advanced", "Advanced", "Advanced")), lk, resolve)
+    assert errors == ["Part B - Activity: 'Has pictures' cannot be added: Has pictures - choose it on the PARAKH website instead."]
+
+    data = student_with(portal_activity(1, SUBJ, n=1))           # already on the card: kept, levels can change
+    b, errors = part_b("PREPARATORY", data, grid_row(**{s: ("P1", "Advanced", "Advanced", "Advanced") for s in SUBJ}), lk, resolve)
+    assert errors == [] and b["formdata"][0]["id"] == "1001_1_1" and b["formdata"][0]["dt"]["awr"][3] == "advance"
+
+
+def test_teacher_own_activity_is_sent_as_not_global():
+    lk = make_lookups("PREPARATORY")
+
+    def resolve(key):
+        if key == "T40321":
+            return {"portal_id": 40321, "caption": "My role play", "content": BANK_CONTENT, "is_global": False, "usable": True}
+        return None
+    b, errors = part_b("PREPARATORY", blank_student("PREPARATORY"), grid_row(**{s: ("T40321", "Beginner", "Beginner", "Beginner") for s in SUBJ}), lk, resolve)
+    assert errors == []
+    assert b["act_bank_map"][0]["is_global"] is False and b["formdata"][0]["dt"]["act_bank_id"] == 40321
+
+
+def test_middle_takes_the_approach_from_the_activity_and_keeps_student_answers():
+    row = filled_row("MIDDLE")
+    payloads, errors = sync.build_payloads("MIDDLE", blank_student("MIDDLE"), row, make_lookups("MIDDLE"))
+    assert errors == []
+    dt = next(p for p in payloads if p["hpc_col"] == "part_b")["formdata"][0]["dt"]
+    assert dt["activity"] == [1] and dt["ast"] == [2] and dt["slr"] == ["1", "2", "3"]
+
+
+def test_new_activity_ids_never_clash_with_kept_ones():
+    data = student_with(portal_activity(85, ["PSLS1"], n=2))     # an id with n=2 already used
+    data.raw_parts["part_b"][0]["id"] = "1001_88_2"
+    row = grid_row(**{s: ("P85", "Beginner", "Beginner", "Beginner") for s in SUBJ[1:]},
+                   PSLS1=("P85", "Proficient", "Proficient", "Proficient"))
+    b, errors = part_b("PREPARATORY", data, row, make_lookups("PREPARATORY"))
+    assert errors == []
+    ids = [a["id"] for a in b["formdata"]]
+    assert ids[0] == "1001_88_2" and len(set(ids)) == len(ids)
+
+
+def test_check_value_messages():
+    assert grid.check_value("b_act_PSLS1", "85: something") == "Choose an activity from the list."
+    assert grid.check_value("b_lvl_PSLS1_awareness", "Expert") == "Choose Beginner, Proficient or Advanced."
+    assert grid.check_value("b_lvl_PSLS1_awareness", "") is None and grid.check_value("b_act_PSLS1", "T40321") is None

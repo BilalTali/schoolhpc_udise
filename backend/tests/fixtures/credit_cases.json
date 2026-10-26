@@ -1,0 +1,518 @@
+[
+ {
+  "stage": "preparatory",
+  "grade_code": "grd5",
+  "part_c_ratings": {
+   "PSLS1": [
+    "2",
+    "2",
+    "2"
+   ],
+   "PSLS2": [
+    "2",
+    "2",
+    "2"
+   ],
+   "PSLS3": [
+    "2",
+    "2",
+    "2"
+   ],
+   "PSLS4": [
+    "2",
+    "2",
+    "2"
+   ],
+   "PSLS5": [
+    "2",
+    "2",
+    "2"
+   ],
+   "PSLS6": [
+    "2",
+    "2",
+    "2"
+   ],
+   "PSLS7": [
+    "2",
+    "2",
+    "2"
+   ],
+   "overall": [
+    "",
+    "",
+    ""
+   ]
+  },
+  "marks": [
+   [
+    "33",
+    "28"
+   ],
+   [
+    "33",
+    "27"
+   ],
+   [
+    "33",
+    "30"
+   ],
+   [
+    "33",
+    "29"
+   ],
+   [
+    "33",
+    "31"
+   ],
+   [
+    "33",
+    "30"
+   ],
+   [
+    "",
+    ""
+   ]
+  ],
+  "table2": [
+   [
+    "Language 1 (R1)",
+    "Proficient",
+    "Proficient",
+    "Proficient",
+    "33",
+    "28"
+   ],
+   [
+    "Language 2 (R2)",
+    "Proficient",
+    "Proficient",
+    "Proficient",
+    "33",
+    "27"
+   ],
+   [
+    "Mathematics",
+    "Proficient",
+    "Proficient",
+    "Proficient",
+    "33",
+    "30"
+   ],
+   [
+    "The World Around Us",
+    "Proficient",
+    "Proficient",
+    "Proficient",
+    "33",
+    "29"
+   ],
+   [
+    "Art Education",
+    "Proficient",
+    "Proficient",
+    "Proficient",
+    "33",
+    "31"
+   ],
+   [
+    "Physical Education and Well-being",
+    "Proficient",
+    "Proficient",
+    "Proficient",
+    "33",
+    "30"
+   ],
+   [
+    "Other Learning Activities (Participation in Cultural, Sports, Reading and other activities)",
+    "Proficient",
+    "Proficient",
+    "Proficient",
+    "",
+    ""
+   ],
+   [
+    "Total",
+    "",
+    "",
+    "",
+    "198",
+    "175"
+   ]
+  ],
+  "table3": [
+   [
+    "Language 1 (R1)",
+    2.79,
+    1.53,
+    4.32,
+    4.32,
+    72
+   ],
+   [
+    "Language 2 (R2)",
+    2.94,
+    1.55,
+    4.49,
+    4.49,
+    71
+   ],
+   [
+    "Mathematics",
+    2.88,
+    1.68,
+    4.56,
+    4.56,
+    74
+   ],
+   [
+    "The World Around Us",
+    3.12,
+    1.76,
+    4.88,
+    4.88,
+    73
+   ],
+   [
+    "Art Education",
+    1.56,
+    0.94,
+    2.5,
+    2.5,
+    75
+   ],
+   [
+    "Physical Education and Well-being",
+    1.56,
+    0.91,
+    2.47,
+    2.47,
+    74
+   ],
+   [
+    "Other Learning Activities (Participation in Cultural, Sports, Reading and other activities)",
+    0.99,
+    0,
+    0.99,
+    0.99,
+    66
+   ],
+   [
+    "Total",
+    "15.84",
+    "8.37",
+    "24.21",
+    "24.21",
+    "505"
+   ]
+  ]
+ },
+ {
+  "stage": "middle",
+  "grade_code": "grd6",
+  "part_c_ratings": {
+   "SL1": [
+    "1",
+    "2",
+    "2"
+   ],
+   "SL2": [
+    "2",
+    "2",
+    "1"
+   ],
+   "SL3": [
+    "2",
+    "2",
+    "1"
+   ],
+   "SM": [
+    "2",
+    "2",
+    "1"
+   ],
+   "SSC": [
+    "1",
+    "2",
+    "2"
+   ],
+   "SSSC": [
+    "1",
+    "2",
+    "2"
+   ],
+   "SAE": [
+    "1",
+    "2",
+    "3"
+   ],
+   "SPE": [
+    "1",
+    "2",
+    "2"
+   ],
+   "SV": [
+    "2",
+    "2",
+    "2"
+   ],
+   "SLA": [
+    "2",
+    "2",
+    "1"
+   ],
+   "SVE": [
+    "2",
+    "2",
+    "2"
+   ],
+   "overall": [
+    "",
+    "",
+    ""
+   ]
+  },
+  "marks": [
+   [
+    "33",
+    "28"
+   ],
+   [
+    "33",
+    "28"
+   ],
+   [
+    "33",
+    "28"
+   ],
+   [
+    "33",
+    "28"
+   ],
+   [
+    "33",
+    "28"
+   ],
+   [
+    "33",
+    "28"
+   ],
+   [
+    "33",
+    "28"
+   ],
+   [
+    "33",
+    "28"
+   ],
+   [
+    "",
+    ""
+   ],
+   [
+    "",
+    ""
+   ],
+   [
+    "",
+    ""
+   ]
+  ],
+  "table2": [
+   [
+    "Language 1 (R1)",
+    "Beginner",
+    "Proficient",
+    "Proficient",
+    "33",
+    "28"
+   ],
+   [
+    "Language 2 (R2)",
+    "Proficient",
+    "Proficient",
+    "Beginner",
+    "33",
+    "28"
+   ],
+   [
+    "Language 3 (R3)",
+    "Proficient",
+    "Proficient",
+    "Beginner",
+    "33",
+    "28"
+   ],
+   [
+    "Mathematics",
+    "Proficient",
+    "Proficient",
+    "Beginner",
+    "33",
+    "28"
+   ],
+   [
+    "Science",
+    "Beginner",
+    "Proficient",
+    "Proficient",
+    "33",
+    "28"
+   ],
+   [
+    "Social Science",
+    "Beginner",
+    "Proficient",
+    "Proficient",
+    "33",
+    "28"
+   ],
+   [
+    "Art Education",
+    "Beginner",
+    "Proficient",
+    "Advanced",
+    "33",
+    "28"
+   ],
+   [
+    "Physical Education and Well-being",
+    "Beginner",
+    "Proficient",
+    "Proficient",
+    "33",
+    "28"
+   ],
+   [
+    "Vocational/Skill Education",
+    "Proficient",
+    "Proficient",
+    "Proficient",
+    "",
+    ""
+   ],
+   [
+    "Other Learning Activities (Participation in Cultural, Sports, Reading and other activities)",
+    "Proficient",
+    "Proficient",
+    "Beginner",
+    "",
+    ""
+   ],
+   [
+    "Bagless days for vocational Experience",
+    "Proficient",
+    "Proficient",
+    "Proficient",
+    "",
+    ""
+   ],
+   [
+    "Total",
+    "",
+    "",
+    "",
+    "264",
+    "224"
+   ]
+  ],
+  "table3": [
+   [
+    "Language 1 (R1)",
+    0.85,
+    0.55,
+    1.4,
+    1.86,
+    65
+   ],
+   [
+    "Language 2 (R2)",
+    0.9,
+    0.59,
+    1.49,
+    1.98,
+    64
+   ],
+   [
+    "Language 3 (R3)",
+    0.97,
+    0.64,
+    1.61,
+    2.14,
+    64
+   ],
+   [
+    "Mathematics",
+    1.5,
+    0.98,
+    2.48,
+    3.3,
+    65
+   ],
+   [
+    "Science",
+    2.07,
+    1.36,
+    3.43,
+    4.56,
+    64
+   ],
+   [
+    "Social Science",
+    2.07,
+    1.36,
+    3.43,
+    4.56,
+    64
+   ],
+   [
+    "Art Education",
+    1.56,
+    0.85,
+    2.41,
+    3.21,
+    72
+   ],
+   [
+    "Physical Education and Well-being",
+    1.3,
+    0.85,
+    2.15,
+    2.86,
+    65
+   ],
+   [
+    "Vocational/Skill Education",
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   [
+    "Other Learning Activities (Participation in Cultural, Sports, Reading and other activities)",
+    1.57,
+    0,
+    1.57,
+    2.09,
+    55
+   ],
+   [
+    "Bagless days for vocational Experience",
+    3.54,
+    0,
+    3.54,
+    4.71,
+    66
+   ],
+   [
+    "Total",
+    "16.33",
+    "7.18",
+    "23.51",
+    "31.27",
+    "644"
+   ]
+  ]
+ }
+]

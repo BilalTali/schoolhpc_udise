@@ -1,59 +1,57 @@
 """
-FastAPI Enterprise Application Entrypoint
-PARAKH Holistic Progress Card (HPC) Multi-Tenant Automation Backend
+HPC Automation API (FastAPI).
+
+Run from the project root:   python -m uvicorn backend.main:app --reload
+API docs:                    http://127.0.0.1:8000/docs
 """
-import sys
-from pathlib import Path
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from backend.database import engine, Base
-import backend.models.entities  # Ensure models are loaded before create_all
 
-# Initialize MySQL Tables automatically
-try:
-    Base.metadata.create_all(bind=engine)
-    print("[DB] Initialized MySQL tables for Schools, Teachers, and Sessions successfully.")
-except Exception as e:
-    print(f"[DB ERROR] Error initializing database tables: {e}")
-
+from backend.database import SessionLocal, init_db
+from backend.models.entities import encrypt_stored_passwords
+from backend.routers.activities_grid import router as activities_grid_router
+from backend.routers.activity_library import router as activity_library_router
 from backend.routers.auth import router as auth_router
+from backend.routers.hpc_cards import router as hpc_cards_router
 from backend.routers.schools import router as schools_router
 from backend.routers.teachers import router as teachers_router
+from backend.services.activity_library import recover_interrupted_syncs
+from backend.services.upload_jobs import recover_interrupted_jobs
 
-app = FastAPI(
-    title="PARAKH HPC Automation Enterprise API",
-    description="Multi-tenant backend for School Registration, Teacher Management, and Automated HPC Submissions.",
-    version="2.0.0",
-    docs_url="/docs",
-    redoc_url="/redoc"
-)
+init_db()
+with SessionLocal() as _db:
+    if encrypt_stored_passwords(_db):
+        print("[startup] Encrypted stored passwords that were plain text.")
 
-# Enable CORS for Next.js / React frontend
+
+@asynccontextmanager
+async def lifespan(app):
+    count = recover_interrupted_jobs()
+    if count:
+        print(f"[startup] {count} upload(s) were interrupted by a restart and marked FAILED.")
+    if recover_interrupted_syncs():
+        print("[startup] An activity sync was interrupted by a restart and marked FAILED.")
+    yield
+
+
+app = FastAPI(title="HPC Automation API", version="3.0.0", lifespan=lifespan,
+              description="Schools, teachers and syncing class workbooks to the PARAKH HPC portal.")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows Next.js (http://localhost:3000) and other frontends
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:[0-9]+)?$",   # the Vite dev server
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Register API Routers
-app.include_router(auth_router, prefix="/api/v1")
-app.include_router(schools_router, prefix="/api/v1")
-app.include_router(teachers_router, prefix="/api/v1")
+for router in (auth_router, schools_router, teachers_router, hpc_cards_router, activity_library_router,
+               activities_grid_router):
+    app.include_router(router, prefix="/api/v1")
 
 
 @app.get("/")
 def root():
-    return {
-        "status": "online",
-        "service": "PARAKH HPC Automation Enterprise API",
-        "version": "2.0.0",
-        "database": "MySQL (XAMPP)",
-        "docs": "/docs"
-    }
-
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("backend.main:app", host="127.0.0.1", port=8000, reload=True)
+    return {"status": "online", "service": "HPC Automation API", "docs": "/docs"}

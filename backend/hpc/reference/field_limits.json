@@ -1,0 +1,148 @@
+{
+ "_source": "Max lengths (English) from the portal's shared constants, 2026-10-25.",
+ "preparatory": {
+  "a1": {
+   "r_no": 5,
+   "section": 5,
+   "phone": 10,
+   "udid": 18,
+   "school_admission_no": 12,
+   "address": 130,
+   "guardian_name": 50,
+   "guardian_edu_occupation": 20,
+   "mother_tongue": 20,
+   "low_attend": 220,
+   "other_interest": 300
+  },
+  "a2": {
+   "growUp": 54,
+   "friends": 37,
+   "favorites": 83,
+   "name": 23,
+   "age": 2,
+   "hands_0": 13,
+   "hands_1": 15,
+   "hands_2": 13,
+   "hands_3": 24,
+   "hands_4": 23,
+   "myIdol": 24
+  },
+  "a3": {
+   "myName": 35,
+   "myFriendName": 35,
+   "childMatters": 105,
+   "otherSubjectArea": 80
+  },
+  "b": {
+   "activity": 4000.0,
+   "assessment_ques": 4000.0,
+   "assessment_rubric": 600,
+   "observational_notes": 1300,
+   "learner_performed": 650
+  },
+  "c": {
+   "performance_descriptors": 330,
+   "notes": 400,
+   "notes_last": 3000.0
+  }
+ },
+ "middle": {
+  "a1": {
+   "r_no": 5,
+   "section": 5,
+   "phone": 10,
+   "udid": 18,
+   "school_admission_no": 12,
+   "address": 130,
+   "guardian_name": 50,
+   "guardian_edu_occupation": 20,
+   "mother_tongue": 20,
+   "low_attend": 220,
+   "other_interest": 300
+  },
+  "a2": {
+   "liveWith": 24,
+   "stayAt": 24,
+   "responsible": 22,
+   "freeTime": 45,
+   "veryWell": 60,
+   "name": 15,
+   "age": 2,
+   "goalStep": 80,
+   "goal": 70,
+   "reason": 45,
+   "teacher": 270,
+   "language": 45,
+   "feelProud": 45,
+   "care": 45,
+   "doBetter": 35
+  },
+  "a3": {
+   "myAmbition": 230,
+   "ambitionAchieveBy": 75,
+   "skillsNeeded": 190,
+   "subjects": 120,
+   "habits": 180,
+   "guidanceFrom": 65,
+   "helpingPerson": 80,
+   "newLearning": 100,
+   "myFeeling": 75,
+   "parentsFeeling": 65
+  },
+  "a4": {
+   "childMatters": 115,
+   "otherSubjectArea": 40,
+   "supp_child": 700
+  },
+  "b": {
+   "other_approach": 50,
+   "activity": 4000.0,
+   "assessment_rubric": 600,
+   "learn": 225,
+   "interesting_activity": 60,
+   "practice": 100,
+   "help": 100,
+   "other_text": 25,
+   "student_prog": 420,
+   "teacher_observation": 1300
+  },
+  "c": {
+   "performance_descriptors": 330,
+   "notes": 400,
+   "notes_last": 4000.0
+  }
+ },
+ "foundational": {
+  "a1": {
+   "r_no": 5,
+   "section": 5,
+   "phone": 10,
+   "udid": 18,
+   "school_admission_no": 12,
+   "address": 130,
+   "guardian_name": 50,
+   "guardian_edu_occupation": 20,
+   "mother_tongue": 20,
+   "low_attend": 220,
+   "other_interest": 300
+  },
+  "a2": {
+   "age": 2,
+   "liveIn": 40,
+   "growUp": 30,
+   "friends": 28,
+   "favorites": 15
+  },
+  "b": {
+   "activity": 4000.0,
+   "assessment_ques": 4000.0,
+   "assessment_rubric": 600,
+   "observational_notes": 1150,
+   "other_resource": 75,
+   "comments": 750
+  },
+  "c": {
+   "performance_descriptors": 330
+  }
+ }
+}

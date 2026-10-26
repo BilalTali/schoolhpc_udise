@@ -1,45 +1,38 @@
-# Virtual environments
+# Local data: portal sessions, student workbooks, snapshots, backups, secrets. Never commit.
+data/
+data_old*/
+snapshots/
+backups/
+hhpc_backups/
+.env
+.env.*
+!.env.example
+*.sql
+*.sql.enc
+*.tar.gz
+*.tar.gz.enc
+*.enc
+*.key
+.secret_key
+.jwt_secret
+*.xlsx
+*.db
+*.sqlite
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
 .venv/
 venv/
-ENV/
-env/
-hpc_python_automation/.venv/
 
-# Node modules & build outputs
+# Node
 node_modules/
-frontend/node_modules/
 frontend/dist/
-dist/
 
-# Python cache & artifacts
-__pycache__/
-*/__pycache__/
-*/*/__pycache__/
-*.py[cod]
-*$py.class
-.pytest_cache/
-*.egg-info/
-*.sqlite3
-*.db
-backend/hhpc.db
-
-# IDE and OS
+# Editors / OS
 .idea/
 .vscode/
-.git_bak/
-*.swp
-*.swo
 .DS_Store
 Thumbs.db
-
-# Logs and temp
 *.log
-streamlit_live.log
-scratch/
-audit_evidence/
-reports/
-data/*.xlsx
-
-# Environment secrets
-.env
-backend/.env

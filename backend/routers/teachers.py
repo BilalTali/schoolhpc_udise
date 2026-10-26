@@ -1,328 +1,305 @@
 """
-Teacher Router: HPC Session Control, Roster Sync & Batch Upload
+Teacher endpoints: HPC portal session, class roster + workbook, and workbook upload.
 """
-from pathlib import Path
+import csv
+import hashlib
+import io
+import json
 import shutil
-from typing import Dict, Any, List
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks, status
-from fastapi.responses import FileResponse
+from datetime import datetime
+from pathlib import Path
+from typing import List, Optional
+
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.orm import Session
-from backend.database import get_db, SessionLocal
-from backend.models.entities import Teacher, UploadJob, StudentRecord
+
+from backend.database import get_db
+from backend.hpc import portal, sync, workbook
+from backend.hpc.portal import PortalError
+from backend.models.entities import StudentRecord, Teacher, UploadJob
 from backend.schemas.schemas import (
-    ValidationReportResponse, UploadJobResponse,
-    HpcCredentialsRequest, HpcStartSessionRequest, HpcOtpRequest, HpcSessionStatusResponse
+    HpcCaptchaRequest, HpcCredentialsRequest, HpcOtpRequest, HpcSessionStatusResponse, HpcStartSessionRequest,
+    UploadJobResponse, ValidationReportResponse,
 )
+from backend.services import audit, hpc_sessions, upload_jobs
 from backend.services.auth_service import require_teacher
-from backend.services.hpc_session_service import (
-    check_teacher_hpc_status, end_teacher_hpc_session,
-    get_teacher_session_dir, get_teacher_storage_state_path
-)
-from backend.services.hpc_auto_login import (
-    start_teacher_hpc_session, verify_hpc_otp
-)
-from backend.config import DATA_DIR, AUTOMATION_ROOT
 
-# Import existing core automation engines
-import sys
-if str(AUTOMATION_ROOT) not in sys.path:
-    sys.path.insert(0, str(AUTOMATION_ROOT))
+router = APIRouter(prefix="/teacher", tags=["Teacher"])
+KIND = "teacher"
 
-from excel.importer import import_preparatory_workbook
-from excel.validator import validate_workbook_records
-from excel.template_generator import build_preparatory_template
-from portal.student_fetcher import fetch_students_from_portal, generate_prepopulated_excel
 
-router = APIRouter(prefix="/teacher", tags=["Teacher Workflows"])
+SUPPORTED = ("Foundational", "Preparatory", "Middle")
+
+
+def teacher_stages(teacher: Teacher) -> List[str]:
+    """Stages assigned in this app plus the ones the portal lists for the teacher, in stage order."""
+    names = {s.strip().lower() for s in teacher.stages}
+    sess = portal.Session.load(hpc_sessions.session_path(KIND, teacher.id))
+    if sess:
+        names |= {str(s).lower() for s in sess.staff.get("hpc_stage") or []}
+    return [s for s in SUPPORTED if s.lower() in names]
+
+
+def _stage(teacher: Teacher, stage: Optional[str]) -> str:
+    stages = teacher_stages(teacher)
+    name = (stage or (stages[0] if stages else "")).strip().capitalize()
+    if name not in SUPPORTED:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Unsupported stage '{stage}'. Use one of {', '.join(SUPPORTED)}.")
+    return name
+
+
+def _portal(teacher: Teacher):
+    return hpc_sessions.portal_for(KIND, teacher.id, teacher.hpc_login_id, teacher.hpc_password)
+
+
+def _roster_file(teacher: Teacher, stage: str):
+    return hpc_sessions.session_dir(KIND, teacher.id) / f"roster_{stage.lower()}.json"
+
+
+def _workbook_path(teacher: Teacher):
+    return hpc_sessions.session_dir(KIND, teacher.id) / "workbook.xlsx"
 
 
 # ---------------------------------------------------------------------------
-# HPC Session Endpoints
+# HPC portal session
 # ---------------------------------------------------------------------------
 
 @router.get("/hpc/status", response_model=HpcSessionStatusResponse)
-def get_teacher_hpc_status(
-    teacher: Teacher = Depends(require_teacher),
-    db: Session = Depends(get_db)
-):
-    """Returns current HPC session status for the authenticated teacher."""
-    result = check_teacher_hpc_status(teacher.id, db=db)
+def hpc_status(teacher: Teacher = Depends(require_teacher)):
+    result = hpc_sessions.status_of(KIND, teacher.id)
     return HpcSessionStatusResponse(
-        logged_in=result.get("logged_in", False),
-        user=result.get("user"),
-        school=result.get("school"),
-        role=result.get("role"),
-        reason=result.get("reason") or result.get("error"),
+        logged_in=result["logged_in"], user=result.get("user"), school=result.get("school"),
+        role=result.get("role"), reason=result.get("reason"), captcha_mode=result.get("captcha_mode", "typed"),
+        has_credentials=bool(teacher.hpc_login_id and teacher.hpc_password_encrypted),
+        saved_hpc_login_id=teacher.hpc_login_id,
+        stages=teacher_stages(teacher),
     )
 
 
 @router.post("/hpc/save-credentials")
-def save_teacher_hpc_credentials(
-    payload: HpcCredentialsRequest,
-    teacher: Teacher = Depends(require_teacher),
-    db: Session = Depends(get_db)
-):
-    """Saves (or updates) the teacher's own HPC login credentials."""
+def save_credentials(payload: HpcCredentialsRequest, teacher: Teacher = Depends(require_teacher),
+                     db: Session = Depends(get_db)):
     teacher.hpc_login_id = payload.hpc_login_id.strip()
-    teacher.hpc_password_encrypted = payload.hpc_password
+    teacher.hpc_password = payload.hpc_password
     db.commit()
+    audit.record(f"teacher:{teacher.id}", "save_parakh_login", "settings", teacher.id, None,
+                 {"hpc_login_id": teacher.hpc_login_id})        # never the password
     return {"success": True, "message": "HPC credentials saved. Click 'Start Session' to connect."}
 
 
 @router.post("/hpc/start-session")
-def start_teacher_session(
-    payload: HpcStartSessionRequest,
-    teacher: Teacher = Depends(require_teacher),
-    db: Session = Depends(get_db)
-):
-    """
-    Auto-starts the HPC PARAKH session for the teacher.
-    Uses saved credentials (or override from payload).
-    Auto-solves arithmetic captcha and logs in.
-    """
+def start_session(payload: HpcStartSessionRequest, teacher: Teacher = Depends(require_teacher)):
     login_id = payload.hpc_login_id or teacher.hpc_login_id
-    password = payload.hpc_password or teacher.hpc_password_encrypted
-
+    password = payload.hpc_password or teacher.hpc_password
     if not login_id or not password:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="HPC credentials not found. Please save your HPC Login ID and password first."
-        )
-
-    result = start_teacher_hpc_session(teacher.id, login_id, password, db)
-
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "HPC credentials not found. Save your HPC Login ID and password first.")
+    result = hpc_sessions.start(KIND, teacher.id, login_id, password)
     if not result.get("success"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=result.get("error", "HPC session start failed.")
-        )
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, result.get("error", "HPC login failed."))
+    return result
+
+
+@router.post("/hpc/refresh-session")
+def refresh_session(teacher: Teacher = Depends(require_teacher)):
+    """Logs in again with the saved credentials."""
+    if not teacher.hpc_login_id or not teacher.hpc_password_encrypted:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "HPC credentials not saved. Save your HPC Login ID and password first.")
+    result = hpc_sessions.start(KIND, teacher.id, teacher.hpc_login_id, teacher.hpc_password)
+    return {**result, "success": result.get("status") in ("authenticated", "captcha_required", "otp_required"),
+            "message": result.get("message") or result.get("error") or "Session refreshed.", "log": "", "returncode": 0}
+
+
+@router.post("/hpc/verify-captcha")
+def verify_captcha(payload: HpcCaptchaRequest, teacher: Teacher = Depends(require_teacher)):
+    """The answer to the captcha picture from start-session; logs in (or asks for the OTP next)."""
+    result = hpc_sessions.verify_captcha(KIND, teacher.id, payload.answer)
+    if not result.get("success") and result.get("status") != "captcha_required":
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, result.get("error", "HPC login failed."))
+    return result
+
+
+@router.post("/hpc/new-captcha")
+def new_captcha(teacher: Teacher = Depends(require_teacher)):
+    result = hpc_sessions.new_captcha(KIND, teacher.id)
+    if not result.get("success"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, result.get("error", "Please click Connect again."))
     return result
 
 
 @router.post("/hpc/verify-otp")
-def verify_teacher_otp(
-    payload: HpcOtpRequest,
-    teacher: Teacher = Depends(require_teacher),
-    db: Session = Depends(get_db)
-):
-    """Verifies OTP for teacher HPC login."""
-    result = verify_hpc_otp(f"teacher_{teacher.id}", payload.otp, db)
+def verify_otp(payload: HpcOtpRequest, teacher: Teacher = Depends(require_teacher)):
+    result = hpc_sessions.verify_otp(KIND, teacher.id, payload.otp)
     if not result.get("success"):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=result.get("error", "Invalid OTP.")
-        )
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, result.get("error", "Invalid OTP."))
     return result
 
 
 @router.post("/hpc/end-session")
-def end_teacher_session(
-    teacher: Teacher = Depends(require_teacher),
-    db: Session = Depends(get_db)
-):
-    """Ends (clears) the teacher's active HPC session."""
-    result = end_teacher_hpc_session(teacher.id, db)
-    return result
+def end_session(teacher: Teacher = Depends(require_teacher)):
+    audit.record(f"teacher:{teacher.id}", "disconnect_parakh", "settings", teacher.id)
+    return hpc_sessions.end(KIND, teacher.id)
 
 
 # ---------------------------------------------------------------------------
-# Legacy PARAKH Status (backward compat)
-# ---------------------------------------------------------------------------
-
-@router.get("/parakh/status")
-def get_parakh_status(
-    teacher: Teacher = Depends(require_teacher),
-    db: Session = Depends(get_db)
-):
-    """Legacy: Checks if the authenticated teacher has a valid, active PARAKH session."""
-    return check_teacher_hpc_status(teacher.id, db=db)
-
-
-# ---------------------------------------------------------------------------
-# Roster Sync & Download
+# Roster and class workbook
 # ---------------------------------------------------------------------------
 
 @router.post("/roster/sync")
-def sync_roster(
-    teacher: Teacher = Depends(require_teacher),
-    db: Session = Depends(get_db)
-):
-    """Fetches students from PARAKH using this teacher's isolated session."""
-    p_status = check_teacher_hpc_status(teacher.id, db=db)
-    if not p_status.get("logged_in"):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Teacher is not authenticated on the PARAKH portal. Start your HPC session first."
-        )
-
-    teacher_dir = get_teacher_session_dir(teacher.id)
-    profile_dir = teacher_dir / "browser_profile"
-    out_excel = teacher_dir / f"roster_{teacher.assigned_stage.lower()}_{teacher.id}.xlsx"
-
+def sync_roster(stage: Optional[str] = Query(None), teacher: Teacher = Depends(require_teacher)):
+    """
+    Fetches all of the teacher's stages from the portal into one workbook (every student's current
+    HPC data), and returns the students of the requested stage for the web app's roster table.
+    """
+    stage = _stage(teacher, stage)
+    stages = teacher_stages(teacher) or [stage]
     try:
-        students = fetch_students_from_portal(stage=teacher.assigned_stage, headless=True, profile_dir=profile_dir)
-        if not students:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"No students found for stage '{teacher.assigned_stage}'. Verify assigned classes on PARAKH."
-            )
-        generate_prepopulated_excel(students, stage=teacher.assigned_stage, output_file=out_excel)
-        return {
-            "success": True,
-            "total_students": len(students),
-            "stage": teacher.assigned_stage,
-            "excel_ready": True
-        }
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+        _, by_stage = sync.export_workbook(_portal(teacher), stages, _workbook_path(teacher))
+    except PortalError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc))
+    for name, students in by_stage.items():
+        _roster_file(teacher, name).write_text(json.dumps(students, ensure_ascii=False, indent=1), encoding="utf-8")
+    students = by_stage.get(stage, [])
+    summary = ", ".join(f"{name}: {len(st)}" for name, st in by_stage.items())
+    return {"success": True, "total_students": len(students), "stage": stage, "excel_ready": True,
+            "students": students, "stages": list(by_stage), "summary": summary}
+
+
+@router.get("/roster")
+def cached_roster(stage: Optional[str] = Query(None), teacher: Teacher = Depends(require_teacher)):
+    stage = _stage(teacher, stage)
+    path = _roster_file(teacher, stage)
+    students = json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
+    return {"success": True, "total_students": len(students), "stage": stage, "students": students}
 
 
 @router.get("/roster/download")
-def download_prefilled_excel(
-    teacher: Teacher = Depends(require_teacher)
-):
-    """Downloads the pre-populated Excel workbook for offline grading."""
-    teacher_dir = get_teacher_session_dir(teacher.id)
-    out_excel = teacher_dir / f"roster_{teacher.assigned_stage.lower()}_{teacher.id}.xlsx"
-
-    if not out_excel.exists():
-        clean_tmpl = teacher_dir / f"HPC_{teacher.assigned_stage}_Template.xlsx"
-        build_preparatory_template(output_path=clean_tmpl)
-        out_excel = clean_tmpl
-
-    return FileResponse(
-        path=out_excel,
-        filename=f"HPC_{teacher.assigned_stage}_{teacher.assigned_grade}_{teacher.assigned_section}_Grading.xlsx",
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+def download_workbook(stage: Optional[str] = Query(None), teacher: Teacher = Depends(require_teacher)):
+    """The workbook with all of the teacher's stages (the stage parameter is accepted but not needed)."""
+    path = _workbook_path(teacher)
+    if not path.exists():
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Fetch the roster first (Sync Roster), then download.")
+    sess = portal.Session.load(hpc_sessions.session_path(KIND, teacher.id))
+    if sess:                                          # latest Activities tab choices into the read-only column
+        from backend.services import activity_grid
+        session = str(sess.staff.get("school_cur_ay_code") or "")
+        summaries = activity_grid.workbook_summaries(teacher, session, workbook.detect_stages(path), lambda st: (
+            json.loads(_roster_file(teacher, st).read_text(encoding="utf-8")) if _roster_file(teacher, st).exists() else []))
+        workbook.set_activity_summaries(path, summaries)
+    return FileResponse(path, filename="HPC_Class_Workbook.xlsx",
+                        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
 # ---------------------------------------------------------------------------
-# Upload & Validate
+# Upload: check, then sync in the background
 # ---------------------------------------------------------------------------
+
+def _upload_path(teacher: Teacher, file_name: str):
+    return hpc_sessions.session_dir(KIND, teacher.id) / f"uploaded_{Path(file_name).name}"
+
+
+def _workbook_stages(teacher: Teacher, path) -> List[str]:
+    stages = workbook.detect_stages(path)
+    if not stages:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "This is not a workbook from this app. "
+                            "Use 'Sync Roster' and then 'Download Excel' to get one.")
+    not_allowed = [s for s in stages if s not in teacher_stages(teacher)]
+    if not_allowed:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, f"You are not assigned to: {', '.join(not_allowed)}.")
+    return stages
+
 
 @router.post("/upload/validate", response_model=ValidationReportResponse)
-async def validate_excel(
-    file: UploadFile = File(...),
-    teacher: Teacher = Depends(require_teacher)
-):
-    """Uploads and pre-flight validates Excel file against PARAKH DOM limits and grades."""
+async def validate_upload(file: UploadFile = File(...), teacher: Teacher = Depends(require_teacher)):
+    """Saves the uploaded workbook and checks every student against the portal (nothing is written)."""
     if not file.filename.endswith(".xlsx"):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only .xlsx files are supported.")
-
-    teacher_dir = get_teacher_session_dir(teacher.id)
-    upload_path = teacher_dir / f"uploaded_{file.filename}"
-
-    with open(upload_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Only .xlsx files are supported.")
+    path = _upload_path(teacher, file.filename)
+    with open(path, "wb") as out:
+        shutil.copyfileobj(file.file, out)
+    _workbook_stages(teacher, path)
     try:
-        records = import_preparatory_workbook(upload_path)
-        if not records:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Workbook contains no student records.")
-
-        detected_stage = teacher.assigned_stage
-        first_grade = str(records[0].get("data", {}).get("grade", "")).lower()
-        if any(g in first_grade for g in ("6", "7", "8", "middle")):
-            detected_stage = "Middle"
-        elif any(g in first_grade for g in ("3", "4", "5", "prep")):
-            detected_stage = "Preparatory"
-
-        report = validate_workbook_records(records)
-        sample_data = records[0].get("data", {})
-
-        return ValidationReportResponse(
-            is_valid=report.is_valid,
-            total_records=len(records),
-            detected_stage=detected_stage,
-            error_count=len(report.errors),
-            warning_count=len(report.warnings),
-            errors=[{"row": e.row, "field": e.field, "message": e.message} for e in report.errors],
-            warnings=[{"row": w.row, "field": w.field, "message": w.message} for w in report.warnings],
-            seeder_working_days=sample_data.get("working_days", "271"),
-            seeder_max_marks=sample_data.get("max_summative_marks", "33")
-        )
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Failed to parse workbook: {e}")
-
-
-def _execute_background_upload(job_id: str, teacher_id: str, file_path: str, stage: str):
-    """Background task executing Playwright automation."""
-    db = SessionLocal()
-    try:
-        job = db.query(UploadJob).filter(UploadJob.id == job_id).first()
-        if not job:
-            return
-        job.status = "IN_PROGRESS"
-        db.commit()
-
-        records = import_preparatory_workbook(file_path)
-        teacher_dir = get_teacher_session_dir(teacher_id)
-        profile_dir = teacher_dir / "browser_profile"
-        from portal.uploader import upload_batch_students
-        results = upload_batch_students(records, headless=True, stage=stage, profile_dir=profile_dir)
-
-        job.status = "COMPLETED" if results["failed"] == 0 else "PARTIAL_SUCCESS"
-        job.success_count = results["success"]
-        job.failed_count = results["failed"]
-        db.commit()
-    except Exception:
-        job = db.query(UploadJob).filter(UploadJob.id == job_id).first()
-        if job:
-            job.status = "FAILED"
-            db.commit()
-    finally:
-        db.close()
+        report = upload_jobs.check_workbook(_portal(teacher), path, teacher.id)
+    except PortalError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc))
+    return ValidationReportResponse(**{k: v for k, v in report.items() if k != "ready_students"})
 
 
 @router.post("/upload/submit", response_model=UploadJobResponse)
-def submit_upload_job(
-    file_name: str,
-    background_tasks: BackgroundTasks,
-    teacher: Teacher = Depends(require_teacher),
-    db: Session = Depends(get_db)
-):
-    """Enqueues automated submission of a validated Excel file in the background."""
-    teacher_dir = get_teacher_session_dir(teacher.id)
-    upload_path = teacher_dir / f"uploaded_{file_name}"
+def submit_upload(file_name: str, background_tasks: BackgroundTasks, teacher: Teacher = Depends(require_teacher),
+                  db: Session = Depends(get_db), workers: int = Query(1, ge=1, le=5)):
+    """Starts syncing a validated workbook. `workers` is accepted for older web app versions and ignored."""
+    path = _upload_path(teacher, file_name)
+    if not path.exists():
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Uploaded file not found. Upload and validate it first.")
+    active = db.query(UploadJob).filter(UploadJob.teacher_id == teacher.id,
+                                        UploadJob.status.in_(["PENDING", "IN_PROGRESS"])).first()
+    if active:
+        raise HTTPException(status.HTTP_409_CONFLICT, "An upload is already running. Wait for it to finish.")
 
-    if not upload_path.exists():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Uploaded file not found. Validate first.")
-
-    records = import_preparatory_workbook(upload_path)
-    detected_stage = teacher.assigned_stage
-    if records:
-        first_grade = str(records[0].get("data", {}).get("grade", "")).lower()
-        if any(g in first_grade for g in ("6", "7", "8", "middle")):
-            detected_stage = "Middle"
-        elif any(g in first_grade for g in ("3", "4", "5", "prep")):
-            detected_stage = "Preparatory"
-
-    new_job = UploadJob(
-        teacher_id=teacher.id,
-        original_filename=file_name,
-        detected_stage=detected_stage,
-        status="PENDING",
-        total_students=len(records)
-    )
-    db.add(new_job)
+    stages = _workbook_stages(teacher, path)
+    rows = workbook.read(path)
+    client = _portal(teacher)
+    label = ", ".join(s[:4] for s in stages) if len(stages) > 1 else stages[0]       # fits the 30-char column
+    job = UploadJob(teacher_id=teacher.id, original_filename=file_name, detected_stage=label, status="PENDING",
+                    file_hash=hashlib.sha256(path.read_bytes()).hexdigest(), total_students=len(rows))
+    db.add(job)
+    db.flush()
+    for row_number, (sid, row) in enumerate(rows.items(), start=3):
+        db.add(StudentRecord(job_id=job.id, row_number=row_number, admission_number=sid,
+                             student_name=str(row.get(workbook.NAME_KEY) or sid), student_key=sid,
+                             grade=str(row.get("grade") or "")[:20], section=str(row.get("section") or "")[:10],
+                             status="PENDING" if row.get(workbook.SYNC_KEY) else "SKIPPED"))
     db.commit()
-    db.refresh(new_job)
+    db.refresh(job)
+    background_tasks.add_task(upload_jobs.run_job, job.id, client, str(path), teacher.id)
+    return _job_response(job)
 
-    background_tasks.add_task(
-        _execute_background_upload,
-        str(new_job.id),
-        teacher.id,
-        str(upload_path),
-        detected_stage
-    )
 
+@router.get("/upload/jobs", response_model=List[UploadJobResponse])
+def list_jobs(teacher: Teacher = Depends(require_teacher), db: Session = Depends(get_db)):
+    jobs = (db.query(UploadJob).filter(UploadJob.teacher_id == teacher.id)
+            .order_by(UploadJob.created_at.desc()).limit(20).all())
+    return [_job_response(j) for j in jobs]
+
+
+@router.get("/upload/jobs/{job_id}/records")
+def job_records(job_id: str, teacher: Teacher = Depends(require_teacher), db: Session = Depends(get_db)):
+    job = _own_job(db, teacher, job_id)
+    records = sorted(job.records, key=lambda r: r.row_number or 0)
+    return {**_job_response(job).model_dump(), "total_records": len(records), "records": [
+        {"id": r.id, "row_number": r.row_number, "admission_number": r.admission_number, "student_name": r.student_name,
+         "student_key": r.student_key, "grade": r.grade, "section": r.section, "status": r.status,
+         "attempt_count": r.attempt_count or 0, "verification_result": r.verification_result,
+         "error_message": r.error_message, "completed_at": r.completed_at.isoformat() if r.completed_at else None}
+        for r in records]}
+
+
+@router.get("/upload/jobs/{job_id}/export")
+def export_job(job_id: str, teacher: Teacher = Depends(require_teacher), db: Session = Depends(get_db)):
+    """CSV report: one line per student with the outcome."""
+    job = _own_job(db, teacher, job_id)
+    out = io.StringIO()
+    w = csv.writer(out)
+    w.writerow(["Workbook", "Stage", "Row", "Student ID", "Student Name", "Status", "Result", "Errors", "Finished At"])
+    for r in sorted(job.records, key=lambda r: r.row_number or 0):
+        w.writerow([job.original_filename, job.detected_stage, r.row_number, r.admission_number, r.student_name,
+                    r.status, r.verification_result or "", r.error_message or "",
+                    r.completed_at.isoformat() if r.completed_at else ""])
+    return StreamingResponse(io.BytesIO(out.getvalue().encode("utf-8-sig")), media_type="text/csv",
+                             headers={"Content-Disposition": f'attachment; filename="hpc_job_{job_id[:8]}_report.csv"'})
+
+
+def _own_job(db: Session, teacher: Teacher, job_id: str) -> UploadJob:
+    job = db.query(UploadJob).filter(UploadJob.id == job_id, UploadJob.teacher_id == teacher.id).first()
+    if not job:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Job not found")
+    return job
+
+
+def _job_response(job: UploadJob) -> UploadJobResponse:
     return UploadJobResponse(
-        job_id=new_job.id,
-        status=new_job.status,
-        total_students=new_job.total_students,
-        success_count=new_job.success_count,
-        failed_count=new_job.failed_count,
-        detected_stage=new_job.detected_stage,
-        created_at=new_job.created_at
-    )
+        job_id=job.id, status=job.status, total_students=job.total_students or 0,
+        success_count=job.success_count or 0, failed_count=job.failed_count or 0, unverified_count=0,
+        reconciliation_count=0, file_hash=job.file_hash, detected_stage=job.detected_stage,
+        created_at=job.created_at or datetime.utcnow(), completed_at=job.completed_at)

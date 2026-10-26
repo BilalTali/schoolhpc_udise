@@ -1,0 +1,143 @@
+"""
+Checking and uploading a teacher's filled workbook.
+
+check_workbook()  dry run: reads every student's current portal data, applies the workbook
+                  and runs the portal's own checks. Nothing is written.
+run_job()         background task: syncs every student marked Sync=Yes and records the
+                  outcome of each one in student_records as it goes.
+"""
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+from backend.database import SessionLocal
+from backend.hpc import sync, workbook
+from backend.hpc.portal import Portal
+from backend.models.entities import StudentRecord, UploadJob
+
+
+def _grid_hooks(client: Portal, teacher_id: Optional[str]) -> Dict[str, Any]:
+    """The Activities grid's choices live in the teacher's drafts, not in the file: add them to each row."""
+    if not teacher_id:
+        return {}
+    from backend.services import activity_grid, activity_library
+    return {"extra_values": lambda stage, sid: activity_grid.draft_values(teacher_id, client.ay, stage, sid),
+            "resolver_for": lambda stage: activity_library.resolver_for_teacher(teacher_id, stage)}
+
+
+def old_layout_rows(rows: Dict[str, Dict[str, Any]]) -> List[str]:
+    """Students whose row still has the old single Activity / Subjects / level columns filled in."""
+    old = ("b_activity", "b_subjects", "b_awareness", "b_sensitivity", "b_creativity")
+    return [sid for sid, row in rows.items() if any(str(row.get(k) or "").strip() for k in old)]
+
+
+def check_workbook(client: Portal, path: Path, teacher_id: Optional[str] = None) -> Dict[str, Any]:
+    """Validation report in the shape the web app shows."""
+    rows = workbook.read(path)
+    row_numbers = {sid: i for i, sid in enumerate(rows, start=3)}     # Students sheet row
+    results = sync.sync_workbook(client, path, dry_run=True, **_grid_hooks(client, teacher_id))
+    errors: List[Dict[str, Any]] = []
+    for r in results:
+        for message in r.errors:
+            part, _, detail = message.partition(": ")
+            errors.append({"row": row_numbers.get(r.student_id, 0), "field": f"{r.name} ({r.stage}) - {part}",
+                           "message": detail or message, "severity": "ERROR", "sheet": part,
+                           "rejected_value": None, "guidance": ""})
+    ready = [r for r in results if r.status == "READY"]
+    skipped = [r for r in results if r.status == "SKIPPED"]
+    warnings = [{"row": row_numbers.get(r.student_id, 0), "field": r.name, "message": "Sync is set to No - skipped",
+                 "severity": "WARNING", "sheet": "Students", "rejected_value": None, "guidance": ""} for r in skipped]
+    old = old_layout_rows(rows)
+    if old:
+        warnings.append({"row": 0, "field": "Part B", "severity": "WARNING", "sheet": "B", "rejected_value": None,
+                         "message": f"This file uses the old Activity columns ({len(old)} student(s) have them filled in). "
+                                    "Those columns are no longer read: activities and levels are set on the Activities tab. "
+                                    "Use 'Import from this file' there to bring them in.",
+                         "guidance": ""})
+    return {
+        "is_valid": bool(ready),
+        "total_records": len(ready),
+        "detected_stage": ", ".join(workbook.detect_stages(path)),
+        "error_count": len(errors),
+        "warning_count": len(warnings),
+        "errors": errors,
+        "warnings": warnings,
+        "seeder_working_days": "",
+        "seeder_max_marks": "",
+        "ready_students": [r.student_id for r in ready],
+    }
+
+
+def run_job(job_id: str, client: Portal, path: str, teacher_id: Optional[str] = None) -> None:
+    db = SessionLocal()
+    job = db.get(UploadJob, job_id)
+    try:
+        job.status = "IN_PROGRESS"
+        db.commit()
+        records = {r.admission_number: r for r in job.records}
+
+        def record(result: sync.SyncResult) -> None:
+            row = records.get(result.student_id)
+            if row is None:
+                return
+            row.status = {"COMPLETED": "SUCCESS", "SKIPPED": "SKIPPED", "INVALID": "INVALID"}.get(result.status, "FAILED")
+            row.attempt_count = (row.attempt_count or 0) + 1
+            row.error_message = "; ".join(result.errors)[:4000] or None
+            row.verification_result = ("Portal confirms COMPLETED" if result.status == "COMPLETED"
+                                       else f"Saved: {', '.join(result.saved_parts)}" if result.saved_parts else None)
+            row.completed_at = datetime.utcnow()
+            job.success_count = sum(1 for r in records.values() if r.status == "SUCCESS")
+            job.failed_count = sum(1 for r in records.values() if r.status in ("FAILED", "INVALID"))
+            db.commit()
+
+        from backend.services import audit
+        actor = f"teacher:{teacher_id}" if teacher_id else "unknown"
+        audit.record(actor, "upload_sync_start", "upload_job", job_id, None, {"students": len(records)})
+
+        def record_and_tidy(result: sync.SyncResult) -> None:
+            record(result)
+            if result.status != "SKIPPED":
+                audit.record(actor, "save_to_parakh", "student", result.student_id, None,
+                             {"stage": result.stage, "status": result.status, "saved_parts": result.saved_parts,
+                              "errors": result.errors[:5], "via": f"upload job {job_id[:8]}"})
+            if teacher_id and result.status == "COMPLETED":
+                from backend.services import activity_grid
+                activity_grid.forget(teacher_id, result.stage, result.student_id)
+                activity_grid.clear_draft_values(teacher_id, client.ay, result.stage, result.student_id)
+
+        from backend.services import snapshots
+        owner = f"teacher_{teacher_id}" if teacher_id else "unknown"
+        sync.sync_workbook(client, Path(path), on_result=record_and_tidy, **_grid_hooks(client, teacher_id),
+                           before_save_for=lambda stage: snapshots.hook(owner, stage, f"workbook upload (job {job_id[:8]})"))
+        done = [r for r in records.values() if r.status != "SKIPPED"]
+        job.status = ("COMPLETED" if done and all(r.status == "SUCCESS" for r in done)
+                      else "PARTIAL_SUCCESS" if any(r.status == "SUCCESS" for r in done) else "FAILED")
+        audit.record(actor, "upload_sync_end", "upload_job", job_id, None,
+                     {"status": job.status, "success": job.success_count, "failed": job.failed_count})
+    except Exception as exc:
+        db.rollback()
+        job.status = "FAILED"
+        for r in job.records:
+            if r.status in ("PENDING", "IN_PROGRESS"):
+                r.status, r.error_message = "FAILED", f"Upload stopped: {exc}"
+    finally:
+        job.completed_at = datetime.utcnow()
+        db.commit()
+        db.close()
+
+
+def recover_interrupted_jobs() -> int:
+    """Jobs left IN_PROGRESS by a server restart are marked FAILED (re-upload to continue)."""
+    db = SessionLocal()
+    try:
+        stuck = db.query(UploadJob).filter(UploadJob.status.in_(["PENDING", "IN_PROGRESS"])).all()
+        for job in stuck:
+            job.status = "FAILED"
+            job.completed_at = datetime.utcnow()
+            for r in job.records:
+                if r.status in ("PENDING", "IN_PROGRESS", "VALIDATED"):
+                    r.status, r.error_message = "FAILED", "Server restarted during upload. Upload the file again."
+        db.commit()
+        return len(stuck)
+    finally:
+        db.close()

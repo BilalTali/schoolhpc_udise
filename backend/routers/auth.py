@@ -1,7 +1,9 @@
 """
 Authentication Router: School Registration (One School = One UDISE) & Login
 """
-from fastapi import APIRouter, Depends, HTTPException, status
+from datetime import datetime
+
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy.orm import Session
 from backend.database import get_db
 from backend.models.entities import School, Teacher
@@ -9,7 +11,7 @@ from backend.schemas.schemas import (
     SchoolRegisterRequest, SchoolResponse, LoginRequest, TokenResponse
 )
 from backend.services.auth_service import (
-    hash_password, verify_password, create_access_token, get_current_user
+    create_access_token, end_session, get_current_user, hash_password, issue_session, rotate_session, verify_password,
 )
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
@@ -58,7 +60,7 @@ def register_school(payload: SchoolRegisterRequest, db: Session = Depends(get_db
 
 
 @router.post("/login", response_model=TokenResponse)
-def login(payload: LoginRequest, db: Session = Depends(get_db)):
+def login(payload: LoginRequest, response: Response, db: Session = Depends(get_db)):
     """
     Unified Login endpoint.
     Supports:
@@ -77,6 +79,7 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
         if not school.is_active:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="School account is disabled.")
 
+        issue_session(response, db, school.id, "SCHOOL_ADMIN", payload.remember_me)
         token = create_access_token({
             "sub": school.id,
             "role": "SCHOOL_ADMIN",
@@ -91,7 +94,8 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
             user_id=school.id,
             name=school.admin_name,
             school_id=school.id,
-            school_name=school.school_name
+            school_name=school.school_name,
+            udise_code=school.udise_code,
         )
 
     # Case 2: Try Teacher match (by username)
@@ -103,6 +107,9 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
         if not teacher.is_active:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Teacher account is disabled.")
 
+        teacher.last_login = datetime.utcnow()
+        db.commit()
+        issue_session(response, db, teacher.id, "TEACHER", payload.remember_me)
         school_obj = teacher.school
         token = create_access_token({
             "sub": teacher.id,
@@ -112,6 +119,8 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
             "school_id": teacher.school_id,
             "school_name": school_obj.school_name if school_obj else "School"
         })
+        stages_list = [s.strip() for s in (teacher.assigned_stage or "").split(",") if s.strip()]
+        grades_list = [g.strip() for g in (teacher.assigned_grade or "").split(",") if g.strip()]
         return TokenResponse(
             access_token=token,
             role="TEACHER",
@@ -120,7 +129,9 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
             school_id=teacher.school_id,
             school_name=school_obj.school_name if school_obj else None,
             assigned_stage=teacher.assigned_stage,
+            assigned_stages=stages_list if stages_list else ["Preparatory"],
             assigned_grade=teacher.assigned_grade,
+            assigned_grades=grades_list if grades_list else ["Grade 3"],
             assigned_section=teacher.assigned_section
         )
 
@@ -152,9 +163,24 @@ def get_my_profile(current=Depends(get_current_user)):
             "id": u.id,
             "name": u.teacher_name,
             "username": u.username,
+            "assigned_stages": u.stages,
+            "assigned_grades": [g.strip() for g in (u.assigned_grade or "").split(",") if g.strip()],
             "assigned_stage": u.assigned_stage,
             "assigned_grade": u.assigned_grade,
             "assigned_section": u.assigned_section,
             "school_id": u.school_id,
             "school_name": u.school.school_name if u.school else ""
         }
+
+
+@router.post("/refresh")
+def refresh(request: Request, response: Response, db: Session = Depends(get_db)):
+    """Renews the cookie session (call shortly before the 15-minute access cookie runs out, or after a 401)."""
+    return {"success": True, **rotate_session(request, response, db)}
+
+
+@router.post("/logout")
+def logout(request: Request, response: Response, db: Session = Depends(get_db)):
+    """Ends this browser's cookie session. Other tabs of the web app are told by the app itself."""
+    end_session(request, response, db)
+    return {"success": True}

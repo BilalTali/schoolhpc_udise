@@ -1,0 +1,609 @@
+{
+ "_source": "Extracted from the PARAKH HPC portal's own page code (hpc-credit pages) on 2026-10-25.",
+ "preparatory": {
+  "subjects": [
+   {
+    "key": "Language-education-r1",
+    "defaultCredits": 0
+   },
+   {
+    "key": "Language-education-r2",
+    "defaultCredits": 0
+   },
+   {
+    "key": "mathematics",
+    "defaultCredits": 0
+   },
+   {
+    "key": "the-world-around",
+    "defaultCredits": 0
+   },
+   {
+    "key": "art-education",
+    "defaultCredits": 0
+   },
+   {
+    "key": "physical-education",
+    "defaultCredits": 0
+   },
+   {
+    "key": "other-learning-activities",
+    "defaultCredits": 0,
+    "saApplicable": false
+   }
+  ],
+  "credits": {
+   "Language-education-r1": {
+    "hpcMaxCredits": 4.2,
+    "formativeCreditsPerCompetency": {
+     "Beginner": 0.47,
+     "Proficient": 0.93,
+     "Advance": 1.4
+    },
+    "saCredits": 1.8
+   },
+   "Language-education-r2": {
+    "hpcMaxCredits": 4.43,
+    "formativeCreditsPerCompetency": {
+     "Beginner": 0.49,
+     "Proficient": 0.98,
+     "Advance": 1.477
+    },
+    "saCredits": 1.9
+   },
+   "mathematics": {
+    "hpcMaxCredits": 4.32,
+    "formativeCreditsPerCompetency": {
+     "Beginner": 0.48,
+     "Proficient": 0.96,
+     "Advance": 1.44
+    },
+    "saCredits": 1.85
+   },
+   "the-world-around": {
+    "hpcMaxCredits": 4.67,
+    "formativeCreditsPerCompetency": {
+     "Beginner": 0.52,
+     "Proficient": 1.04,
+     "Advance": 1.56
+    },
+    "saCredits": 2
+   },
+   "art-education": {
+    "hpcMaxCredits": 2.33,
+    "formativeCreditsPerCompetency": {
+     "Beginner": 0.26,
+     "Proficient": 0.52,
+     "Advance": 0.78
+    },
+    "saCredits": 1
+   },
+   "physical-education": {
+    "hpcMaxCredits": 2.33,
+    "formativeCreditsPerCompetency": {
+     "Beginner": 0.26,
+     "Proficient": 0.52,
+     "Advance": 0.78
+    },
+    "saCredits": 1
+   },
+   "other-learning-activities": {
+    "hpcMaxCredits": 1.5,
+    "formativeCreditsPerCompetency": {
+     "Beginner": 0.17,
+     "Proficient": 0.33,
+     "Advance": 0.5
+    },
+    "saCredits": 0
+   }
+  },
+  "grades": [
+   {
+    "labelKey": "grade 3,4-&-5",
+    "classTextKey": "grd3",
+    "schoolPassed": 33,
+    "nationalCreditLevel": 0.6,
+    "earnedCredits": 23.1,
+    "vocationalEdu": [
+     "no-formal-education",
+     "200-hours-training",
+     "or",
+     "hrs-of-apprenticeship"
+    ],
+    "acadEquivalence": "foundational-literacy",
+    "totalCredits": 20,
+    "creditPoints": 14,
+    "classCodes": [
+     "grd3"
+    ]
+   },
+   {
+    "classTextKey": "grd4",
+    "schoolPassed": 33,
+    "nationalCreditLevel": 0.8,
+    "earnedCredits": 23.1,
+    "totalCredits": 26,
+    "creditPoints": 18,
+    "classCodes": [
+     "grd4"
+    ]
+   },
+   {
+    "classTextKey": "grd5",
+    "schoolPassed": 33,
+    "nationalCreditLevel": 1,
+    "earnedCredits": 23.1,
+    "totalCredits": 33,
+    "creditPoints": 23,
+    "classCodes": [
+     "grd5"
+    ]
+   }
+  ],
+  "display_rows": [
+   [
+    {
+     "key": null,
+     "ref": null,
+     "props": {
+      "children": [
+       "Grade 3",
+       "/",
+       {
+        "type": "strong",
+        "key": null,
+        "ref": null,
+        "props": {
+         "children": 33
+        }
+       }
+      ]
+     }
+    },
+    23.1,
+    [
+     "No Formal Education and",
+     "150/200 hrs of Vocational education and training/skilling",
+     "OR",
+     "600 hrs of Apprenticeship"
+    ],
+    "Foundational Literacy and numeracy at NSQF level 1/2 for grade 3 or grade 5 certificate by Competetent Authority",
+    0.6,
+    20,
+    14
+   ],
+   [
+    {
+     "key": null,
+     "ref": null,
+     "props": {
+      "children": [
+       "Grade 4",
+       "/",
+       {
+        "type": "strong",
+        "key": null,
+        "ref": null,
+        "props": {
+         "children": 33
+        }
+       }
+      ]
+     }
+    },
+    23.1,
+    [],
+    "",
+    0.8,
+    26,
+    18
+   ],
+   [
+    {
+     "key": null,
+     "ref": null,
+     "props": {
+      "children": [
+       "Grade 5",
+       "/",
+       {
+        "type": "strong",
+        "key": null,
+        "ref": null,
+        "props": {
+         "children": 33
+        }
+       }
+      ]
+     }
+    },
+    23.1,
+    [],
+    "",
+    1,
+    33,
+    23
+   ]
+  ]
+ },
+ "middle": {
+  "subjects": [
+   {
+    "key": "language-r1",
+    "defaultCredits": 0
+   },
+   {
+    "key": "language-r2",
+    "defaultCredits": 0
+   },
+   {
+    "key": "language-r3",
+    "defaultCredits": 0
+   },
+   {
+    "key": "mathematics-middle",
+    "defaultCredits": 0
+   },
+   {
+    "key": "science-middle",
+    "defaultCredits": 0
+   },
+   {
+    "key": "social-science-middle",
+    "defaultCredits": 0
+   },
+   {
+    "key": "art-education-middle",
+    "defaultCredits": 0
+   },
+   {
+    "key": "physical-education-middle",
+    "defaultCredits": 0
+   },
+   {
+    "key": "vocational-skill-education",
+    "defaultCredits": 0
+   },
+   {
+    "key": "other-learning-activities",
+    "defaultCredits": 0,
+    "saApplicable": false
+   },
+   {
+    "key": "bagless-days-vocational-experience",
+    "defaultCredits": 0,
+    "saApplicable": false
+   }
+  ],
+  "credits": {
+   "language-r1": {
+    "hpcMaxCredits": 1.52,
+    "formativeCreditsPerCompetency": {
+     "Beginner": 0.17,
+     "Proficient": 0.34,
+     "Advance": 0.51
+    },
+    "saCredits": 0.65
+   },
+   "language-r2": {
+    "hpcMaxCredits": 1.63,
+    "formativeCreditsPerCompetency": {
+     "Beginner": 0.18,
+     "Proficient": 0.36,
+     "Advance": 0.54
+    },
+    "saCredits": 0.7
+   },
+   "language-r3": {
+    "hpcMaxCredits": 1.75,
+    "formativeCreditsPerCompetency": {
+     "Beginner": 0.19,
+     "Proficient": 0.39,
+     "Advance": 0.58
+    },
+    "saCredits": 0.75
+   },
+   "mathematics-middle": {
+    "hpcMaxCredits": 2.68,
+    "formativeCreditsPerCompetency": {
+     "Beginner": 0.3,
+     "Proficient": 0.6,
+     "Advance": 0.89
+    },
+    "saCredits": 1.15
+   },
+   "science-middle": {
+    "hpcMaxCredits": 3.73,
+    "formativeCreditsPerCompetency": {
+     "Beginner": 0.41,
+     "Proficient": 0.83,
+     "Advance": 1.24
+    },
+    "saCredits": 1.6
+   },
+   "social-science-middle": {
+    "hpcMaxCredits": 3.73,
+    "formativeCreditsPerCompetency": {
+     "Beginner": 0.41,
+     "Proficient": 0.83,
+     "Advance": 1.24
+    },
+    "saCredits": 1.6
+   },
+   "art-education-middle": {
+    "hpcMaxCredits": 2.33,
+    "formativeCreditsPerCompetency": {
+     "Beginner": 0.26,
+     "Proficient": 0.52,
+     "Advance": 0.78
+    },
+    "saCredits": 1
+   },
+   "physical-education-middle": {
+    "hpcMaxCredits": 2.33,
+    "formativeCreditsPerCompetency": {
+     "Beginner": 0.26,
+     "Proficient": 0.52,
+     "Advance": 0.78
+    },
+    "saCredits": 1
+   },
+   "skill-education-middle": {
+    "hpcMaxCredits": 2.57,
+    "formativeCreditsPerCompetency": {
+     "Beginner": 0.29,
+     "Proficient": 0.57,
+     "Advance": 0.86
+    },
+    "saCredits": 1.1
+   },
+   "other-learning-activities": {
+    "hpcMaxCredits": 2.83,
+    "formativeCreditsPerCompetency": {
+     "Beginner": 0.31,
+     "Proficient": 0.63,
+     "Advance": 0.94
+    },
+    "saCredits": 0
+   },
+   "bagless-days-vocational-experience": {
+    "hpcMaxCredits": 5.33,
+    "formativeCreditsPerCompetency": {
+     "Beginner": 0.59,
+     "Proficient": 1.18,
+     "Advance": 1.78
+    },
+    "saCredits": 0
+   }
+  },
+  "grades": [
+   {
+    "labelKey": "middle-school-hrs",
+    "classTextKey": "grd6",
+    "schoolPassed": 40,
+    "nationalCreditLevel": 1.33,
+    "earnedCredits": 28,
+    "vocationalEdu": [
+     "no-formal-edu",
+     "or",
+     "ability-to-read-and-write",
+     "and-cap",
+     "voc-educational-training",
+     "or",
+     "nsqf-level-year-experience",
+     "or",
+     "750-hrs-of-apprenticeship"
+    ],
+    "acadEquivalence": "foundational-literacy-middle",
+    "totalCredits": 53,
+    "creditPoints": 37,
+    "classCodes": [
+     "grd6"
+    ]
+   },
+   {
+    "classTextKey": "grd7",
+    "schoolPassed": 40,
+    "nationalCreditLevel": 1.67,
+    "earnedCredits": 28,
+    "totalCredits": 67,
+    "creditPoints": 47,
+    "classCodes": [
+     "grd7"
+    ]
+   },
+   {
+    "classTextKey": "grd8",
+    "schoolPassed": 40,
+    "nationalCreditLevel": 2,
+    "earnedCredits": 28,
+    "totalCredits": 80,
+    "creditPoints": 56,
+    "classCodes": [
+     "grd8"
+    ]
+   }
+  ],
+  "display_rows": [
+   [
+    {
+     "key": null,
+     "ref": null,
+     "props": {
+      "children": [
+       "Grade 6",
+       "/",
+       {
+        "type": "strong",
+        "key": null,
+        "ref": null,
+        "props": {
+         "children": 40
+        }
+       }
+      ]
+     }
+    },
+    28,
+    [
+     "No Formal Education",
+     "OR",
+     "Ability to read and write with one-year experience whenever job requires",
+     "AND",
+     "210-270 hrs of vocational education and training/skilling",
+     "OR",
+     [
+      {
+       "type": "b",
+       "key": "b0",
+       "ref": null,
+       "props": {
+        "children": [
+         "NSQF Level 1 with 1-year experience"
+        ]
+       }
+      },
+      " and 210-270 hrs of vocational education and Training/Skilling"
+     ],
+     "OR",
+     "750 hrs of Apprenticeship"
+    ],
+    "Advance literacy and numeracy at NSQF level 2 or 3 through Competent Authority for grade 5th or grade 8th certificate",
+    1.33,
+    53,
+    37
+   ],
+   [
+    {
+     "key": null,
+     "ref": null,
+     "props": {
+      "children": [
+       "Grade 7",
+       "/",
+       {
+        "type": "strong",
+        "key": null,
+        "ref": null,
+        "props": {
+         "children": 40
+        }
+       }
+      ]
+     }
+    },
+    28,
+    [],
+    "",
+    1.67,
+    67,
+    47
+   ],
+   [
+    {
+     "key": null,
+     "ref": null,
+     "props": {
+      "children": [
+       "Grade 8",
+       "/",
+       {
+        "type": "strong",
+        "key": null,
+        "ref": null,
+        "props": {
+         "children": 40
+        }
+       }
+      ]
+     }
+    },
+    28,
+    [],
+    "",
+    2,
+    80,
+    56
+   ]
+  ]
+ },
+ "foundational": {
+  "_note": "Foundational credits come only from Part C levels (no summative marks); see credit.build_foundational.",
+  "domains": [
+   "FSDOM1",
+   "FSDOM2",
+   "FSDOM3",
+   "FSDOM4",
+   "FSDOM5",
+   "FSDOM51"
+  ],
+  "subjects": [
+   {
+    "key": "physical-development",
+    "defaultCredits": 4.5
+   },
+   {
+    "key": "social-development",
+    "defaultCredits": 4.5
+   },
+   {
+    "key": "cognitive-development",
+    "defaultCredits": 4.5
+   },
+   {
+    "key": "language-literacy-development",
+    "defaultCredits": 4.5
+   },
+   {
+    "key": "aesthetic-cultural-development",
+    "defaultCredits": 4.5
+   },
+   {
+    "key": "positive-learning-habits",
+    "defaultCredits": 4.5
+   }
+  ],
+  "credit_per_level": {
+   "Beginner": 0.49,
+   "Proficient": 0.99,
+   "Advance": 1.48
+  },
+  "grades": [
+   {
+    "labelKey": "pre-primary-3-years",
+    "classTextKey": "balvatika",
+    "label": "Balvatika",
+    "schoolPassed": 81,
+    "nationalCreditLevel": 0.1,
+    "creditPoints": 8,
+    "classCodes": [
+     "bv1",
+     "bv2",
+     "bv3"
+    ]
+   },
+   {
+    "labelKey": "primary-grade-i-ii-800-hours",
+    "classTextKey": "Grade 1",
+    "label": "Grade I",
+    "schoolPassed": 27,
+    "nationalCreditLevel": 0.2,
+    "creditPoints": 5,
+    "classCodes": [
+     "grd1"
+    ]
+   },
+   {
+    "labelKey": "800hour",
+    "classTextKey": "Grade 2",
+    "label": "Grade II",
+    "schoolPassed": 27,
+    "nationalCreditLevel": 0.4,
+    "creditPoints": 11,
+    "classCodes": [
+     "grd2"
+    ]
+   }
+  ]
+ }
+}

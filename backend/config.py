@@ -1,34 +1,63 @@
 """
-Application Configuration
+Application settings. Override any of them with environment variables (or a .env file
+in the project root, see .env.example).
 """
-from pathlib import Path
 import os
+from pathlib import Path
 
-BASE_DIR = Path(__file__).resolve().parent
-PROJECT_ROOT = BASE_DIR.parent
-AUTOMATION_ROOT = PROJECT_ROOT / "hpc_python_automation"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
-# MySQL Database connection (XAMPP default: root without password on 127.0.0.1:3306)
-MYSQL_USER = os.getenv("MYSQL_USER", "root")
-MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD", "")
-MYSQL_HOST = os.getenv("MYSQL_HOST", "127.0.0.1")
-MYSQL_PORT = os.getenv("MYSQL_PORT", "3306")
-MYSQL_DB = os.getenv("MYSQL_DB", "hpc_automation")
 
-DATABASE_URL = f"mysql+pymysql://{MYSQL_USER}:{MYSQL_PASSWORD}@{MYSQL_HOST}:{MYSQL_PORT}/{MYSQL_DB}?charset=utf8mb4"
+def _load_dotenv(path: Path) -> None:
+    if path.exists():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            key, sep, value = line.partition("=")
+            if sep and not line.lstrip().startswith("#"):
+                os.environ.setdefault(key.strip(), value.strip())
 
-# Fallback SQLite DB for offline testing if MySQL is ever down
-SQLITE_URL = f"sqlite:///{AUTOMATION_ROOT / 'data' / 'hpc_automation.db'}"
 
-# JWT Security
-JWT_SECRET = os.getenv("JWT_SECRET", "hpc_enterprise_super_secret_key_parakh_2026_@_987654321")
-JWT_ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
+_load_dotenv(PROJECT_ROOT / ".env")
 
-# Storage directories
-SESSIONS_DIR = AUTOMATION_ROOT / "data" / "teacher_sessions"
-EVIDENCE_DIR = AUTOMATION_ROOT / "audit_evidence"
-DATA_DIR = AUTOMATION_ROOT / "data"
+# Database: MySQL from XAMPP by default; set HPC_DATABASE_URL to use something else,
+# e.g. sqlite:///data/hpc.db
+DATABASE_URL = os.getenv("HPC_DATABASE_URL", "mysql+pymysql://root:@127.0.0.1:3306/hpc_automation?charset=utf8mb4")
 
-for d in (SESSIONS_DIR, EVIDENCE_DIR, DATA_DIR):
+# Local files: portal sessions, uploaded workbooks, generated workbooks. Never committed.
+# Keep these OUTSIDE cloud-synced folders (OneDrive, Google Drive): they hold students' records,
+# PARAKH session tokens and the keys that unlock stored passwords. Set them in .env.
+DATA_DIR = Path(os.getenv("HPC_DATA_DIR", PROJECT_ROOT / "data"))
+SESSIONS_DIR = DATA_DIR / "sessions"
+BACKUP_DIR = Path(os.getenv("HPC_BACKUP_DIR", PROJECT_ROOT.parent / "hhpc_backups"))
+BACKUP_KEY_FILE = Path(os.getenv("HPC_BACKUP_KEY_FILE", DATA_DIR.parent / "keys" / "backup.key"))
+if any("onedrive" in str(p).lower() for p in (DATA_DIR, BACKUP_DIR)):
+    print(f"[config] WARNING: data or backups are inside OneDrive ({DATA_DIR}, {BACKUP_DIR}). "
+          "Set HPC_DATA_DIR and HPC_BACKUP_DIR in .env to a folder that is not synced.")
+for d in (DATA_DIR, SESSIONS_DIR):
     d.mkdir(parents=True, exist_ok=True)
+
+
+def _jwt_secret() -> str:
+    """HPC_JWT_SECRET if set, otherwise a random secret generated once and kept in data/."""
+    if os.getenv("HPC_JWT_SECRET"):
+        return os.environ["HPC_JWT_SECRET"]
+    path = DATA_DIR / ".jwt_secret"
+    if not path.exists():
+        import secrets
+        path.write_text(secrets.token_urlsafe(48), encoding="utf-8")
+    return path.read_text(encoding="utf-8").strip()
+
+
+JWT_SECRET = _jwt_secret()
+JWT_ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7          # legacy Bearer token in the login response
+ACCESS_COOKIE_MINUTES = 15                        # cookie session: short access token...
+REFRESH_DAYS_DEFAULT, REFRESH_DAYS_REMEMBER = 1, 30   # ...renewed by a refresh token
+COOKIE_SECURE = os.getenv("HPC_COOKIE_SECURE", "false").lower() == "true"   # set true behind HTTPS
+
+# PARAKH login captcha. By default the teacher types it (the app shows PARAKH's picture).
+# HPC_AUTO_CAPTCHA=true makes the app read the captcha itself: UNSUPPORTED, off by default,
+# and to be removed before any paid launch (PARAKH has not approved automated logins).
+AUTO_CAPTCHA = os.getenv("HPC_AUTO_CAPTCHA", "false").lower() == "true"
+
+# At most this many requests per second to PARAKH from one portal session.
+PORTAL_MAX_PER_SECOND = float(os.getenv("HPC_PORTAL_MAX_PER_SECOND", "4"))

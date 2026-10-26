@@ -1,9 +1,9 @@
 """
 Pydantic Schemas for Validation and API Contracts
 """
-from typing import Optional, List, Any
+from typing import List, Optional
 from datetime import datetime
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, ConfigDict
 import re
 
 
@@ -47,8 +47,7 @@ class SchoolResponse(BaseModel):
     admin_phone: Optional[str]
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class TeacherCreateRequest(BaseModel):
@@ -57,9 +56,12 @@ class TeacherCreateRequest(BaseModel):
     username: str = Field(..., min_length=3, max_length=100, description="Login username for teacher")
     mobile_number: Optional[str] = None
     password: str = Field(..., min_length=6, description="Initial teacher password")
-    assigned_stage: str = Field("Preparatory", description="Preparatory or Middle")
-    assigned_grade: str = Field("Grade 3", description="Assigned class, e.g., Grade 3 or Grade 6")
-    assigned_section: str = Field("A", description="Assigned section, e.g., A, B, C")
+    assigned_stage: Optional[str] = Field("Preparatory", description="Preparatory or Middle or comma-separated")
+    assigned_stages: Optional[List[str]] = Field(default=None, description="Multi-selected stages, e.g. ['Preparatory', 'Middle']")
+    assigned_grade: Optional[str] = Field("Grade 3", description="Assigned class, e.g., Grade 3 or Grade 6")
+    assigned_grades: Optional[List[str]] = Field(default=None, description="Multi-selected grades")
+    assigned_section: Optional[str] = Field("A", description="Assigned section, e.g., A, B, C")
+    assigned_sections: Optional[List[str]] = Field(default=None, description="Multi-selected sections")
 
     @field_validator("username")
     @classmethod
@@ -70,6 +72,21 @@ class TeacherCreateRequest(BaseModel):
         return clean
 
 
+class TeacherUpdateRequest(BaseModel):
+    teacher_name: Optional[str] = None
+    employee_code: Optional[str] = None
+    username: Optional[str] = None
+    mobile_number: Optional[str] = None
+    password: Optional[str] = None
+    assigned_stage: Optional[str] = None
+    assigned_stages: Optional[List[str]] = None
+    assigned_grade: Optional[str] = None
+    assigned_grades: Optional[List[str]] = None
+    assigned_section: Optional[str] = None
+    assigned_sections: Optional[List[str]] = None
+    is_active: Optional[bool] = None
+
+
 class TeacherResponse(BaseModel):
     id: str
     school_id: str
@@ -78,7 +95,9 @@ class TeacherResponse(BaseModel):
     username: str
     mobile_number: Optional[str]
     assigned_stage: str
+    assigned_stages: List[str] = []
     assigned_grade: str
+    assigned_grades: List[str] = []
     assigned_section: str
     is_active: bool
     last_login: Optional[datetime]
@@ -87,14 +106,15 @@ class TeacherResponse(BaseModel):
     # Whether HPC credentials have been saved
     has_hpc_credentials: bool = False
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
+
 
 
 class LoginRequest(BaseModel):
     identifier: str = Field(..., description="UDISE code/email for School Admin, or username for Teacher")
     password: str = Field(...)
     role: str = Field("AUTO", description="'SCHOOL_ADMIN', 'TEACHER', or 'AUTO'")
+    remember_me: bool = Field(False, description="Keep the browser signed in for 30 days instead of 1")
 
 
 class TokenResponse(BaseModel):
@@ -105,9 +125,13 @@ class TokenResponse(BaseModel):
     name: str
     school_id: Optional[str] = None
     school_name: Optional[str] = None
+    udise_code: Optional[str] = None
     assigned_stage: Optional[str] = None
+    assigned_stages: Optional[List[str]] = None
     assigned_grade: Optional[str] = None
+    assigned_grades: Optional[List[str]] = None
     assigned_section: Optional[str] = None
+
 
 
 class ValidationReportResponse(BaseModel):
@@ -125,12 +149,32 @@ class ValidationReportResponse(BaseModel):
 class UploadJobResponse(BaseModel):
     job_id: str
     status: str
-    total_students: int
-    success_count: int
-    failed_count: int
+    total_students: int = 0
+    success_count: int = 0
+    failed_count: int = 0
+    unverified_count: int = 0
+    reconciliation_count: int = 0
+    file_hash: Optional[str] = None
     detected_stage: str
     created_at: datetime
     completed_at: Optional[datetime] = None
+
+
+class StudentRecordResponse(BaseModel):
+    id: str
+    row_number: Optional[int] = None
+    admission_number: str
+    student_name: str
+    student_key: Optional[str] = None
+    grade: Optional[str] = None
+    section: Optional[str] = None
+    status: str
+    attempt_count: int = 0
+    verification_result: Optional[str] = None
+    error_message: Optional[str] = None
+    completed_at: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ---------------------------------------------------------------------------
@@ -154,24 +198,17 @@ class HpcOtpRequest(BaseModel):
     otp: str = Field(..., min_length=4, max_length=10, description="6-digit OTP sent to mobile")
 
 
+class HpcCaptchaRequest(BaseModel):
+    answer: str = Field(..., max_length=20, description="what the captcha picture shows")
+
+
 class HpcSessionStatusResponse(BaseModel):
     logged_in: bool
+    captcha_mode: str = "typed"                  # "typed" or "automatic (unsupported)"
     user: Optional[str] = None
     school: Optional[str] = None
     role: Optional[str] = None
     reason: Optional[str] = None
-
-
-# ---------------------------------------------------------------------------
-# Legacy schemas (kept for backward compatibility)
-# ---------------------------------------------------------------------------
-
-class ParakhDirectLoginRequest(BaseModel):
-    login_id: str = Field(..., description="HPC Login ID / Teacher code / Mobile")
-    password: str = Field(..., description="PARAKH portal password")
-    captcha_id: str = Field(..., description="Captcha identifier from GET /captcha")
-    captcha_answer: str = Field(..., description="Answer to the arithmetic captcha")
-
-
-class ParakhVerifyOtpRequest(BaseModel):
-    otp: str = Field(..., min_length=4, max_length=10, description="Verification code sent to teacher phone")
+    has_credentials: bool = False
+    saved_hpc_login_id: Optional[str] = None
+    stages: List[str] = []          # stages the teacher can work with (app + portal)

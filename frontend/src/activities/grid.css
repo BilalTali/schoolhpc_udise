@@ -1,0 +1,80 @@
+/* Activities grid (teacher tab 4). */
+
+.grid-panel { display: flex; flex-direction: column; gap: 0.9rem; }
+.grid-head-actions { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; }
+.grid-head-actions .btn { padding: 0.45rem 0.9rem; font-size: 0.84rem; }
+.grid-ready { font-size: 0.9rem; color: var(--chakra-navy); }
+.grid-fill-toggle { align-self: flex-start; display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.85rem; }
+
+/* Quick fill */
+.qf { border: 1px solid #C7D2FE; background: var(--chakra-50); border-radius: var(--radius-md); padding: 0.9rem 1rem; display: flex; flex-direction: column; gap: 0.75rem; }
+.qf-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 0.75rem 1rem; align-items: start; }
+.qf-field { display: flex; flex-direction: column; gap: 0.3rem; }
+.qf-field .form-select { width: 100%; }
+.qf-fieldset { border: none; padding: 0; margin: 0; }
+.qf-fieldset legend { margin-bottom: 0.25rem; }
+.qf-levels { border: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 0.4rem 1rem; align-items: center; }
+.qf-level { display: flex; align-items: center; gap: 0.5rem; padding: 0.25rem 0.6rem; background: #FFFFFF; border: 1px solid var(--border-light); border-radius: var(--radius-sm); }
+.qf-level > span { font-weight: 700; font-size: 0.84rem; min-width: 80px; }
+.qf-level-opt { display: inline-flex; align-items: center; gap: 0.25rem; font-size: 0.82rem; cursor: pointer; }
+.qf-actions { display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; }
+.qf-actions .btn { padding: 0.45rem 1rem; }
+
+.grid-import { display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; font-size: 0.86rem; padding: 0.6rem 0.8rem; background: #FFFBEB; border: 1px solid #FDE68A; border-radius: var(--radius-sm); }
+.grid-import .btn { padding: 0.35rem 0.8rem; font-size: 0.82rem; }
+
+.grid-tools { display: flex; gap: 0.75rem 1rem; align-items: flex-end; flex-wrap: wrap; }
+.grid-tools .roster-search-input { flex: 1 1 220px; }
+.grid-subjects { position: relative; }
+.grid-subjects summary { cursor: pointer; font-weight: 600; font-size: 0.86rem; padding: 0.45rem 0.7rem; border: 1px solid var(--border-medium); border-radius: var(--radius-sm); background: #FFFFFF; }
+.grid-subjects-list { position: absolute; z-index: 20; right: 0; margin-top: 0.3rem; background: #FFFFFF; border: 1px solid var(--border-medium); border-radius: var(--radius-sm); padding: 0.6rem 0.8rem; display: flex; flex-direction: column; gap: 0.35rem; min-width: 240px; box-shadow: var(--shadow-lg); }
+
+/* The grid: student column and two header rows stay put while scrolling */
+.grid-scroll { overflow: auto; max-height: 72vh; border: 1px solid var(--border-light); border-radius: var(--radius-md); background: #FFFFFF; }
+.grid-table { border-collapse: separate; border-spacing: 0; font-size: 0.82rem; min-width: 100%; }
+.grid-table th, .grid-table td { border-bottom: 1px solid var(--border-light); padding: 0.35rem 0.45rem; vertical-align: middle; background: #FFFFFF; }
+.grid-table thead th { position: sticky; z-index: 3; background: #F1F5F9; color: var(--chakra-navy); font-weight: 700; text-align: left; white-space: nowrap; }
+.grid-table thead tr:first-child th { top: 0; }
+.grid-table thead tr:nth-child(2) th { top: 2.1rem; font-size: 0.74rem; color: #334155; }
+.grid-subject-head { border-left: 2px solid var(--border-medium); text-align: center !important; }
+.grid-act-head { border-left: 2px solid var(--border-medium); }
+.grid-sticky { position: sticky; left: 0; z-index: 2; box-shadow: 1px 0 0 var(--border-medium); }
+.grid-table thead .grid-sticky { z-index: 4; }
+.grid-student-head { display: table-cell; }
+.grid-student-head input, .grid-student input { width: 17px; height: 17px; margin-right: 0.45rem; vertical-align: middle; }
+.grid-student { min-width: 210px; max-width: 260px; text-align: left; font-weight: 400; }
+.grid-name { display: inline-flex; flex-direction: column; vertical-align: middle; }
+.grid-name b { color: var(--chakra-navy); }
+.grid-name small { color: var(--text-muted); }
+.grid-status-head, .grid-status { min-width: 150px; }
+.grid-status { display: table-cell; }
+.grid-status > * { margin: 0.1rem 0.25rem 0.1rem 0; }
+.grid-act { border-left: 2px solid var(--border-medium); min-width: 190px; }
+.grid-act select { width: 100%; max-width: 240px; padding: 0.3rem 0.35rem; border: 1.5px solid var(--border-medium); border-radius: 6px; font-size: 0.8rem; background: #FFFFFF; }
+.grid-level-head { text-align: center !important; }
+.grid-bpa { display: flex; justify-content: center; gap: 0.55rem; font-weight: 700; color: #475569; margin-top: 0.1rem; }
+.grid-radios { display: flex; justify-content: center; gap: 0.15rem; }
+.grid-radio { position: relative; display: inline-flex; flex-direction: column; align-items: center; cursor: pointer; }
+.grid-radio input { width: 18px; height: 18px; margin: 0; accent-color: var(--chakra-blue); cursor: pointer; }
+.grid-radio span[aria-hidden] { font-size: 0.62rem; font-weight: 700; color: #475569; line-height: 1; }
+.grid-empty { background: #FFFBEB !important; }
+.grid-from-c { box-shadow: inset 0 -3px 0 #A5B4FC; }
+.grid-row-todo .grid-student { box-shadow: inset 4px 0 0 #B45309, 1px 0 0 var(--border-medium); }
+.grid-row-locked td { background: #F8FAFC !important; }
+.grid-save { display: inline-flex; align-items: center; gap: 0.2rem; font-size: 0.72rem; color: var(--text-muted); }
+.grid-save-ok { color: #14532D; }
+.grid-save-bad { color: #B91C1C; font-weight: 700; }
+.grid-detail-row td { background: #F8FAFC; }
+.grid-detail { display: flex; flex-direction: column; gap: 0.5rem; font-size: 0.84rem; max-width: 960px; position: sticky; left: 0; }
+.grid-detail ul { margin: 0.2rem 0 0 1.2rem; }
+.grid-detail-actions { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; }
+.grid-detail-actions .btn { padding: 0.35rem 0.8rem; font-size: 0.8rem; }
+.grid-none { padding: 1rem; }
+
+@media (max-width: 760px) {
+  .grid-student { min-width: 150px; }
+  .grid-status-head, .grid-status { min-width: 110px; }
+  .grid-act { min-width: 160px; }
+  .grid-scroll { max-height: 65vh; }
+  .grid-subjects-list { left: 0; right: auto; }
+}
