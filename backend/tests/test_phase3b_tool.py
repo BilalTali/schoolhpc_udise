@@ -55,7 +55,7 @@ def test_preview_masks_names_takes_a_snapshot_and_restore_preview_finds_changes(
 
     assert phase3b.preview(args) == 0
     out = capsys.readouterr().out
-    assert "Mother Tongue: Kashmiri" in out and "(name, 15 letters)" in out
+    assert "Mother Tongue: Kashmiri" in out and "(hidden, 15 characters)" in out
     assert "Parent Fullname" not in out and "TEST STUDENT" not in out          # names never printed
     assert "Nothing was saved" in out and fake.saved == []
     assert len(list(tmp_path.rglob("*.json"))) == 1

@@ -24,7 +24,9 @@ from backend.models.entities import Teacher  # noqa: E402
 from backend.services import hpc_sessions, snapshots  # noqa: E402
 
 NAME_KEYS = ("a1_guardian_name", "a2_name", "a3_peer1_name", "a3_peer1_friend", "a3_peer2_name", "a3_peer2_friend",
-             "a2_about_9")                                    # Middle A2 "Name"
+             "a2_about_9",                                    # Middle A2 "Name"
+             "a1_udid",                                       # disability ID: personal identifier
+             "a3_resources_other", "a4_resources_other")     # free text that has held names
 
 
 class ReadOnly(Exception):
@@ -46,13 +48,14 @@ def read_only_client(teacher_id: str) -> Portal:
         return original(method, path, **kwargs)
     client._request = guarded
     client.save_part = lambda *a, **k: (_ for _ in ()).throw(ReadOnly("blocked a save: this tool is read only"))
+    client.refresh = lambda rejected_token: False      # renewing the session is a POST: not in a read-only run
     return client
 
 
 def masked(key: str, value) -> str:
     text = str(value if value is not None else "").strip()
     if key in NAME_KEYS and text:
-        return f"(name, {len(text)} letters)"
+        return f"(hidden, {len(text)} characters)"
     return text or "-"
 
 
