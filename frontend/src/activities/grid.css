@@ -123,12 +123,12 @@
 .ul-saved { background: #DCFCE7; color: #14532D; border-color: #86EFAC; }
 .ul-failed { background: #FEE2E2; color: #7F1D1D; border-color: #FCA5A5; }
 .ul-skipped { background: #F1F5F9; color: #334155; border-color: #CBD5E1; }
-.ul-working { background: #DBEAFE; color: #1E3A8A; border-color: #93C5FD; }
+.ul-working { background: var(--brand-50); color: var(--brand-700); border-color: var(--brand-200); }
 .ul-waiting { background: #FFFFFF; color: #475569; border-color: #CBD5E1; }
 .ul-now p { margin: 0; font-size: 0.92rem; }
 .ul-grid { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 1rem; align-items: start; }
 .ul-table td, .ul-table th { padding: 0.4rem 0.6rem; font-size: 0.84rem; }
-.ul-table tr.ul-current td { background: #EFF6FF; }
+.ul-table tr.ul-current td { background: var(--brand-50); }
 .ul-timeline { border-left: 3px solid #E2E8F0; padding-left: 0.8rem; max-height: 22rem; overflow: auto; }
 .ul-timeline h4 { margin: 0 0 0.4rem; font-size: 0.85rem; color: var(--chakra-navy); }
 .ul-timeline ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.8rem; }

@@ -1361,7 +1361,7 @@ export default function App() {
 
   const logo = (
     <svg viewBox="0 0 40 40" width="34" height="34" aria-hidden="true">
-      <rect x="2" y="2" width="36" height="36" rx="10" fill="var(--brand-600)" />
+      <rect x="2" y="2" width="36" height="36" rx="10" fill="var(--brand-500)" />
       <path d="M11 20.5l6 6 12-13" fill="none" stroke="#FFFFFF" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
@@ -1626,7 +1626,7 @@ export default function App() {
             {schoolTab === "teachers" && (
             <div className="ui-panel">
               <div className="panel-header">
-                <div className="panel-title"><Users size={20} color="#003399" /><span>Teachers</span></div>
+                <div className="panel-title"><Users size={20} color="#CF4A0A" /><span>Teachers</span></div>
                 <div style={{ display: "flex", gap: "0.75rem" }}>
                   <button onClick={fetchSchoolData} className="btn btn-outline" style={{ padding: "0.5rem 0.85rem" }}>
                     <RefreshCw size={15} /> Refresh
@@ -1742,7 +1742,7 @@ export default function App() {
               <div className="ui-panel">
                 <div className="panel-header">
                   <div className="panel-title">
-                    <GraduationCap size={20} color="#003399" />
+                    <GraduationCap size={20} color="#CF4A0A" />
                     <span>School Students Directory (PARAKH Synced)</span>
                   </div>
                   <div style={{ display: "flex", gap: "0.6rem", alignItems: "center", flexWrap: "wrap" }}>
@@ -1825,7 +1825,7 @@ export default function App() {
                   if (schoolStudents.length === 0) {
                     return (
                       <div className="empty-roster-box">
-                        <GraduationCap size={48} color="#003399" style={{ margin: "0 auto 1rem", opacity: 0.5 }} />
+                        <GraduationCap size={48} color="#CF4A0A" style={{ margin: "0 auto 1rem", opacity: 0.5 }} />
                         <h3 style={{ fontSize: "1.15rem", fontWeight: 700, color: "var(--chakra-navy)" }}>
                           No Students Synced for {schoolActiveStage} Stage Yet
                         </h3>
@@ -1886,7 +1886,7 @@ export default function App() {
                                 <td><span className="mono-chip">{s.admission_number || s.hpc_login_id || "—"}</span></td>
                                 <td>
                                   {s.apaar_id ? (
-                                    <span className="mono-chip" style={{ color: "#003399", fontWeight: 600 }}>
+                                    <span className="mono-chip" style={{ color: "var(--brand-600)", fontWeight: 600 }}>
                                       {s.apaar_id}
                                     </span>
                                   ) : (
@@ -2318,7 +2318,7 @@ export default function App() {
 
                 <label className="dropzone" style={{ display: "block", marginBottom: "1.5rem" }}>
                   <input type="file" accept=".xlsx" onChange={handleFileUpload} style={{ display: "none" }} />
-                  <FileSpreadsheet size={42} color="#003399" style={{ margin: "0 auto 0.8rem" }} />
+                  <FileSpreadsheet size={42} color="#CF4A0A" style={{ margin: "0 auto 0.8rem" }} />
                   <div style={{ fontWeight: 700, fontSize: "1.05rem", color: "var(--chakra-navy)" }}>
                     {uploadedFileName ? `Selected: ${uploadedFileName}` : "Choose the filled Excel file (.xlsx)"}
                   </div>
@@ -2645,7 +2645,7 @@ export default function App() {
                   if (students.length === 0) {
                     return (
                       <div className="empty-roster-box">
-                        <FileSpreadsheet size={48} color="#003399" style={{ margin: "0 auto 1rem", opacity: 0.6 }} />
+                        <FileSpreadsheet size={48} color="#CF4A0A" style={{ margin: "0 auto 1rem", opacity: 0.6 }} />
                         <h3 style={{ fontSize: "1.15rem", fontWeight: 700, color: "var(--chakra-navy)" }}>
                           No Students Synced for {activeTeacherStage} Stage Yet
                         </h3>
@@ -2748,7 +2748,7 @@ export default function App() {
                                 <td>
                                   {s.apaar_id ? (
                                     <div style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem" }}>
-                                      <span className="mono-chip" style={{ color: "#003399", fontWeight: 600 }}>
+                                      <span className="mono-chip" style={{ color: "var(--brand-600)", fontWeight: 600 }}>
                                         {s.apaar_id}
                                       </span>
                                       <button

@@ -256,7 +256,7 @@ function StageLibrary({ api, isAdmin, stage }: { api: Api; isAdmin: boolean; sta
         <TableSkeleton />
       ) : listing.counts.all === 0 ? (
         <div className="empty-roster-box">
-          <BookOpen size={40} aria-hidden="true" color="#003399" style={{ margin: "0 auto 0.75rem", opacity: 0.6 }} />
+          <BookOpen size={40} aria-hidden="true" color="#CF4A0A" style={{ margin: "0 auto 0.75rem", opacity: 0.6 }} />
           <h2 className="lib-empty-title">No {stage} activities yet</h2>
           <p className="lib-muted">Use <b>Update {stage}</b> above to bring in the PARAKH Activity Bank, or add an activity of your own.</p>
           <button type="button" className="btn btn-saffron" onClick={() => setEditing(null)}><Plus size={16} aria-hidden="true" /> Add your own activity</button>

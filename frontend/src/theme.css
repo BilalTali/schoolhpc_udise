@@ -6,13 +6,14 @@
 */
 
 :root {
-  --brand-50: #EEF4FF;
-  --brand-100: #DCE7FE;
-  --brand-200: #BBD0FC;
-  --brand-500: #3B6FF5;
-  --brand-600: #2557E8;
-  --brand-700: #1D45C2;
-  --brand-900: #142A6B;
+  /* saffron: #FF671F for marks and accents; the darker #CF4A0A wherever white text sits on it (4.5:1) */
+  --brand-50: #FFF5EE;
+  --brand-100: #FFE6D5;
+  --brand-200: #FFCDAA;
+  --brand-500: #FF671F;
+  --brand-600: #CF4A0A;
+  --brand-700: #B33F07;
+  --brand-900: #7C2D12;
 
   --ink: #0F172A;
   --ink-2: #334155;
@@ -59,7 +60,7 @@
   --shadow-md: 0 1px 3px rgba(16, 24, 40, 0.06), 0 1px 2px rgba(16, 24, 40, 0.04);
   --shadow-lg: 0 12px 24px -6px rgba(16, 24, 40, 0.10), 0 4px 8px -4px rgba(16, 24, 40, 0.05);
   --shadow-xl: 0 24px 48px -12px rgba(16, 24, 40, 0.18);
-  --ring: 0 0 0 3px rgba(37, 87, 232, 0.18);
+  --ring: 0 0 0 3px rgba(255, 103, 31, 0.22);
 
   --font-heading: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-body: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -151,8 +152,8 @@ h1, h2, h3, h4 { font-family: var(--font-heading); letter-spacing: -0.02em; }
 .auth-brand {
   position: relative; overflow: hidden; display: flex; flex-direction: column; justify-content: space-between; gap: 2rem;
   padding: 2.5rem 3.5rem; color: #fff;
-  background: radial-gradient(1200px 600px at -10% -10%, #3B6FF5 0%, transparent 55%),
-              radial-gradient(900px 500px at 110% 110%, #0EA5E9 0%, transparent 50%), #1A3AA8;
+  background: radial-gradient(1100px 600px at -10% -10%, #FF8A3D 0%, transparent 55%),
+              radial-gradient(900px 520px at 110% 115%, #9A3412 0%, transparent 55%), #C9480B;
 }
 .auth-brand::after { content: ""; position: absolute; inset: 0; background-image: radial-gradient(rgba(255,255,255,0.08) 1px, transparent 1px); background-size: 22px 22px; pointer-events: none; }
 .auth-logo { display: flex; align-items: center; gap: 0.7rem; font-weight: 700; font-size: 1.1rem; position: relative; z-index: 1; }
@@ -162,7 +163,7 @@ h1, h2, h3, h4 { font-family: var(--font-heading); letter-spacing: -0.02em; }
 .auth-pitch p { font-size: 1.05rem; line-height: 1.6; color: rgba(255, 255, 255, 0.85); margin: 0 0 1.6rem; }
 .auth-points { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.8rem; }
 .auth-points li { display: flex; align-items: center; gap: 0.6rem; font-size: 0.96rem; color: rgba(255, 255, 255, 0.95); }
-.auth-points svg { color: #86EFAC; flex: 0 0 auto; }
+.auth-points svg { color: #FFE0C7; flex: 0 0 auto; }
 .auth-note { position: relative; z-index: 1; font-size: 0.78rem; color: rgba(255, 255, 255, 0.65); max-width: 30rem; margin: 0; }
 .auth-panel { display: grid; place-items: center; padding: 2.5rem 1.5rem; background: var(--canvas); }
 .auth-card { width: 100%; max-width: 30rem; background: var(--surface); border: 1px solid var(--line); border-radius: 18px; box-shadow: var(--shadow-lg); padding: 2rem 2rem 2.2rem; }
@@ -226,7 +227,7 @@ h1, h2, h3, h4 { font-family: var(--font-heading); letter-spacing: -0.02em; }
 }
 .data-table td { padding: 0.75rem 0.9rem; border-bottom: 1px solid var(--line); color: var(--ink-2); }
 .data-table tr:last-child td { border-bottom: none; }
-.data-table tr:hover td { background: #FAFBFE; }
+.data-table tr:hover td { background: #FFFAF6; }
 
 .kpi-grid { gap: 1rem; margin-bottom: 1.25rem; }
 .kpi-card { border: 1px solid var(--line); border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); padding: 1.1rem 1.2rem; border-top-width: 1px !important; }
@@ -265,7 +266,7 @@ h1, h2, h3, h4 { font-family: var(--font-heading); letter-spacing: -0.02em; }
 .dropzone { border: 2px dashed var(--line-2); border-radius: 16px; background: var(--surface-2); transition: border-color 0.15s, background 0.15s; }
 .dropzone:hover { border-color: var(--brand-500); background: var(--brand-50); }
 .progress-bar-container { height: 8px; border-radius: 999px; background: #E9EDF5; }
-.progress-fill { background: linear-gradient(90deg, var(--brand-500), var(--brand-600)); border-radius: 999px; }
+.progress-fill { background: linear-gradient(90deg, #FF8A3D, var(--brand-500)); border-radius: 999px; }
 
 .modal-overlay { background: rgba(15, 23, 42, 0.45); backdrop-filter: blur(3px); }
 .modal-dialog { border-radius: 18px; border: 1px solid var(--line); box-shadow: var(--shadow-xl); }

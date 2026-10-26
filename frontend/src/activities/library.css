@@ -101,7 +101,7 @@
 .lib-badge-bad { background: #FEE2E2; border-color: #FCA5A5; color: #7F1D1D; }
 .lib-badge-edited { background: #EDE9FE; border-color: #C4B5FD; color: #4C1D95; }
 .lib-badge-default { background: #FFEDD5; border-color: #FDBA74; color: #7C2D12; }
-.lib-badge-src-portal_global { background: var(--chakra-100); border-color: #C7D2FE; color: #1E3A8A; }
+.lib-badge-src-portal_global { background: var(--brand-50); border-color: var(--brand-200); color: var(--brand-700); }
 .lib-badge-src-portal_teacher { background: #E0F2FE; border-color: #7DD3FC; color: #0C4A6E; }
 .lib-badge-src-local { background: #F3E8FF; border-color: #D8B4FE; color: #581C87; }
 

@@ -675,7 +675,7 @@ export function HpcBulkEntry({ api, stage }: { api: CardsApi; stage: string }) {
   return (
     <div className="ui-panel">
       <div className="panel-header">
-        <div className="panel-title"><Layers size={20} color="#003399" /><span>Class-wide answers</span></div>
+        <div className="panel-title"><Layers size={20} color="#CF4A0A" /><span>Class-wide answers</span></div>
       </div>
       <p className="form-hint" style={{ fontSize: "0.85rem", marginBottom: "1rem" }}>
         Answers where most of the class has the same choice and only a few differ: mother tongue, the Yes/Sometimes/No
