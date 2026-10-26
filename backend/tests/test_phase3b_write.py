@@ -19,12 +19,16 @@ class ClientLikePortal(FakePortal):
     """Saves go through _request like the real client, so the one-write guard sees them."""
     status = "COMPLETED"
     reset_to = None                     # set to "A2" to act like a page that resets the card's progress
+    alter_b = False                     # set to act like a PARAKH that stores Part B differently
 
     def _request(self, method, path, **kwargs):
         if method.upper() == "PATCH":
             payload = kwargs["json"]
             if self.reset_to:
                 payload = {**payload, "current_part": self.reset_to}
+            if self.alter_b and payload.get("hpc_col") == "part_b":
+                payload = copy.deepcopy(payload)
+                payload["formdata"][0]["is_modified"] = False
             FakePortal.save_part(self, "Preparatory", path.rsplit("/", 1)[-1], payload)
             self.last_status = 200
             return {"success": True, "message": "Updated", "data": {"id": 1}}
@@ -116,3 +120,103 @@ def test_status_change_stops_shows_the_plan_and_the_restore_puts_everything_back
     assert fake.saved[-1][2]["hpc_status"] == "COMPLETED"
     assert fake.students[("PREPARATORY", "1001")]["parts"] == original["parts"]
     assert fake.students[("PREPARATORY", "1001")]["record"]["current_part"] == "mc"
+
+
+
+# ---------------------------------------------------------------------------
+# Live test steps 2-4: one Part B request built by the real save code
+# ---------------------------------------------------------------------------
+
+from backend.hpc.stages import activity_grid  # noqa: E402
+from backend.services import own_activities  # noqa: E402
+from backend.tests.conftest import BANK_CONTENT  # noqa: E402
+
+CAPTION = "Conversation in pairs"
+EDITED = {**copy.deepcopy(BANK_CONTENT), "desc": [BANK_CONTENT["desc"][0], "What did you say? (test)"]}
+
+
+def library(modified, owner="teacher_t1"):
+    """A stand-in for the teacher's Activity Library: P85, edited or not, with the app's record of its own copies."""
+    def resolve(key):
+        if key != "P85":
+            return None
+        return {"portal_id": 85, "caption": CAPTION, "content": EDITED if modified else BANK_CONTENT, "is_global": True,
+                "usable": True, "modified": modified, "key": "P85"}
+    resolve.typed = {CAPTION: "P85"} if modified else {}
+    resolve.owned = own_activities.load(owner)
+    resolve.remember = lambda fd: own_activities.remember(owner, fd, resolve.typed)
+    return resolve
+
+
+@pytest.fixture
+def part_b_setup(setup, monkeypatch):
+    fake, args = setup
+    state = {"modified": True}
+    monkeypatch.setattr(w, "resolver_for", lambda teacher, stage, lookups: library(state["modified"]))
+    dashboard = {k: v for k, v in filled_row("PREPARATORY").items() if k.startswith("b_")}
+    monkeypatch.setattr(w, "dashboard_for", lambda teacher, session, stage, sid, lookups: dict(dashboard))
+    return fake, args, state
+
+
+def stored_b(fake):
+    fd = fake.students[("PREPARATORY", "1001")]["parts"]["part_b"]
+    return json.loads(fd) if isinstance(fd, str) else fd
+
+
+def test_part_b_plan_shows_the_manual_copy_and_sends_nothing(part_b_setup, capsys):
+    fake, args, _ = part_b_setup
+    assert w.part_b_plan(args) == 0
+    out = capsys.readouterr().out
+    assert "On PARAKH now:" in out and "from the bank #85 (global)" in out
+    assert "The app would send:" in out and "MANUAL (no bank number), is_modified=True, library P85" in out
+    assert "act_bank_map: []" in out and "Would send ONE request: part_b, current part 'mc'" in out
+    assert "Nothing was sent" in out and fake.saved == []
+
+
+def test_step2_edited_activity_goes_on_as_manual_and_step4_takes_it_back_to_the_bank(part_b_setup, capsys):
+    fake, args, state = part_b_setup
+    original = copy.deepcopy(fake.students[("PREPARATORY", "1001")])
+    assert w.part_b_save(args) == 0
+    out = capsys.readouterr().out
+    assert len(fake.saved) == 1 and fake.saved[0][2]["hpc_col"] == "part_b" and fake.saved[0][2]["current_part"] == "mc"
+    assert "hpc_status" not in fake.saved[0][2]
+    act = stored_b(fake)[0]
+    assert act["dt"]["act_bank_id"] is None and "is_global" not in act["dt"] and act["is_modified"] is True
+    assert act["dt"]["desc"][1] == "What did you say? (test)"
+    for line in ("Write requests sent: 1 (PATCH)", "On PARAKH after the save:", "MANUAL (no bank number)",
+                 "Other parts and current part, compared with before: no differences",
+                 "Part B as stored, compared with what was sent: no differences", "All checks passed"):
+        assert line in out, line
+    assert "TEST STUDENT" not in out
+    assert own_activities.load("teacher_t1") == {act["id"]: "P85"}     # the app knows this manual copy is its own
+    others = {k: v for k, v in fake.students[("PREPARATORY", "1001")]["parts"].items() if k != "part_b"}
+    assert others == {k: v for k, v in original["parts"].items() if k != "part_b"}
+
+    # step 4: the teacher removes their version -> the same card activity is the bank one again
+    state["modified"] = False
+    fake.saved.clear()
+    del fake._request, fake.refresh           # each step is its own run (fresh connection, fresh guard)
+    assert w.part_b_save(args) == 0
+    back = stored_b(fake)[0]
+    assert back["id"] == act["id"] and back["dt"]["act_bank_id"] == 85 and back["dt"]["is_global"] is True
+    assert back["is_modified"] is False and back["dt"]["desc"] == BANK_CONTENT["desc"]
+    assert len(fake.saved) == 1 and own_activities.load("teacher_t1") == {}
+
+
+def test_part_b_is_not_sent_when_nothing_would_change(part_b_setup):
+    fake, args, state = part_b_setup
+    state["modified"] = False
+    with pytest.raises(SystemExit) as exc:
+        w.part_b_save(args)
+    assert "would not change" in str(exc.value) and fake.saved == []
+    with pytest.raises(SystemExit):
+        w.part_b_save(SimpleNamespace(**{**vars(args), "confirm": ""}))
+
+
+def test_part_b_stops_with_the_restore_plan_when_parakh_stores_something_else(part_b_setup, capsys):
+    fake, args, _ = part_b_setup
+    fake.alter_b = True
+    assert w.part_b_save(args) == 2
+    out = capsys.readouterr().out
+    assert "PARAKH stored something else than was sent" in out and "STOP" in out
+    assert "Restore from snapshot" in out and "Nothing was sent (plan only)" in out and len(fake.saved) == 1

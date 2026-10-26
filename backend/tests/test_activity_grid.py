@@ -363,3 +363,27 @@ def test_the_record_keeps_manual_copies_and_forgets_bank_linked_ones():
     back["dt"]["act_bank_id"] = 85
     own_activities.remember("teacher_x", [back], {})
     assert own_activities.load("teacher_x") == {}
+
+
+def test_middle_own_activity_carries_its_approach_and_is_finished():
+    mid = get_stage("MIDDLE")
+    content = {"gl": ["SCG1"], "cpt": ["SC1.1"], "desc": ["Build a model.", "What did you find?"],
+               "awr": ["ab", "ap", "aa"], "sen": ["sb", "sp", "sa"], "cre": ["cb", "cp", "ca"],
+               "approaches": [1], "any-other": ""}
+
+    def resolve(key):
+        if key == "Lmid":
+            return {"portal_id": None, "caption": "LIVE TEST Middle", "content": content, "is_global": False,
+                    "usable": True, "modified": False}
+        return None
+    resolve.typed = {"LIVE TEST Middle": "Lmid"}
+    row = {k: v for k, v in filled_row("MIDDLE").items() if not k.startswith(("b_act_", "b_lvl_"))}
+    for s in mid.DOMAINS:
+        row[grid.act_key(s)] = "Lmid"
+        for ability, _ in grid.ABILITIES:
+            row[grid.level_key(s, ability)] = "Proficient"
+    payloads, errors = sync.build_payloads("MIDDLE", blank_student("MIDDLE"), row, make_lookups("MIDDLE"), resolve)
+    assert [e for e in errors if e.startswith("Part B")] == []
+    act = next(p for p in payloads if p["hpc_col"] == "part_b")["formdata"][0]
+    assert act["dt"]["act_bank_id"] is None and act["is_modified"] is True and act["is_complete"]
+    assert act["dt"]["activity"] == [1] and act["dt"]["desc"] == ["Build a model.", "What did you find?"]
