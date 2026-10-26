@@ -198,8 +198,8 @@ def portal_for(kind: str, entity_id: str, login_id: Optional[str] = None,
         if result.get("status") == "authenticated":
             sess = portal.Session.load(path)
     if not sess:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED,
-                            "PARAKH HPC session is not active. Click 'Start HPC Session' first.")
+        # 409, not 401: the person is signed in to this app; only the PARAKH connection is missing
+        raise HTTPException(status.HTTP_409_CONFLICT, "Not connected to PARAKH. Connect to PARAKH first, then try again.")
     client = portal.Portal(sess, on_refresh=lambda s: s.save(path))
     if login_id and password and AUTO_CAPTCHA:
         client.relogin = lambda: portal.login(login_id, password)

@@ -72,7 +72,7 @@ def test_new_picture_and_timeout(fake_parakh, monkeypatch):
 def test_no_silent_relogin_when_the_session_is_gone(fake_parakh):
     with pytest.raises(HTTPException) as exc:
         hpc_sessions.portal_for("teacher", "t4", "ID", "pw")
-    assert exc.value.status_code == 401 and fake_parakh["issued"] == 0 and fake_parakh["logins"] == []
+    assert exc.value.status_code == 409 and fake_parakh["issued"] == 0 and fake_parakh["logins"] == []
 
 
 def test_requests_are_spaced_out_across_threads(monkeypatch):

@@ -27,5 +27,5 @@ def test_school_and_teacher_flow():
     assert status["logged_in"] is False and status["has_credentials"] is False
     # Without a portal session the roster cannot be fetched, and the API says why.
     roster = client.post(f"{API}/teacher/roster/sync?stage=Preparatory", headers=t_headers)
-    assert roster.status_code == 401 and "Start HPC Session" in roster.json()["detail"]
+    assert roster.status_code == 409 and "Connect to PARAKH" in roster.json()["detail"]   # not a sign-out
     assert client.get(f"{API}/teacher/upload/jobs", headers=t_headers).json() == []

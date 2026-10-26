@@ -214,7 +214,7 @@ def test_sync_needs_a_portal_session_and_runs_once(world, monkeypatch):
     users, fake = world
     monkeypatch.setattr(router_mod, "_client", REAL_CLIENT)     # the real session lookup: no session saved
     res = client.post(f"{API}/activity-library/sync", json={}, headers=users["admin_a"])
-    assert res.status_code == 401 and "session" in res.json()["detail"].lower()
+    assert res.status_code == 409 and "parakh" in res.json()["detail"].lower()
 
     with SessionLocal() as db:
         school_id = client.get(f"{API}/auth/me", headers=users["admin_a"]).json()["id"]
