@@ -53,9 +53,14 @@ def fetch_student(portal: Portal, stage: str, student_id: str) -> StudentData:
         return StudentData(str(student_id), record.result(), raw)
 
 
-def fetch_students(portal: Portal, stage: str, student_ids: List[str], workers: int = 6) -> List[StudentData]:
+def fetch_students(portal: Portal, stage: str, student_ids: List[str], workers: int = 6,
+                   on_each: Callable[[], None] = lambda: None) -> List[StudentData]:
+    def one(sid):
+        data = fetch_student(portal, stage, sid)
+        on_each()                                  # progress: one more student read
+        return data
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        return list(pool.map(lambda sid: fetch_student(portal, stage, sid), student_ids))
+        return list(pool.map(one, student_ids))
 
 
 def to_row(stage: str, data: StudentData, lookups: Lookups) -> Dict[str, Any]:
@@ -190,17 +195,21 @@ def roster(portal: Portal, stage: str, lookups: Lookups) -> List[Dict[str, Any]]
 
 
 def export_workbook(portal: Portal, stages: List[str], path,
-                    on_students: Callable[[str, List["StudentData"]], None] = lambda stage, data: None):
+                    on_students: Callable[[str, List["StudentData"]], None] = lambda stage, data: None,
+                    on_roster: Callable[[str, List[Dict[str, Any]]], None] = lambda stage, students: None,
+                    on_each: Callable[[str], None] = lambda stage: None):
     """
     Fetches every student's current HPC data for the given stages and writes one workbook.
-    Returns (path, {stage: students}). on_students gets each stage's cards (to keep them).
+    Returns (path, {stage: students}). on_roster gets each stage's class list as soon as it is read,
+    on_each is called after every student's card, on_students gets each stage's cards (to keep them).
     """
     from backend.hpc import workbook
     sections, by_stage = [], {}
     for stage in stages:
         lookups = Lookups(portal, stage_code(stage))
         students = roster(portal, stage, lookups)
-        data = fetch_students(portal, stage, [s["student_id"] for s in students])
+        on_roster(stage, students)
+        data = fetch_students(portal, stage, [s["student_id"] for s in students], on_each=lambda stage=stage: on_each(stage))
         on_students(stage, data)
         for s, d in zip(students, data):
             add_details(s, d.record)

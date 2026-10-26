@@ -348,3 +348,10 @@ h1, h2, h3, h4 { font-family: var(--font-heading); letter-spacing: -0.02em; }
 .panel-title svg, .lib-section-title svg { stroke: var(--brand-600); }
 /* the top bar already shows the page title */
 .shell .lib-h1 { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* "Fetch from PARAKH" progress */
+.fetch-progress { border: 1px solid var(--brand-200); background: var(--brand-50); border-radius: 14px; padding: 0.9rem 1.1rem; margin-bottom: 1rem; display: flex; flex-direction: column; gap: 0.55rem; }
+.fetch-progress-head { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; color: var(--ink); }
+.fetch-progress-head svg { color: var(--brand-600); }
+.fetch-progress-head span { color: var(--ink-2); }
+.fetch-progress p { margin: 0; font-size: 0.82rem; color: var(--muted); }

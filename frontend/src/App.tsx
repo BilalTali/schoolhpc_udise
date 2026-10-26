@@ -301,6 +301,7 @@ export default function App() {
   // Student roster states (Teacher)
   const [students, setStudents] = useState<StudentItem[]>([]);
   const [studentsLoading, setStudentsLoading] = useState(false);
+  const [fetchJob, setFetchJob] = useState<FetchJob | null>(null);       // "Fetch from PARAKH" running on the server
   const [studentSearch, setStudentSearch] = useState("");
   const [studentGenderFilter, setStudentGenderFilter] = useState("ALL");
   const [studentStatusFilter, setStudentStatusFilter] = useState("ALL");
@@ -935,29 +936,48 @@ export default function App() {
 
   // ─── Teacher Roster & Upload ──────────────────────────────────────────────
 
+  // "Fetch from PARAKH" runs on the server for a few minutes; the page follows it and shows the progress.
+  const fetchTimer = useRef<number | undefined>(undefined);
+  const followFetch = useCallback(function follow(stage: string, listed = false) {
+    window.clearTimeout(fetchTimer.current);
+    fetchTimer.current = window.setTimeout(async () => {
+      try {
+        const res = await apiGet("/teacher/roster/sync");
+        if (!res.ok) { follow(stage, listed); return; }
+        const { job } = await res.json() as { job: FetchJob | null };
+        setFetchJob(job);
+        if (!job) return;
+        if (!listed && job.rosters?.[stage] !== undefined) {   // the class list is in: show the names now
+          loadTeacherRoster(stage);
+          listed = true;
+        }
+        if (job.status === "RUNNING") { follow(stage, listed); return; }
+        loadTeacherRoster(stage);
+        setStatusMsg(job.status === "COMPLETED"
+          ? { type: "success", text: `Fetched from PARAKH - ${job.summary}. Every screen now opens straight away.` }
+          : { type: "error", text: `The fetch stopped: ${job.error || "PARAKH did not answer"}. The list below is what was read before.` });
+      } catch {
+        follow(stage, listed);                          // a missed check is tried again; the fetch goes on
+      }
+    }, 1500);
+  }, [apiGet]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => window.clearTimeout(fetchTimer.current), []);
+
   const handleSyncRoster = async (stageOverride?: string) => {
     const stageToUse = stageOverride || activeTeacherStage || "Preparatory";
-    setLoading(true);
-    setStudentsLoading(true);
-    setStatusMsg({ type: "info", text: `Connecting to PARAKH portal to fetch ${stageToUse} stage roster...` });
+    setStatusMsg(null);
     try {
       const res = await apiPost(`/teacher/roster/sync?stage=${encodeURIComponent(stageToUse)}`);
       const data = await res.json();
-      if (res.ok) {
-        setStudents(data.students || []);
-        setStatusMsg({ type: "success", text: `✅ Fetched from PARAKH - ${data.summary || `${data.stage}: ${data.total_students}`}. The Excel workbook covers all your stages.` });
-      } else {
-        const errorText = data.detail || "Roster fetch failed.";
-        setStatusMsg({ type: "error", text: errorText });
-        if (errorText.toLowerCase().includes("session is not active") || errorText.toLowerCase().includes("credentials not found")) {
-          setShowTeacherHpcPanel(true);
-        }
+      if (!res.ok) {
+        setStatusMsg({ type: "error", text: data.detail || "The fetch could not start." });
+        if (res.status === 409) { setShowTeacherHpcPanel(true); window.scrollTo({ top: 0, behavior: "smooth" }); }
+        return;
       }
+      setFetchJob(data);
+      followFetch(stageToUse);
     } catch (e: any) {
       setStatusMsg({ type: "error", text: e.message });
-    } finally {
-      setLoading(false);
-      setStudentsLoading(false);
     }
   };
 
@@ -1064,6 +1084,18 @@ export default function App() {
       setStatusMsg({ type: "error", text: "Nothing was saved. See the reasons below; check the PARAKH connection and try again." });
     }
   };
+
+  // A fetch from PARAKH still running (for example after a page reload) is followed again.
+  useEffect(() => {
+    if (!user || user.role === "SCHOOL_ADMIN") return;
+    apiFetch("/teacher/roster/sync")
+      .then(async (res) => {
+        if (!res.ok) return;
+        const { job } = await res.json() as { job: FetchJob | null };
+        if (job?.status === "RUNNING") { setFetchJob(job); followFetch(activeTeacherStage || "Preparatory", true); }
+      })
+      .catch(() => undefined);
+  }, [user]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // An upload still running (for example after a page reload) is shown live again.
   useEffect(() => {
@@ -2416,11 +2448,11 @@ export default function App() {
                     <button
                       onClick={() => handleSyncRoster(activeTeacherStage)}
                       className="btn btn-primary"
-                      disabled={loading || studentsLoading}
+                      disabled={loading || fetchJob?.status === "RUNNING"}
                       style={{ padding: "0.45rem 0.9rem", fontSize: "0.84rem" }}
                     >
-                      <RefreshCw size={15} className={studentsLoading ? "spin" : ""} />
-                      {studentsLoading ? `Fetching...` : `Fetch from PARAKH`}
+                      <RefreshCw size={15} className={fetchJob?.status === "RUNNING" ? "spin" : ""} />
+                      {fetchJob?.status === "RUNNING" ? "Fetching…" : "Fetch from PARAKH"}
                     </button>
                     <button
                       onClick={() => handleDownloadExcel(activeTeacherStage)}
@@ -2630,6 +2662,8 @@ export default function App() {
                   );
                 })()}
 
+                {fetchJob?.status === "RUNNING" && <FetchProgress job={fetchJob} />}
+
                 {/* Table Content */}
                 {(() => {
                   if (studentsLoading && students.length === 0) {
@@ -2830,6 +2864,40 @@ export default function App() {
           NCERT, PARAKH or the Ministry of Education.
         </footer>
       </div>
+    </div>
+  );
+}
+
+interface FetchJob {
+  status: "RUNNING" | "COMPLETED" | "FAILED";
+  stages: string[];
+  stage_now: string | null;
+  rosters: Record<string, number>;
+  done: number;
+  total: number;
+  seconds_left: number;
+  summary: string;
+  error: string | null;
+}
+
+/** "Fetch from PARAKH" while it runs: which stage, how many students read of how many, time left. */
+function FetchProgress({ job }: { job: FetchJob }) {
+  const pct = job.total ? Math.round((job.done / job.total) * 100) : 0;
+  const left = job.seconds_left > 90 ? `about ${Math.round(job.seconds_left / 60)} min left` : job.seconds_left ? "less than 2 min left" : "";
+  return (
+    <div className="fetch-progress" role="status" aria-live="polite">
+      <div className="fetch-progress-head">
+        <RefreshCw size={16} className="spin" aria-hidden="true" />
+        <b>Fetching from PARAKH…</b>
+        <span>
+          {job.total ? `${job.stage_now ? `Reading ${job.stage_now}: ` : ""}${job.done} of ${job.total} students` : "Reading your class lists"}
+          {left ? ` · ${left}` : ""}
+        </span>
+      </div>
+      <div className="progress-bar-container" role="progressbar" aria-label="Students read" aria-valuemin={0} aria-valuemax={job.total || 1} aria-valuenow={job.done}>
+        <div className="progress-fill" style={{ width: `${Math.max(pct, job.total ? 2 : 0)}%`, transition: "width 0.6s ease" }} />
+      </div>
+      <p>Every student's whole card is read once (the safe speed for PARAKH), so this takes a few minutes. You can keep working or leave this page.</p>
     </div>
   );
 }

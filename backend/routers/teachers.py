@@ -6,9 +6,11 @@ import hashlib
 import io
 import json
 import shutil
+import threading
+import time
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse, StreamingResponse
@@ -164,26 +166,76 @@ def end_session(teacher: Teacher = Depends(require_teacher)):
 # Roster and class workbook
 # ---------------------------------------------------------------------------
 
+# "Fetch from PARAKH" reads every student's whole card (about 5 minutes for 60 students at the request
+# limit), so it runs in the background and the web app shows its progress.
+_fetch_jobs: Dict[str, Dict[str, Any]] = {}
+_fetch_lock = threading.Lock()
+
+
+def _fetch_view(job: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if job is None:
+        return None
+    with _fetch_lock:
+        view = {k: v for k, v in job.items() if k not in ("t0", "by_stage")}
+    done, total = view["done"], view["total"]
+    elapsed = time.time() - job["t0"]
+    view["seconds_left"] = int(elapsed / done * (total - done)) if done and view["status"] == "RUNNING" else 0
+    return view
+
+
+def _run_fetch(job: Dict[str, Any], teacher: Teacher, client, stages: List[str]) -> None:
+    def roster_read(name, students):
+        _roster_file(teacher, name).write_text(json.dumps(students, ensure_ascii=False, indent=1), encoding="utf-8")
+        with _fetch_lock:
+            job["total"] += len(students)
+            job["rosters"][name] = len(students)
+            job["stage_now"] = name
+
+    def one_done(name):
+        with _fetch_lock:
+            job["done"] += 1
+
+    keep = lambda name, data: card_store.put_many(f"teacher_{teacher.id}", client.ay, name, data)   # screens open at once
+    try:
+        _, by_stage = sync.export_workbook(client, stages, _workbook_path(teacher), on_students=keep,
+                                           on_roster=roster_read, on_each=one_done)
+        for name, students in by_stage.items():          # now with gender and admission numbers
+            _roster_file(teacher, name).write_text(json.dumps(students, ensure_ascii=False, indent=1), encoding="utf-8")
+        with _fetch_lock:
+            job["status"] = "COMPLETED"
+            job["summary"] = ", ".join(f"{name}: {len(st)}" for name, st in by_stage.items())
+    except Exception as exc:
+        with _fetch_lock:
+            job["status"], job["error"] = "FAILED", str(exc)
+    finally:
+        job["finished_at"] = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+
+
 @router.post("/roster/sync")
 def sync_roster(stage: Optional[str] = Query(None), teacher: Teacher = Depends(require_teacher)):
     """
-    Fetches all of the teacher's stages from the portal into one workbook (every student's current
-    HPC data), and returns the students of the requested stage for the web app's roster table.
+    Starts fetching all of the teacher's stages from the portal (every student's current HPC data, into one
+    workbook and the app's stored copy). Returns at once; GET /roster/sync shows the progress.
     """
     stage = _stage(teacher, stage)
     stages = teacher_stages(teacher) or [stage]
     client = _portal(teacher)
-    keep = lambda name, data: card_store.put_many(f"teacher_{teacher.id}", client.ay, name, data)   # screens open at once
-    try:
-        _, by_stage = sync.export_workbook(client, stages, _workbook_path(teacher), on_students=keep)
-    except PortalError as exc:
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc))
-    for name, students in by_stage.items():
-        _roster_file(teacher, name).write_text(json.dumps(students, ensure_ascii=False, indent=1), encoding="utf-8")
-    students = by_stage.get(stage, [])
-    summary = ", ".join(f"{name}: {len(st)}" for name, st in by_stage.items())
-    return {"success": True, "total_students": len(students), "stage": stage, "excel_ready": True,
-            "students": students, "stages": list(by_stage), "summary": summary}
+    with _fetch_lock:
+        running = _fetch_jobs.get(teacher.id)
+        if running and running["status"] == "RUNNING":
+            return _fetch_view(running)
+        job = {"status": "RUNNING", "stages": stages, "stage_now": None, "rosters": {}, "done": 0, "total": 0,
+               "summary": "", "error": None, "started_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+               "finished_at": None, "t0": time.time()}
+        _fetch_jobs[teacher.id] = job
+    threading.Thread(target=_run_fetch, args=(job, teacher, client, stages), daemon=True, name="fetch-roster").start()
+    return _fetch_view(job)
+
+
+@router.get("/roster/sync")
+def sync_roster_status(teacher: Teacher = Depends(require_teacher)):
+    """The latest fetch: running or finished, how many students read of how many, per stage."""
+    return {"job": _fetch_view(_fetch_jobs.get(teacher.id))}
 
 
 @router.get("/roster")

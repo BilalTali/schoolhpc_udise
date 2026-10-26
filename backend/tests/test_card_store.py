@@ -115,7 +115,8 @@ def test_warm_up_reads_only_what_is_missing():
     assert card_store.parts(fake, "teacher_w", "2627", "Middle", "1", ["part_b"])["part_b"] == "kept"
 
 
-def test_the_fetch_route_keeps_the_cards_it_reads(monkeypatch, tmp_path):
+def test_the_fetch_runs_in_the_background_shows_progress_and_keeps_the_cards(monkeypatch, tmp_path):
+    import json
     from types import SimpleNamespace
     from backend.routers import teachers as t
     monkeypatch.setattr(t, "_portal", lambda teacher: SimpleNamespace(ay="2627"))
@@ -123,11 +124,28 @@ def test_the_fetch_route_keeps_the_cards_it_reads(monkeypatch, tmp_path):
     monkeypatch.setattr(t, "teacher_stages", lambda teacher: ["Preparatory"])
     monkeypatch.setattr(t, "_workbook_path", lambda teacher: tmp_path / "w.xlsx")
     monkeypatch.setattr(t, "_roster_file", lambda teacher, name: tmp_path / f"r_{name}.json")
+    seen = {}
 
-    def export(client, stages, path, on_students):
+    def export(client, stages, path, on_students, on_roster, on_each):
+        on_roster("Preparatory", [{"student_id": "9"}, {"student_id": "10"}])
+        seen["early"] = json.loads((tmp_path / "r_Preparatory.json").read_text())    # the list is there at once
+        on_each("Preparatory")
+        seen["midway"] = t.sync_roster_status(teacher=teacher)["job"]
+        on_each("Preparatory")
         on_students("Preparatory", [SimpleNamespace(student_id="9", raw_parts={"part_c": "c9"})])
-        return path, {"Preparatory": [{"student_id": "9"}]}
+        return path, {"Preparatory": [{"student_id": "9", "gender": "Male"}, {"student_id": "10", "gender": ""}]}
     monkeypatch.setattr(t.sync, "export_workbook", export)
-    t.sync_roster(stage="Preparatory", teacher=SimpleNamespace(id="T1"))
+    teacher = SimpleNamespace(id="T1")
+    t._fetch_jobs.pop("T1", None)
+    started = t.sync_roster(stage="Preparatory", teacher=teacher)
+    assert started["status"] == "RUNNING"
+    for _ in range(200):
+        job = t.sync_roster_status(teacher=teacher)["job"]
+        if job["status"] != "RUNNING":
+            break
+        time.sleep(0.01)
+    assert job["status"] == "COMPLETED" and job["done"] == 2 and job["total"] == 2 and job["summary"] == "Preparatory: 2"
+    assert len(seen["early"]) == 2 and seen["midway"]["done"] == 1 and seen["midway"]["total"] == 2
+    assert json.loads((tmp_path / "r_Preparatory.json").read_text())[0]["gender"] == "Male"        # full details at the end
     fake = FakeCards()
     assert card_store.parts(fake, "teacher_T1", "2627", "Preparatory", "9", ["part_c"]) == {"part_c": "c9"} and fake.reads == []
