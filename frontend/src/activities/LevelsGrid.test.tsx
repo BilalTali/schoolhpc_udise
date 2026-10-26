@@ -12,9 +12,11 @@ const FIELDS = (code: string) => ["Awareness", "Sensitivity", "Creativity"].map(
 
 function setup() {
   const puts: any[] = [];
+  const gets: string[] = [];
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const method = init?.method || "GET";
-    if (!String(input).endsWith("/teacher/hpc-cards/Preparatory/levels")) return json(404, { detail: "no fake" });
+    if (!String(input).includes("/teacher/hpc-cards/Preparatory/levels")) return json(404, { detail: "no fake" });
+    gets.push(String(input));
     if (method === "PUT") {
       const body = JSON.parse(String(init!.body));
       puts.push(body);
@@ -22,6 +24,7 @@ function setup() {
     }
     const values = Object.fromEntries([...FIELDS("PSLS1"), ...FIELDS("PSLS3")].map((f) => [f.key, ""]));
     return json(200, {
+      read_at: "2026-10-26T09:00:00+00:00",
       options: ["Beginner", "Proficient", "Advanced"],
       subjects: [{ code: "PSLS1", name: "Language 1 (R1)", fields: FIELDS("PSLS1") }, { code: "PSLS3", name: "Mathematics", fields: FIELDS("PSLS3") }],
       rows: [
@@ -31,7 +34,7 @@ function setup() {
     });
   }));
   const view = render(<LevelsGrid api={api} stage="Preparatory" />);
-  return { puts, user: userEvent.setup(), ...view };
+  return { puts, gets, user: userEvent.setup(), ...view };
 }
 
 afterEach(() => { vi.unstubAllGlobals(); });
@@ -54,6 +57,16 @@ describe("Part C levels grid", () => {
     const two = screen.getByRole("rowheader", { name: /STUDENT TWO/ });
     expect(within(two).getByText("Not saved")).toBeInTheDocument();
     expect(screen.getByText("6 unsaved changes")).toBeInTheDocument();          // the student not saved keeps their edits
+  });
+
+  it("loads from the app's copy and reads PARAKH again only when asked", async () => {
+    const { gets, user } = setup();
+    expect(await screen.findByText(/Loaded from the app's copy, read from PARAKH on/)).toBeInTheDocument();
+    expect(gets).toHaveLength(1);
+    expect(gets[0]).not.toContain("refresh");
+    await user.click(screen.getByRole("button", { name: /Read again from PARAKH/ }));
+    await waitFor(() => expect(gets).toHaveLength(2));
+    expect(gets[1]).toContain("refresh=true");
   });
 
   it("has no axe violations", async () => {

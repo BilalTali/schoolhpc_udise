@@ -160,10 +160,10 @@ def own_activities_in_tmp(monkeypatch, tmp_path):
 
 
 @pytest.fixture(autouse=True)
-def fresh_bulk_cache():
-    """Each test starts with nothing cached from PARAKH reads by bulk entry."""
-    from backend.services import hpc_cards
-    hpc_cards._bulk_cache.clear()
+def cards_in_tmp(monkeypatch, tmp_path):
+    """Each test has its own empty stored copy of cards, never the real data folder."""
+    from backend.services import card_store
+    monkeypatch.setattr(card_store, "CARDS_DIR", tmp_path / "cards")
 
 
 @pytest.fixture

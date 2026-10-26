@@ -19,7 +19,7 @@ from backend.hpc.fields import Field
 from backend.hpc.portal import Portal, stage_code
 from backend.hpc.stages import activity_grid, get_stage
 from backend.hpc.stages.common import Lookups
-from backend.services import hpc_sessions
+from backend.services import card_store, hpc_sessions
 
 LIST_KINDS = ("multi", "flags")
 _LOOKUP_TTL = 30 * 60
@@ -337,35 +337,30 @@ def _part_of(stage: str, lookups: Lookups, key: str):
     raise HTTPException(status.HTTP_404_NOT_FOUND, f"Unknown field '{key}'.")
 
 
-# Bulk entry shows one field at a time, and Part C alone has 21-33 of them. What PARAKH holds is kept for a
-# few minutes, so moving to the next field does not re-read the whole class (display only; saving goes to drafts).
-BULK_CACHE_SECONDS = 300
-_bulk_cache: Dict[tuple, Tuple[float, Any]] = {}
-_bulk_lock = threading.Lock()
+# Bulk Entry and the Part C levels screen load from the app's stored copy of the class's cards (card_store):
+# PARAKH is read only for parts not kept yet, or when the teacher asks to read again.
+
+def class_list(client: Portal, teacher_id: str, stage: str, lookups: Lookups) -> List[Dict[str, Any]]:
+    """The class as last fetched on the roster tab (kept by the app); PARAKH only when it was never fetched."""
+    path = hpc_sessions.session_dir("teacher", teacher_id) / f"roster_{stage.lower()}.json"
+    try:
+        stored = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, ValueError):
+        stored = []
+    return [{"status": "", **s} for s in stored] or sync.roster(client, stage, lookups)
 
 
-def _cached(key: tuple, read):
-    now = time.time()
-    with _bulk_lock:
-        hit = _bulk_cache.get(key)
-    if hit and now - hit[0] < BULK_CACHE_SECONDS:
-        return hit[1]
-    value = read()
-    with _bulk_lock:
-        _bulk_cache[key] = (now, value)
-    return value
-
-
-def bulk_read(client: Portal, owner: str, teacher_id: str, session: str, stage: str, key: str) -> Dict[str, Any]:
+def bulk_read(client: Portal, owner: str, teacher_id: str, session: str, stage: str, key: str,
+              refresh: bool = False) -> Dict[str, Any]:
     lookups = lookups_for(owner, client, stage)
     _common_only(stage, lookups, key)
     part, f = _part_of(stage, lookups, key)
-    students = _cached((owner, session, stage, "roster"), lambda: sync.roster(client, stage, lookups))
+    students = class_list(client, teacher_id, stage, lookups)
+    raw, read_at = card_store.class_parts(client, owner, session, stage, [s["student_id"] for s in students],
+                                          [part.col], refresh)
 
     def value_for(s):
-        raw = _cached((owner, session, stage, s["student_id"], part.col),
-                      lambda: client.student(stage, s["student_id"], part.col).get("formdata"))
-        portal_value = f.read(part.load(raw))
+        portal_value = f.read(part.load(raw[s["student_id"]][part.col]))
         draft = load_draft(teacher_id, session, stage, s["student_id"])
         in_draft = bool(draft and key in draft["values"])
         value = draft["values"][key] if in_draft else to_api_value(f, portal_value)
@@ -373,14 +368,14 @@ def bulk_read(client: Portal, owner: str, teacher_id: str, session: str, stage: 
                 "section": s["section"], "status": s["status"], "value": value,
                 "portal_value": to_api_value(f, portal_value), "in_draft": in_draft}
 
-    with ThreadPoolExecutor(max_workers=6) as pool:
-        rows = list(pool.map(value_for, students))
-    return {"field": {**field_meta(f), "part": part.code, "part_title": part.title}, "rows": rows}
+    return {"field": {**field_meta(f), "part": part.code, "part_title": part.title},
+            "rows": [value_for(s) for s in students], "read_at": read_at}
 
 
-def levels_read(client: Portal, owner: str, teacher_id: str, session: str, stage: str) -> Dict[str, Any]:
+def levels_read(client: Portal, owner: str, teacher_id: str, session: str, stage: str,
+                refresh: bool = False) -> Dict[str, Any]:
     """Part C levels for the whole class on one screen: subjects, their three levels each, and every
-    student's values (the draft's where there is one, else PARAKH's)."""
+    student's values (the draft's where there is one, else PARAKH's as stored)."""
     lookups = lookups_for(owner, client, stage)
     part = next(p for p in get_stage(stage).PARTS if p.code == "C")
     fields = [f for f in part.fields(lookups) if is_common("C", f)]
@@ -390,12 +385,12 @@ def levels_read(client: Portal, owner: str, teacher_id: str, session: str, stage
         code = f.key[2:].rsplit("_", 1)[0]
         subjects.setdefault(code, {"code": code, "name": name.strip(), "fields": []})["fields"].append(
             {"key": f.key, "ability": ability.replace("level", "").strip()})
-    students = _cached((owner, session, stage, "roster"), lambda: sync.roster(client, stage, lookups))
+    students = class_list(client, teacher_id, stage, lookups)
+    raw, read_at = card_store.class_parts(client, owner, session, stage, [s["student_id"] for s in students],
+                                          [part.col], refresh)
 
     def row_for(s):
-        raw = _cached((owner, session, stage, s["student_id"], part.col),
-                      lambda: client.student(stage, s["student_id"], part.col).get("formdata"))
-        loaded = part.load(raw)
+        loaded = part.load(raw[s["student_id"]][part.col])
         draft = (load_draft(teacher_id, session, stage, s["student_id"]) or {}).get("values") or {}
         values, portal, in_draft = {}, {}, []
         for f in fields:
@@ -406,9 +401,8 @@ def levels_read(client: Portal, owner: str, teacher_id: str, session: str, stage
         return {"student_id": s["student_id"], "student_name": s["student_name"], "grade": s["grade"],
                 "section": s["section"], "values": values, "portal": portal, "in_draft": in_draft}
 
-    with ThreadPoolExecutor(max_workers=6) as pool:
-        rows = list(pool.map(row_for, students))
-    return {"options": list(fields[0].options) if fields else [], "subjects": list(subjects.values()), "rows": rows}
+    return {"options": list(fields[0].options) if fields else [], "subjects": list(subjects.values()),
+            "rows": [row_for(s) for s in students], "read_at": read_at}
 
 
 def levels_write(client: Portal, owner: str, teacher_id: str, session: str, stage: str,

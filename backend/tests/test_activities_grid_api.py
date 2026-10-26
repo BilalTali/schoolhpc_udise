@@ -60,7 +60,6 @@ def grid_client(monkeypatch, tmp_path):
     with SessionLocal() as db:                      # no library: PARAKH's own lists are used
         db.query(LibraryActivity).delete()
         db.commit()
-    activity_grid._cache.clear()
     return client, portal, tmp_path
 
 

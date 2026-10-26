@@ -11,6 +11,7 @@ interface LevelsData {
   subjects: { code: string; name: string; fields: { key: string; ability: string }[] }[];
   rows: { student_id: string; student_name: string; grade: string; section: string;
           values: Record<string, string>; portal: Record<string, string>; in_draft: string[] }[];
+  read_at?: string | null;            // when the stored copy was read from PARAKH (oldest student)
 }
 
 export function LevelsGrid({ api, stage }: { api: Api; stage: string }) {
@@ -22,11 +23,11 @@ export function LevelsGrid({ api, stage }: { api: Api; stage: string }) {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error" | "warning"; text: string } | null>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (refresh = false) => {
     setLoading(true);
     setMessage(null);
     try {
-      setData(await call<LevelsData>(api, "GET", `/teacher/hpc-cards/${encodeURIComponent(stage)}/levels`));
+      setData(await call<LevelsData>(api, "GET", `/teacher/hpc-cards/${encodeURIComponent(stage)}/levels${refresh ? "?refresh=true" : ""}`));
       setEdits({});
       setProblems({});
     } catch (e: any) {
@@ -93,11 +94,13 @@ export function LevelsGrid({ api, stage }: { api: Api; stage: string }) {
     <div className="ui-panel">
       <div className="panel-header">
         <div className="panel-title"><CheckCircle2 size={20} color="#046A38" aria-hidden="true" /><span>Part C levels – whole class</span></div>
-        <button type="button" className="btn btn-outline" onClick={load} disabled={loading || saving}>
-          <RefreshCw size={14} aria-hidden="true" className={loading ? "spin" : ""} /> Read again
+        <button type="button" className="btn btn-outline" onClick={() => load(true)} disabled={loading || saving || count > 0}
+                title={count > 0 ? "Save or undo your changes first" : undefined}>
+          <RefreshCw size={14} aria-hidden="true" className={loading ? "spin" : ""} /> Read again from PARAKH
         </button>
       </div>
-      <p className="lib-muted">Most students are at the same level in most subjects. Fill the usual level for everyone, then change the few who differ, and save.</p>
+      <p className="lib-muted">Most students are at the same level in most subjects. Fill the usual level for everyone, then change the few who differ, and save.
+        {data?.read_at && <> Loaded from the app's copy, read from PARAKH on {new Date(data.read_at).toLocaleString()}.</>}</p>
 
       <div aria-live="polite">
         {message && (

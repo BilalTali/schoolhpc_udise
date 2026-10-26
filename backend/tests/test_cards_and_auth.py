@@ -215,3 +215,45 @@ def test_part_c_levels_for_the_whole_class(teacher_client):
     assert write["saved"] == ["1001"] and set(write["problems"]) == {"1002", "1003"}
     again = client.get(f"{API}/teacher/hpc-cards/Preparatory/levels").json()
     assert again["rows"][0]["values"]["c_PSLS3_awareness"] == "Advanced" and again["rows"][0]["in_draft"] == ["c_PSLS3_awareness"]
+
+
+def test_bulk_entry_loads_from_the_apps_stored_copy(teacher_client, monkeypatch, tmp_path):
+    client, portal = teacher_client
+    reads = []
+    real = portal.student
+
+    def counted(stage, student_id, hpc_col=None):
+        reads.append((student_id, hpc_col))
+        return real(stage, student_id, hpc_col)
+    monkeypatch.setattr(portal, "student", counted)
+
+    first = client.get(f"{API}/teacher/hpc-cards/Preparatory/levels").json()
+    assert reads == [("1001", "part_c")] and first["read_at"]
+    reads.clear()
+    client.get(f"{API}/teacher/hpc-cards/Preparatory/levels")                       # again: from the stored copy
+    client.get(f"{API}/teacher/hpc-cards/Preparatory/bulk", params={"field": "c_PSLS1_awareness"})
+    assert reads == []
+    client.get(f"{API}/teacher/hpc-cards/Preparatory/bulk", params={"field": "a1_mother_tongue"})
+    assert reads == [("1001", "part_a1")]                                            # a part not kept yet
+    reads.clear()
+    client.get(f"{API}/teacher/hpc-cards/Preparatory/levels", params={"refresh": True})   # "Read again from PARAKH"
+    assert reads == [("1001", "part_c")]
+
+    # after a save, only that student's copy is dropped (the next view reads it fresh)
+    from backend.services import activity_grid, card_store
+    reads.clear()
+    activity_grid.forget(client.get(f"{API}/auth/me").json()["id"], "Preparatory", "1001")
+    client.get(f"{API}/teacher/hpc-cards/Preparatory/levels")
+    assert reads == [("1001", "part_c")]
+    assert card_store.CARDS_DIR.exists() and str(card_store.CARDS_DIR).startswith(str(tmp_path.parent))
+
+
+def test_bulk_entry_uses_the_class_list_fetched_on_the_roster_tab(teacher_client, monkeypatch, tmp_path):
+    client, portal = teacher_client
+    import json
+    (tmp_path / "roster_preparatory.json").write_text(json.dumps([
+        {"student_id": "1001", "student_name": "FROM THE STORED LIST", "grade": "Grade 5", "section": "A", "status": "PENDING"}]),
+        encoding="utf-8")
+    monkeypatch.setattr(portal, "roster", lambda stage: (_ for _ in ()).throw(AssertionError("PARAKH asked for the class")))
+    rows = client.get(f"{API}/teacher/hpc-cards/Preparatory/levels").json()["rows"]
+    assert [r["student_name"] for r in rows] == ["FROM THE STORED LIST"]

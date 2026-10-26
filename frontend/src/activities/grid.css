@@ -110,3 +110,6 @@
 .grid-sub-head { font-size: 0.72rem; font-weight: 700; color: var(--text-muted); text-align: center; }
 .grid-level-select { min-width: 3.4rem; padding: 0.25rem 0.35rem; font-size: 0.85rem; }
 .grid-table td.row-edited { background: var(--kesari-50); }
+
+/* Bulk Entry: when the app's copy was read from PARAKH */
+.bulk-readat { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 1rem; margin-bottom: 0.6rem; }

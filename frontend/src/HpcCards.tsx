@@ -570,6 +570,7 @@ export function HpcBulkEntry({ api, stage }: { api: CardsApi; stage: string }) {
   const [fieldKey, setFieldKey] = useState("");
   const [field, setField] = useState<(FieldMeta & { part_title: string }) | null>(null);
   const [rows, setRows] = useState<BulkRow[]>([]);
+  const [readAt, setReadAt] = useState<string | null>(null);   // when the app's copy was read from PARAKH
   const [edits, setEdits] = useState<Record<string, FieldValue>>({});
   const [problems, setProblems] = useState<Record<string, string>>({});
   const [fillValue, setFillValue] = useState<FieldValue>("");
@@ -593,16 +594,17 @@ export function HpcBulkEntry({ api, stage }: { api: CardsApi; stage: string }) {
     return () => { live = false; };
   }, [api, stage]);
 
-  const loadRows = useCallback(async (key: string) => {
+  const loadRows = useCallback(async (key: string, refresh = false) => {
     setLoadingRows(true);
     setMessage(null);
     setEdits({});
     setProblems({});
     try {
-      const d = await call<{ field: FieldMeta & { part_title: string }; rows: BulkRow[] }>(
-        api, "GET", `/teacher/hpc-cards/${encodeURIComponent(stage)}/bulk?field=${encodeURIComponent(key)}`);
+      const d = await call<{ field: FieldMeta & { part_title: string }; rows: BulkRow[]; read_at?: string | null }>(
+        api, "GET", `/teacher/hpc-cards/${encodeURIComponent(stage)}/bulk?field=${encodeURIComponent(key)}${refresh ? "&refresh=true" : ""}`);
       setField(d.field);
       setRows(d.rows);
+      setReadAt(d.read_at || null);
       setFillValue(d.field.multiple ? [] : "");
     } catch (e: any) {
       setMessage({ type: "error", text: e.message });
@@ -693,11 +695,16 @@ export function HpcBulkEntry({ api, stage }: { api: CardsApi; stage: string }) {
       {loadingRows ? (
         <div className="card-editor-empty">
           <RefreshCw size={30} className="spin" style={{ color: "var(--chakra-blue)" }} />
-          <div style={{ fontWeight: 700 }}>Reading this field for every student…</div>
-          <div style={{ fontSize: "0.84rem", color: "var(--text-muted)" }}>Each record is fetched from PARAKH, so a large class can take a minute.</div>
+          <div style={{ fontWeight: 700 }}>Loading this field for every student…</div>
+          <div style={{ fontSize: "0.84rem", color: "var(--text-muted)" }}>The first time, each card is read from PARAKH (a large class can take a minute); after that it loads from the app.</div>
         </div>
       ) : field && (
         <>
+          <div className="bulk-readat">
+            {readAt && <span className="lib-muted">Loaded from the app's copy, read from PARAKH on {new Date(readAt).toLocaleString()}.</span>}
+            <button type="button" className="portal-link-btn" onClick={() => loadRows(fieldKey, true)}
+                    disabled={saving || Object.keys(edits).length > 0}>Read again from PARAKH</button>
+          </div>
           <div className="data-table-wrapper">
             <table className="data-table bulk-table">
               <thead>

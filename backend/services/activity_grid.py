@@ -8,10 +8,7 @@ Each student's problems are worked out with the same code the real save uses, so
 is what a sync would say.
 """
 import copy
-import threading
-import time
-from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException, status
 
@@ -20,12 +17,7 @@ from backend.hpc import sync
 from backend.hpc.portal import Portal
 from backend.hpc.stages import activity_grid as grid
 from backend.hpc.stages import get_stage
-from backend.services import activity_library, hpc_cards
-
-CACHE_TTL = 15 * 60
-_cache: Dict[Tuple[str, str], Tuple[float, Dict[str, Dict[str, Any]]]] = {}
-_lock = threading.Lock()
-
+from backend.services import activity_library, card_store, hpc_cards
 
 def _stage_info(stage: str):
     st = get_stage(stage)
@@ -34,32 +26,17 @@ def _stage_info(stage: str):
 
 def _portal_parts(client: Portal, teacher_id: str, stage: str, students: List[Dict[str, Any]],
                   refresh: bool) -> Dict[str, Dict[str, Any]]:
-    """student_id -> {"part_b": formdata, "part_c": formdata} from PARAKH (read-only, cached)."""
-    key = (teacher_id, stage)
-    with _lock:
-        hit = _cache.get(key)
-    have = hit[1] if hit and not refresh and time.time() - hit[0] < CACHE_TTL else {}
-    missing = [s["student_id"] for s in students if s["student_id"] not in have]
-
-    def read(sid: str):
-        return sid, {col: client.student(stage, sid, col).get("formdata") for col in ("part_b", "part_c")}
-
-    if missing:
-        with ThreadPoolExecutor(max_workers=6) as pool:
-            have = {**have, **dict(pool.map(read, missing))}
-        with _lock:
-            _cache[key] = (time.time(), have)
-    return have
+    """student_id -> {"part_b": formdata, "part_c": formdata}: the app's stored copy (card_store), read from
+    PARAKH only for students not kept yet, or all again with refresh."""
+    raw, _ = card_store.class_parts(client, f"teacher_{teacher_id}", client.ay, stage,
+                                    [s["student_id"] for s in students], ("part_b", "part_c"), refresh)
+    return raw
 
 
 def forget(teacher_id: str, stage: str, student_id: Optional[str] = None) -> None:
-    """After a save to PARAKH the cached copy is out of date."""
-    with _lock:
-        hit = _cache.get((teacher_id, stage))
-        if hit and student_id:
-            hit[1].pop(student_id, None)
-        elif hit:
-            _cache.pop((teacher_id, stage), None)
+    """After a save to PARAKH the stored copy of that student is out of date."""
+    if student_id:
+        card_store.forget_everywhere(f"teacher_{teacher_id}", stage, student_id)
 
 
 def _parts(stage: str, raw: Dict[str, Any]) -> Dict[str, Any]:

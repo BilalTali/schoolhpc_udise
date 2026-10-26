@@ -78,9 +78,9 @@ def fields(stage: str, common: bool = False, teacher: Teacher = Depends(require_
 
 
 @router.get("/hpc-cards/{stage}/levels")
-def levels_read(stage: str, session: Optional[str] = None, teacher: Teacher = Depends(require_teacher)):
+def levels_read(stage: str, session: Optional[str] = None, refresh: bool = False, teacher: Teacher = Depends(require_teacher)):
     client, stage, session = _ctx(teacher, stage, session)
-    return _portal_call(hpc_cards.levels_read, client, f"teacher_{teacher.id}", teacher.id, session, stage)
+    return _portal_call(hpc_cards.levels_read, client, f"teacher_{teacher.id}", teacher.id, session, stage, refresh)
 
 
 @router.put("/hpc-cards/{stage}/levels")
@@ -92,10 +92,10 @@ def levels_write(stage: str, payload: LevelsRequest, session: Optional[str] = No
 
 
 @router.get("/hpc-cards/{stage}/bulk")
-def bulk_read(stage: str, field: str = Query(...), session: Optional[str] = None,
+def bulk_read(stage: str, field: str = Query(...), session: Optional[str] = None, refresh: bool = False,
               teacher: Teacher = Depends(require_teacher)):
     client, stage, session = _ctx(teacher, stage, session)
-    return _portal_call(hpc_cards.bulk_read, client, f"teacher_{teacher.id}", teacher.id, session, stage, field)
+    return _portal_call(hpc_cards.bulk_read, client, f"teacher_{teacher.id}", teacher.id, session, stage, field, refresh)
 
 
 @router.put("/hpc-cards/{stage}/bulk")
