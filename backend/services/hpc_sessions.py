@@ -19,6 +19,33 @@ from backend.hpc import portal
 PENDING_OTP: Dict[str, Dict[str, Any]] = {}     # "<kind>_<id>" -> pending login
 PENDING_CAPTCHA: Dict[str, Dict[str, Any]] = {}  # "<kind>_<id>" -> connection, captcha_id, login details
 CAPTCHA_TTL = 10 * 60
+MAX_FAILED, FAILED_WINDOW = 3, 15 * 60          # failed login attempts allowed per account, and over how long
+FAILED: Dict[str, list] = {}                    # "<kind>_<id>" -> times of failed attempts
+
+
+def _blocked(key: str) -> Optional[str]:
+    """After MAX_FAILED failed attempts within FAILED_WINDOW, logging in stops until the window passes."""
+    now = time.time()
+    FAILED[key] = [t for t in FAILED.get(key, []) if now - t < FAILED_WINDOW]
+    if len(FAILED[key]) < MAX_FAILED:
+        return None
+    wait = int((min(FAILED[key]) + FAILED_WINDOW - now) // 60) + 1
+    return (f"Connecting was stopped after {MAX_FAILED} failed attempts, to protect the PARAKH account. "
+            f"Check the PARAKH login ID and password (try them on the PARAKH website), then try again in {wait} minute(s).")
+
+
+def _failed(key: str) -> Optional[str]:
+    """Records a failed attempt; returns the stop message once the limit is reached."""
+    FAILED.setdefault(key, []).append(time.time())
+    stop = _blocked(key)
+    if stop:
+        PENDING_CAPTCHA.pop(key, None)
+        PENDING_OTP.pop(key, None)
+    return stop
+
+
+def _left(key: str) -> str:
+    return f" ({MAX_FAILED - len(FAILED.get(key, []))} attempt(s) left)"
 
 
 def session_dir(kind: str, entity_id: str) -> Path:
@@ -42,6 +69,9 @@ def status_of(kind: str, entity_id: str) -> Dict[str, Any]:
 def start(kind: str, entity_id: str, login_id: str, password: str) -> Dict[str, Any]:
     """Begins a login: returns PARAKH's captcha picture for the person to answer (the default),
     or logs in straight away when the unsupported automatic captcha is switched on."""
+    stop = _blocked(f"{kind}_{entity_id}")
+    if stop:
+        return {"success": False, "error": stop}
     if not AUTO_CAPTCHA:
         return _new_captcha(kind, entity_id, login_id, password)
     try:
@@ -74,6 +104,9 @@ def _new_captcha(kind: str, entity_id: str, login_id: str, password: str, error:
 def new_captcha(kind: str, entity_id: str) -> Dict[str, Any]:
     """Another picture for the login in progress (the old one may be hard to read)."""
     pending = PENDING_CAPTCHA.get(f"{kind}_{entity_id}")
+    stop = _blocked(f"{kind}_{entity_id}")
+    if stop:
+        return {"success": False, "error": stop}
     if not pending or time.time() - pending["at"] > CAPTCHA_TTL:
         return {"success": False, "error": "The login timed out. Please click Connect again."}
     return _new_captcha(kind, entity_id, pending["login_id"], pending["password"])
@@ -82,6 +115,10 @@ def new_captcha(kind: str, entity_id: str) -> Dict[str, Any]:
 def verify_captcha(kind: str, entity_id: str, answer: str) -> Dict[str, Any]:
     """Logs in with the answer the person typed. A wrong answer comes back with a fresh picture."""
     key = f"{kind}_{entity_id}"
+    stop = _blocked(key)
+    if stop:
+        PENDING_CAPTCHA.pop(key, None)
+        return {"success": False, "error": stop}
     pending = PENDING_CAPTCHA.get(key)
     if not pending or time.time() - pending["at"] > CAPTCHA_TTL:
         PENDING_CAPTCHA.pop(key, None)
@@ -91,8 +128,11 @@ def verify_captcha(kind: str, entity_id: str, answer: str) -> Dict[str, Any]:
     try:
         token = portal.answer_captcha(pending["http"], pending["captcha_id"], answer)
     except portal.PortalError:
+        stop = _failed(key)
+        if stop:
+            return {"success": False, "error": stop}
         return _new_captcha(kind, entity_id, pending["login_id"], pending["password"],
-                            error="That answer was not accepted. Please try this new picture.")
+                            error="That answer was not accepted. Please try this new picture." + _left(key))
     except Exception as exc:
         return {"success": False, "error": f"Could not reach the HPC portal: {exc}"}
     PENDING_CAPTCHA.pop(key, None)
@@ -103,21 +143,29 @@ def verify_captcha(kind: str, entity_id: str, answer: str) -> Dict[str, Any]:
         return {"success": True, "status": "otp_required",
                 "message": "The portal sent an OTP to your registered mobile number."}
     except portal.PortalError as exc:
-        return {"success": False, "error": str(exc)}
+        stop = _failed(key)
+        return {"success": False, "error": stop or (f"PARAKH did not accept the login: {exc}" + _left(key))}
     except Exception as exc:
         return {"success": False, "error": f"Could not reach the HPC portal: {exc}"}
+    FAILED.pop(key, None)
     return _saved(kind, entity_id, sess)
 
 
 def verify_otp(kind: str, entity_id: str, otp: str) -> Dict[str, Any]:
-    pending = PENDING_OTP.get(f"{kind}_{entity_id}")
+    key = f"{kind}_{entity_id}"
+    stop = _blocked(key)
+    if stop:
+        return {"success": False, "error": stop}
+    pending = PENDING_OTP.get(key)
     if not pending or time.time() - pending["at"] > 600:
         return {"success": False, "error": "Login timed out. Please start the HPC session again."}
     try:
         sess = portal.verify_otp(pending, otp)
     except portal.PortalError as exc:
-        return {"success": False, "error": str(exc)}
-    PENDING_OTP.pop(f"{kind}_{entity_id}", None)
+        stop = _failed(key)
+        return {"success": False, "error": stop or (f"{exc}" + _left(key))}
+    PENDING_OTP.pop(key, None)
+    FAILED.pop(key, None)
     return _saved(kind, entity_id, sess)
 
 
@@ -132,7 +180,7 @@ def _saved(kind: str, entity_id: str, sess: portal.Session) -> Dict[str, Any]:
     sess.save(session_path(kind, entity_id))
     from backend.services import audit
     audit.record(f"{'teacher' if kind == 'teacher' else 'school_admin'}:{entity_id}", "connect_parakh", "settings",
-                 entity_id, None, {"portal_user": sess.name})
+                 entity_id, None, {"connected": True})
     return {"success": True, "status": "authenticated", "user": sess.name,
             "school": sess.school_name, "role": sess.role}
 

@@ -79,7 +79,7 @@ def actor_from(current_user: Dict[str, Any]) -> Actor:
 
 def audit(db: Session, actor: Optional[Actor], action: str, entity: str, entity_id: Optional[str],
           before: Any = None, after: Any = None, school_id: Optional[str] = None) -> None:
-    db.add(AuditLog(actor=actor.key if actor else "sync", actor_name=actor.name if actor else "PARAKH sync",
+    db.add(AuditLog(actor=actor.key if actor else "sync", actor_name=None,          # IDs only in logs
                     school_id=school_id or (actor.school_id if actor else None), entity=entity,
                     entity_id=entity_id, action=action, before=before, after=after))
 
@@ -291,8 +291,21 @@ def detail(db: Session, actor: Actor, act: LibraryActivity) -> Dict[str, Any]:
         out["diff"] = _diff(original, out)
     history = (db.query(AuditLog).filter(AuditLog.entity_id == act.id, AuditLog.school_id == actor.school_id)
                .order_by(AuditLog.at.desc()).limit(20).all())
-    out["history"] = [{"at": _iso(h.at), "who": h.actor_name or h.actor, "action": h.action} for h in history]
+    out["history"] = [{"at": _iso(h.at), "who": _who(db, h.actor), "action": h.action} for h in history]
     return out
+
+
+def _who(db: Session, actor: str) -> str:
+    """A person's name for a history line, looked up now (audit rows keep IDs only)."""
+    from backend.models.entities import School, Teacher
+    role, _, uid = actor.partition(":")
+    if role == "teacher":
+        t = db.get(Teacher, uid)
+        return t.teacher_name if t else "A teacher"
+    if role == "school_admin":
+        s = db.get(School, uid)
+        return f"{s.admin_name} (school admin)" if s else "School admin"
+    return "PARAKH sync" if actor == "sync" else "Someone"
 
 
 _DIFF_LABELS = [("activity_text", "Activity description"), ("assessment_text", "Assessment"),

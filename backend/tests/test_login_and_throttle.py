@@ -87,3 +87,38 @@ def test_requests_are_spaced_out_across_threads(monkeypatch):
         t.join()
     # eight requests at once: each waits for its turn, the last one about 7 x 0.25 s
     assert len(waits) >= 7 and max(waits) == pytest.approx(1.75, abs=0.1)
+
+
+def test_login_stops_after_three_failed_attempts(fake_parakh):
+    hpc_sessions.FAILED.clear()
+    hpc_sessions.start("teacher", "t5", "ID", "pw")
+    first = hpc_sessions.verify_captcha("teacher", "t5", "1")
+    assert first["status"] == "captcha_required" and "2 attempt(s) left" in first["error"]
+    second = hpc_sessions.verify_captcha("teacher", "t5", "2")
+    assert "1 attempt(s) left" in second["error"]
+    third = hpc_sessions.verify_captcha("teacher", "t5", "3")
+    assert third["success"] is False and "stopped after 3 failed attempts" in third["error"]
+    assert "teacher_t5" not in hpc_sessions.PENDING_CAPTCHA
+    issued = fake_parakh["issued"]
+    # clicking Connect again does not get round it, and PARAKH is not asked for anything
+    again = hpc_sessions.start("teacher", "t5", "ID", "pw")
+    assert again["success"] is False and "stopped" in again["error"] and fake_parakh["issued"] == issued
+    assert fake_parakh["logins"] == []
+    # after the window, it works again
+    hpc_sessions.FAILED["teacher_t5"] = [t - hpc_sessions.FAILED_WINDOW - 1 for t in hpc_sessions.FAILED["teacher_t5"]]
+    assert hpc_sessions.start("teacher", "t5", "ID", "pw")["status"] == "captcha_required"
+    assert hpc_sessions.verify_captcha("teacher", "t5", "11")["status"] == "authenticated"
+    assert hpc_sessions.FAILED.get("teacher_t5") is None
+
+
+def test_rejected_password_counts_as_a_failed_attempt(fake_parakh, monkeypatch):
+    hpc_sessions.FAILED.clear()
+
+    def refuse(http, login_id, password, token):
+        raise portal.PortalError("Invalid credentials")
+    monkeypatch.setattr(portal, "login_with_token", refuse)
+    for n in range(3):
+        hpc_sessions.start("teacher", "t6", "ID", "wrong")
+        result = hpc_sessions.verify_captcha("teacher", "t6", "11")
+    assert "stopped after 3 failed attempts" in result["error"]
+    assert hpc_sessions.start("teacher", "t6", "ID", "wrong")["success"] is False

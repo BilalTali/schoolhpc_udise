@@ -11,15 +11,16 @@ from backend.models.library import AuditLog
 
 
 def record(actor: str, action: str, entity: str, entity_id: Optional[str] = None, before: Any = None,
-           after: Any = None, school_id: Optional[str] = None, actor_name: Optional[str] = None) -> None:
-    """actor: "teacher:<id>" or "school_admin:<id>". The school is looked up for teachers when not given."""
+           after: Any = None, school_id: Optional[str] = None) -> None:
+    """actor: "teacher:<id>" or "school_admin:<id>". The school is looked up for teachers when not given.
+    Only IDs are stored about people; names are looked up when a history is shown."""
     try:
         with SessionLocal() as db:
             if school_id is None and actor.startswith("teacher:"):
                 from backend.models.entities import Teacher
                 t = db.get(Teacher, actor.split(":", 1)[1])
-                school_id, actor_name = (t.school_id, actor_name or t.teacher_name) if t else (None, actor_name)
-            db.add(AuditLog(actor=actor, actor_name=actor_name, school_id=school_id, entity=entity,
+                school_id = t.school_id if t else None
+            db.add(AuditLog(actor=actor, actor_name=None, school_id=school_id, entity=entity,
                             entity_id=str(entity_id)[:36] if entity_id is not None else None,
                             action=action, before=before, after=after))
             db.commit()
