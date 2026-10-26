@@ -456,7 +456,11 @@ def resolver_for_teacher(teacher_id: str, stage: str, fallback=None):
         if key in entries:
             return entries[key]
         return fallback(key) if fallback and not entries else None
-    resolve.typed = {e["caption"]: k for k, e in entries.items() if e["portal_id"] is None}
+    own = [(k, e) for k, e in entries.items() if e["portal_id"] is None] + \
+          [(k, e) for k, e in entries.items() if e["portal_id"] is not None and e["modified"]]
+    resolve.typed = {}
+    for k, e in own:                                 # made here first, then edited bank activities
+        resolve.typed.setdefault(e["caption"], k)
     return resolve
 
 
@@ -590,8 +594,10 @@ def update(db: Session, actor: Actor, act: LibraryActivity, changes: Dict[str, A
         if version is not None and version != act.version:
             raise HTTPException(status.HTTP_409_CONFLICT, "Someone else changed this activity. Reload it to see their changes.")
         before = {"title": act.title, **_texts(act.content), "subjects": act.subjects}
-        if title is not None:
-            act.title = act.code = _clean_text(title, "Activity name", 200) or act.title
+        if title is not None and _clean_text(title, "Activity name", 200) not in ("", act.title):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                "The name cannot be changed once the activity is made: students' cards find it by its name. "
+                                "You can still change everything else, or make a copy under a new name.")
         if clean:
             act.content = _apply_texts(act.content or {}, {k: v for k, v in clean.items() if k != "subjects"})
             if "subjects" in clean:

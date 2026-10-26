@@ -225,16 +225,22 @@ def edited_resolver(modified=True):
             return {"portal_id": 85, "caption": "Bank 85", "content": EDITED if modified else BANK_CONTENT,
                     "is_global": True, "usable": True, "modified": modified}
         return None
+    resolve.typed = {"Bank 85": "P85"} if modified else {}
     return resolve
 
 
-def test_an_edited_activity_goes_on_the_card_as_parakh_marks_an_edited_copy():
+def is_manual(act):
+    """PARAKH's "Create Manually" kind, as its Part B page saves it: no bank id, no is_global, is_modified true."""
+    return act["dt"]["act_bank_id"] is None and "is_global" not in act["dt"] and act["is_modified"] is True
+
+
+def test_an_edited_activity_goes_on_the_card_as_a_manual_one_not_global():
     b, errors = part_b("PREPARATORY", blank_student("PREPARATORY"), grid_row(), make_lookups("PREPARATORY"), edited_resolver())
     assert errors == []
     act = b["formdata"][0]
-    assert act["is_modified"] is True and act["dt"]["act_bank_id"] == 85 and act["dt"]["is_global"] is True
+    assert is_manual(act) and act["nm"] == "Bank 85" and act["is_complete"]
     assert act["dt"]["desc"] == ["Our own way.", "Our own question?"] and act["dt"]["awr"] == ["new b", "new p", "new a", "proficient"]
-    assert b["act_bank_map"] == [{"id": act["id"], "bank_id": "85", "is_modified": True, "is_global": True}]
+    assert b["act_bank_map"] == [] and "global_activity_bank_id" not in b
 
 
 def test_editing_updates_cards_that_already_have_the_activity_but_keeps_the_students_answers():
@@ -243,9 +249,16 @@ def test_editing_updates_cards_that_already_have_the_activity_but_keeps_the_stud
     b, errors = part_b("PREPARATORY", data, grid_row(), lk, edited_resolver())
     assert errors == []
     act = b["formdata"][0]
-    assert act["id"] == "1001_85_1" and act["is_modified"] is True
+    assert act["id"] == "1001_85_1" and is_manual(act)                 # was picked from the bank, now manual
     assert act["dt"]["desc"][0] == "Our own way." and act["dt"]["awr"][3] == "proficient"
     assert act["dt"]["tfob"] == "kept notes"                     # the student's answers still come from the row
+    # read back from PARAKH: the manual copy is found again by its name, and a second save changes nothing
+    resolve = edited_resolver()
+    data = student_with(*b["formdata"])
+    assert grid.current(SUBJ, data.raw_parts["part_b"], resolve.typed).values["b_act_PSLS1"] == "P85"
+    plan = grid.plan(SUBJ, dict(zip(SUBJ, PREP.SUBJECTS)), PREP.ACTIVITY_GRID, data.raw_parts["part_b"], grid_row(), resolve)
+    assert plan.errors == [] and [c["action"] for c in plan.changes] == ["keep"]
+    assert not grid.stale_texts(data.raw_parts["part_b"], grid.current(SUBJ, data.raw_parts["part_b"], resolve.typed), resolve)
     # nothing edited: the card's texts and its "modified" flag are left as they are
     data = student_with(portal_activity(85, SUBJ))
     b, errors = part_b("PREPARATORY", data, grid_row(), lk, edited_resolver(modified=False))
@@ -274,7 +287,7 @@ def test_an_activity_made_here_goes_on_the_card_typed_and_is_recognised_again():
     b, errors = part_b("PREPARATORY", blank_student("PREPARATORY"), row, lk, resolve)
     assert errors == []
     act = b["formdata"][0]
-    assert act["nm"] == "Story circle" and act["dt"]["act_bank_id"] is None and "is_global" not in act["dt"]
+    assert act["nm"] == "Story circle" and is_manual(act)
     assert act["dt"]["desc"] == ["Retell a story.", "Can you tell it again?"] and act["dt"]["awr"] == ["ab", "ap", "aa", "advance"]
     assert act["is_complete"] and b["act_bank_map"] == [] and "global_activity_bank_id" not in b
 

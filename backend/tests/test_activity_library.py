@@ -395,9 +395,13 @@ def test_permissions_and_portal_rules(world):
     # a teacher may copy a PARAKH activity and change the copy
     copy_ = client.post(f"{url}/duplicate", headers=users["t1"]).json()
     assert copy_["source"] == "local" and copy_["title"].startswith("Copy of A") and copy_["activity_text"] == a["activity_text"]
+    renamed = client.patch(f"{API}/activity-library/{copy_['id']}", headers=users["t1"],
+                           json={"title": "Our role play", "version": copy_["version"]})
+    assert renamed.status_code == 422 and "cannot be changed" in renamed.text    # cards find it by its name
     edited = client.patch(f"{API}/activity-library/{copy_['id']}", headers=users["t1"],
-                          json={"title": "Our role play", "subjects": ["PSLS1"], "version": copy_["version"]}).json()
-    assert edited["title"] == "Our role play" and edited["missing_subjects"][0] == "Language 2 (R2)"
+                          json={"subjects": ["PSLS1"], "activity_text": "Our way", "version": copy_["version"]}).json()
+    assert edited["title"] == copy_["title"] and edited["activity_text"] == "Our way"
+    assert edited["missing_subjects"][0] == "Language 2 (R2)"
     assert client.post(f"{API}/activity-library/{copy_['id']}/reset", headers=users["admin_a"]).status_code == 400
 
     too_long = client.post(f"{API}/activity-library", headers=users["t1"],
@@ -451,6 +455,7 @@ def test_teacher_edits_a_parakh_activity_for_their_own_students(world):
     resolve = lib.resolver_for_teacher(_teacher_id(users["t1"]), "Preparatory")
     entry = resolve("P1")
     assert entry["modified"] is True and entry["content"]["desc"][0] == "Our way of doing it"
+    assert resolve.typed == {"A": "P1"}                     # an edited one goes on cards as manual, found by name
     assert entry["content"]["awr"][:3] == ["new b", "a-p", "a-a"] and entry["content"]["gl"] == ["CG1"]
     assert lib.resolver_for_teacher(_teacher_id(users["t2"]), "Preparatory")("P1")["modified"] is False
 

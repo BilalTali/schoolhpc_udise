@@ -90,7 +90,7 @@ class Current:
 
 
 def typed_keys(resolve: Optional["Resolver"]) -> Dict[str, str]:
-    """Activity name -> grid key for activities made in this app (on a card they have no bank id)."""
+    """Activity name -> grid key for the teacher's own activities, which a card holds as manual ones (no bank id)."""
     return dict(getattr(resolve, "typed", None) or {})
 
 
@@ -166,19 +166,44 @@ def set_texts(dt: Dict[str, Any], content: Dict[str, Any], from_bank) -> None:
             dt[k] = v
 
 
+def wants_manual(entry: Dict[str, Any]) -> bool:
+    """A teacher's own activity - made in this app, or a bank activity whose texts were edited here - goes on
+    the card as PARAKH's "Create Manually" kind (no bank id), not as one picked from the bank."""
+    return entry.get("portal_id") is None or bool(entry.get("modified"))
+
+
 def new_card_activity(spec: "GridSpec", entry: Dict[str, Any], portal_levels: List[str]) -> Dict[str, Any]:
-    """A card's copy of a library activity: a PARAKH bank activity (marked modified when this app's texts
-    differ from PARAKH's), or - for one made in this app - an activity typed into the card, as the
-    PARAKH page's own blank activity has it (no bank id)."""
-    if entry.get("portal_id") is None:
+    """A card's copy of a library activity. Bank activities as the page's "Pick from Activity Bank" makes them;
+    the teacher's own as its "Create Manually" does: the page's blank activity (act_bank_id None, no is_global)
+    with the texts filled in, and is_modified true - the page always saves a manual activity that way."""
+    if wants_manual(entry):
         dt = spec.blank()
         set_texts(dt, entry["content"], spec.from_bank)
         for (_, k), level in zip(ABILITIES, portal_levels):
             dt[k][3] = level
-        return {"nm": entry["caption"], "dt": dt, "is_modified": False}
+        return {"nm": entry["caption"], "dt": dt, "is_modified": True}
     dt = bank_dt(spec.blank, entry["content"], int(entry["portal_id"]), bool(entry.get("is_global", True)),
                  spec.from_bank, portal_levels)
-    return {"nm": entry["caption"], "dt": dt, "is_modified": bool(entry.get("modified"))}
+    return {"nm": entry["caption"], "dt": dt, "is_modified": False}
+
+
+def copy_outdated(act: Dict[str, Any], entry: Optional[Dict[str, Any]]) -> bool:
+    """True when a card's copy of a teacher's own activity is not yet the manual copy with the current texts."""
+    if not entry or not wants_manual(entry):
+        return False                                 # bank activities on the card are left as they are
+    dt = act.get("dt") or {}
+    return bool(dt.get("act_bank_id")) or "is_global" in dt or act.get("is_modified") is not True \
+        or texts_differ(dt, entry["content"])
+
+
+def make_manual(act: Dict[str, Any], entry: Dict[str, Any], spec: "GridSpec") -> None:
+    """Turns a card's copy into the manual kind with the teacher's texts; levels and the student's answers stay."""
+    dt = act["dt"]
+    set_texts(dt, entry["content"], spec.from_bank)
+    dt["act_bank_id"] = None
+    dt.pop("is_global", None)
+    act["nm"] = entry["caption"]
+    act["is_modified"] = True
 
 
 @dataclass
@@ -233,10 +258,10 @@ def plan(subjects: List[str], names: Dict[str, str], spec: GridSpec, fd: List[Di
                 dt = act["dt"]
                 if i in used:
                     continue
-                if gk[0] in typed_name:              # made in this app: matched by its name (no bank id)
-                    if dt.get("act_bank_id") or (act.get("nm") or "") != typed_name[gk[0]]:
-                        continue
-                elif str(dt.get("act_bank_id") or "") != str(portal_id(gk[0]) or "-"):
+                pid, name = portal_id(gk[0]), typed_name.get(gk[0])
+                from_bank = pid is not None and str(dt.get("act_bank_id") or "") == str(pid)
+                manual = name is not None and not dt.get("act_bank_id") and (act.get("nm") or "") == name
+                if not (from_bank or manual):        # the teacher's own: a manual copy, found by its name
                     continue
                 if exact and set(dt.get("domain") or []) != set(subs):
                     continue
@@ -257,9 +282,8 @@ def plan(subjects: List[str], names: Dict[str, str], spec: GridSpec, fd: List[Di
             before = (sorted(dt.get("domain") or []), [str((dt.get(k) or ["", "", "", ""])[3]) for _, k in ABILITIES])
             changed = before != (sorted(subs), portal_levels)
             entry = resolve(key)
-            if entry and entry.get("modified") and texts_differ(dt, entry["content"]):
-                set_texts(dt, entry["content"], spec.from_bank)       # your edited texts replace the card's copy
-                act["is_modified"] = bool(dt.get("act_bank_id"))
+            if copy_outdated(act, entry):
+                make_manual(act, entry, spec)        # the teacher's own texts, as a manual activity
                 changed = True
             take_shared = changed or i == first
             changes.append({"action": "update" if changed else "keep", "name": act.get("nm") or key,
@@ -313,12 +337,11 @@ def plan(subjects: List[str], names: Dict[str, str], spec: GridSpec, fd: List[Di
 
 
 def stale_texts(fd: List[Dict[str, Any]], now: Current, resolve: Optional["Resolver"]) -> bool:
-    """True when a card holds an activity whose texts were edited in this app since (so a save updates it)."""
+    """True when a card holds a teacher's own activity whose copy is outdated (so a save updates it)."""
     if resolve is None:
         return False
     for act, info in zip([a for a in fd or [] if _real(a)], now.existing):
-        entry = resolve(info["key"]) if info["key"] else None
-        if entry and entry.get("modified") and texts_differ(act["dt"], entry["content"]):
+        if copy_outdated(act, resolve(info["key"]) if info["key"] else None):
             return True
     return False
 

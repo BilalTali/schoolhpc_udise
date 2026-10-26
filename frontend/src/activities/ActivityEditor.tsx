@@ -9,8 +9,8 @@ import { CoverageBadge, SourceBadge } from "./Badges";
 import { ABILITIES, APPROACHES, LEVELS, SOURCE_LABEL, formatWhen } from "./types";
 import type { ActivityDetail, CodeOption, Rubric, ShareLevel, Subject } from "./types";
 
-// View, edit or create one activity. PARAKH's activity bank is never changed: edited texts are used for the
-// copy of the activity on each student's card (as the PARAKH page does when a teacher edits one there).
+// View, edit or create one activity. PARAKH's activity bank is never changed. A teacher's own activity (made
+// here, or a bank one whose texts were edited) goes on students' cards as PARAKH's "Create Manually" kind.
 
 interface Form {
   title: string;
@@ -147,7 +147,7 @@ export function ActivityEditor({ api, stage, subjects, activityId, consentText, 
       }
       if (Object.keys(rubric).length) out.rubric = rubric;
       if (isLocal) {
-        if (form.title !== was.title) out.title = form.title;
+        if (creating && form.title !== was.title) out.title = form.title;
         if (JSON.stringify(form.goals) !== JSON.stringify(was.goals)) out.goals = form.goals;
         if (JSON.stringify(form.competencies) !== JSON.stringify(was.competencies)) out.competencies = form.competencies;
         if (JSON.stringify(form.approaches) !== JSON.stringify(was.approaches)) out.approaches = form.approaches;
@@ -156,7 +156,7 @@ export function ActivityEditor({ api, stage, subjects, activityId, consentText, 
     }
     if (canRename && form.display_name !== was.display_name) out.display_name = form.display_name;
     return out;
-  }, [form, baseline, editable, isLocal, canRename]);
+  }, [form, baseline, editable, isLocal, canRename, creating]);
 
   const problems: string[] = [];
   if (form && isLocal && !form.title.trim()) problems.push("Give the activity a name.");
@@ -264,19 +264,21 @@ export function ActivityEditor({ api, stage, subjects, activityId, consentText, 
             <p className="lib-muted">
               From the {SOURCE_LABEL[detail.source]} (PARAKH number {detail.portal_id}).{" "}
               {mineOnly
-                ? "You can change the activity and assessment texts. Your version is used on your own students' cards only (marked there as an edited copy, as PARAKH does); other teachers and PARAKH's bank are not changed."
+                ? "You can change the activity and assessment texts. Your version goes on your own students' cards as a manual activity (PARAKH's \"Create Manually\"), not as a Global one; other teachers and PARAKH's bank are not changed."
                 : "Changes here are used on the cards of every teacher in your school (unless a teacher has their own version). PARAKH's bank is not changed."}
             </p>
           )}
           {creating && (
-            <p className="lib-muted">Your own activity goes on students' cards as an activity written by the teacher. Fill every part below so PARAKH accepts it as finished.</p>
+            <p className="lib-muted">Your own activity goes on students' cards as a manual activity (PARAKH's "Create Manually"). Fill every part below so PARAKH accepts it as finished. The name cannot be changed later.</p>
           )}
 
           {isLocal ? (
             <div className="form-group">
               <label className="form-label" htmlFor={ids.title}>Activity name <span className="req" aria-hidden="true">*</span></label>
-              <input id={ids.title} className="form-input" value={form.title} maxLength={200} disabled={!editable} required
-                     aria-required="true" data-autofocus onChange={(e) => set("title", e.target.value)} />
+              <input id={ids.title} className="form-input" value={form.title} maxLength={200} disabled={!editable || !creating} required
+                     aria-required="true" aria-describedby={creating ? undefined : `${ids.title}-fixed`} data-autofocus
+                     onChange={(e) => set("title", e.target.value)} />
+              {!creating && <small id={`${ids.title}-fixed`} className="lib-muted">The name stays as it was made: students' cards find the activity by it. Everything else can be changed.</small>}
             </div>
           ) : (
             <div className="lib-two">

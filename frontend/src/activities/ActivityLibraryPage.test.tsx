@@ -199,7 +199,7 @@ describe("Adding activities", () => {
     const { fake, user } = setup({ isAdmin: false });
     await user.click(await screen.findByRole("button", { name: "L1CG 1, C 1.1" }));
     const dialog = await screen.findByRole("dialog", { name: "L1CG 1, C 1.1" });
-    expect(within(dialog).getByText(/used on your own students' cards only/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/as a manual activity .*not as a Global one/)).toBeInTheDocument();
     const assess = within(dialog).getByLabelText("How it is assessed");
     await user.clear(assess);
     await user.type(assess, "Ask: what would you say?");
