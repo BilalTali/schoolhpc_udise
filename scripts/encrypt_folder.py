@@ -10,6 +10,7 @@ Format: b"TAENC1\\n", then pieces: 4-byte big-endian length + Fernet token of up
 """
 import hashlib
 import io
+import os
 import struct
 import sys
 import tarfile
@@ -119,7 +120,9 @@ def main() -> int:
             tar.extractall(target, filter="data")
         print(f"extracted into {target}")
         return 0
-    folder, archive = Path(sys.argv[1]), Path(sys.argv[2])
+    folder, archive = Path(sys.argv[1]).resolve(), Path(sys.argv[2])
+    if os.name == "nt" and not str(folder).startswith("\\\\?\\"):
+        folder = Path("\\\\?\\" + str(folder))      # long-path form: Windows skips paths over 260 characters otherwise
     expected = encrypt(folder, archive)
     problems = verify(archive, expected)
     size = sum(f.stat().st_size for f in folder.rglob("*") if f.is_file())
