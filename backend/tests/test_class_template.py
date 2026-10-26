@@ -272,3 +272,29 @@ def test_upload_rechecks_and_skips_a_student_who_became_unready(world):
     assert "Mother Tongue" in message and "Kashmiri" not in message           # field names only, never values
     assert upload_jobs.change_summary(["A1: Working days - Apr"]) == "A1 (1 field). First: Working days - Apr"
     assert portal.saved == []                                               # the check never writes
+
+
+def test_column_d_is_short_and_grouped():
+    found = ["PART B NOT READY: No activity chosen for: Mathematics",
+             "Part A1 - General Info & Attendance: Attendance May: days present (23) is more than working days (22)",
+             "Part A1 - General Info & Attendance: Attendance Jun: days present (24) is more than working days (23)",
+             *[f"Part C - Subject Assessment: {s}: {a}: required" for s in ("Mathematics", "Art Education", "Language 1 (R1)")
+               for a in ("Sensitivity", "Creativity")],
+             "HPC Credit: Mathematics: summative marks obtained: required",
+             "HPC Credit: Art Education: marks obtained (40) are more than max marks (30)"]
+    assert template.short_problems("Preparatory", found).split("\n") == [
+        "Part B not ready: No activity chosen for: Mathematics",
+        "Days present more than working days (check Class settings or the days present): May 23>22, Jun 24>23",
+        "Part C to fill: Sensitivity, Creativity for every subject (3)",
+        "Marks obtained to fill: Mathematics",
+        "Marks obtained: Art Education: marks obtained (40) are more than max marks (30)"]
+    assert template.short_problems("Preparatory", []) == "None"
+
+
+def test_a_blank_mark_is_reported_once():
+    from backend.hpc import sync
+    from backend.tests.conftest import blank_student, filled_row, make_lookups
+    row = {**filled_row("PREPARATORY"), "d_3_obtained": ""}
+    _, errors = sync.build_payloads("PREPARATORY", blank_student("PREPARATORY"), row, make_lookups("PREPARATORY"))
+    maths = [e for e in errors if "Mathematics" in e and e.startswith("HPC Credit")]
+    assert len(maths) == 1 and maths[0].endswith("summative marks obtained: required")

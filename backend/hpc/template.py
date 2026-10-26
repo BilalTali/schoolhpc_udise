@@ -89,7 +89,7 @@ def build(path, stage: str, students: List[Dict[str, Any]], rows: Dict[str, Dict
     ws = wb.create_sheet(stage, 1)
     groups = editable_fields(stage, lookups, is_setting_key)
     fixed = [("Student ID", ID_KEY, 12), ("Student Name", NAME_KEY, 26), ("Sync (Yes/No)", SYNC_KEY, 9),
-             ("Problems when downloaded (not read back)", None, 40)]
+             ("To fill or check (when the file was made)", None, 48)]
     for c, (label, key, width) in enumerate(fixed, start=1):
         _head(ws, 1, c, "Student", "44546A")
         _head(ws, 2, c, label)
@@ -205,7 +205,8 @@ def _how_to(ws, stage):
              "3. A student who needs something different from the class settings (working days, medium,",
              "   rural/urban, max marks): add a row on the 'Exceptions' sheet.",
              "4. Set Sync to 'No' for anyone you do not want uploaded yet.",
-             "5. The Problems column shows what was missing when the file was made (it is not read back).",
+             "5. Column D lists, for each student, what was still empty or looked wrong when the file was made:",
+             "   fill or fix those cells. It is only a guide and is not read back; the upload checks everything again.",
              "6. Upload the file on 'Validate & Upload'. Every student is checked again; anyone who is not",
              "   ready is listed and skipped, the others are saved."]
     for i, line in enumerate(lines, start=1):
@@ -293,6 +294,56 @@ def _part_b_sheet(wb, stage, students, part_b):
             ws.cell(row=r, column=c, value=v).alignment = Alignment(wrap_text=True, vertical="top")
     ws.freeze_panes = "C3"
     _protect(ws)
+
+
+def short_problems(stage: str, problems: List[str]) -> str:
+    """Column D: the save's own check results for one student, grouped into a few short lines
+    ("Marks obtained to fill: Mathematics, Art Education"), most important first."""
+    import re
+    from collections import OrderedDict
+    short = {p.title: ("Marks obtained" if p.code == "D" else f"Part {p.code}") for p in get_stage(stage).PARTS}
+    first, to_fill, attendance, other = [], OrderedDict(), [], []
+    for text in problems:
+        if text.startswith("PART B NOT READY: "):
+            first.append("Part B not ready: " + text[len("PART B NOT READY: "):])
+            continue
+        title, _, rest = text.partition(": ")
+        part = short.get(title)
+        if part is None:
+            other.append(text)
+            continue
+        m = re.match(r"Attendance (\w+): days present \((\d+)\) is more than working days \((\d+)\)", rest)
+        if m:
+            attendance.append(f"{m.group(1)} {m.group(2)}>{m.group(3)}")
+        elif rest.endswith(": required"):
+            label = rest[:-len(": required")]
+            if part == "Marks obtained":
+                label = label.replace(": summative marks obtained", "")
+            to_fill.setdefault(part, []).append(label)
+        else:
+            other.append(f"{part}: {rest}")
+    lines = list(first)
+    if attendance:
+        lines.append("Days present more than working days (check Class settings or the days present): " + ", ".join(attendance))
+    for part, labels in to_fill.items():
+        lines.append(f"{part} to fill: " + _grouped(labels))
+    lines += other
+    return "\n".join(lines) if lines else "None"
+
+
+def _grouped(labels: List[str]) -> str:
+    """"Maths: Sensitivity", "Maths: Creativity", "Art: Sensitivity" -> "Maths (Sensitivity, Creativity), Art (Sensitivity)";
+    the same levels missing everywhere -> "Sensitivity, Creativity for every subject"."""
+    by_subject: Dict[str, List[str]] = {}
+    for label in labels:
+        subject, sep, item = label.rpartition(": ")
+        by_subject.setdefault(subject if sep else label, []).append(item if sep else "")
+    if all(not items[0] for items in by_subject.values()):
+        return ", ".join(by_subject)
+    kinds = {tuple(items) for items in by_subject.values()}
+    if len(by_subject) > 2 and len(kinds) == 1:
+        return f"{', '.join(next(iter(kinds)))} for every subject ({len(by_subject)})"
+    return ", ".join(f"{s} ({', '.join(i for i in items if i)})" if any(items) else s for s, items in by_subject.items())
 
 
 def _summary_sheet(wb, stage, summary):

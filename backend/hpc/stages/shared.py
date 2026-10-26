@@ -171,6 +171,8 @@ def make_part_d(stage_key: str, domains: List[str]) -> Part:
                 continue
             mx, got = (str(v).strip() for v in fd["credit"][i])
             name = credit.SUBJECT_LABELS[s["key"]]
+            if not mx or not got:
+                continue                             # a blank mark is already reported as required
             try:
                 mx_f, got_f = float(mx), float(got)
             except ValueError:
