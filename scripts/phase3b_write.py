@@ -15,6 +15,7 @@ import copy
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -69,26 +70,75 @@ def restore_requests(stage: str, old: sync.StudentData, lookups) -> list:
     return out
 
 
+def guard_one_write(client):
+    """Counts every non-GET request and stops any after the first, before it leaves; no session renewal."""
+    original = client._request
+    sent = []
+
+    def guarded(method, path, **kwargs):
+        if method.upper() != "GET":
+            if sent:
+                raise PortalError(f"blocked a second write ({method}): stage 2a sends exactly one request")
+            sent.append((method.upper(), path))
+        return original(method, path, **kwargs)
+    client._request = guarded
+    client.refresh = lambda rejected_token: False           # renewing is a POST too: not during stage 2a
+    return sent
+
+
+def roster_status(client, stage: str, student_id: str) -> str:
+    """The card's status as the class list shows it (GET only)."""
+    for r in client.roster(stage):
+        if str(r.get("id")) == str(student_id):
+            return str(r.get("hpc_status") or "")
+    return "(not on this teacher's list)"
+
+
 def noop_a1(args) -> int:
     if args.confirm != "SAVE":
         raise SystemExit("not sent: add --confirm SAVE")
     client = client_for(args.teacher)
+    writes = guard_one_write(client)
     lookups = Lookups(client, stage_code(args.stage))
     before = sync.fetch_student(client, args.stage, args.student)
+    status_before = roster_status(client, args.stage, args.student)
     snap = snapshots.take(f"teacher_{args.teacher}", args.stage, before, "phase 3b stage 2a (no-op A1) - before")
     payloads, errors = sync.build_payloads(args.stage, before, sync.to_row(args.stage, before, lookups), lookups)
     a1 = dict(payloads[0])
     if a1["hpc_col"] != "part_a1" or a1["formdata"] != before.raw_parts.get("part_a1"):
         raise SystemExit("not sent: the A1 data is not byte-for-byte what PARAKH holds")
+    stu = before.record.get("stu_info") or {}
+    held = {"cond_class": before.record.get("cond_class"), "med_inst": stu.get("med_inst"),
+            "location_id": stu.get("location_id")}
+    for key, value in held.items():
+        same = str(a1.get(key)) == str(value)
+        print(f"   {key}: sending {a1.get(key)!r}, PARAKH holds {value!r} -> {'same' if same else 'DIFFERENT'}")
+        if not same:
+            raise SystemExit(f"not sent: {key} differs from what PARAKH holds")
     a1["current_part"] = before.record.get("current_part") or a1["current_part"]
-    print(f"Snapshot {snap.name}. Sending ONE request: part_a1, identical data, current part '{a1['current_part']}'.")
-    client.save_part(args.stage, args.student, a1)
+    print(f"Before: current part '{before.record.get('current_part')}', class list status '{status_before}'. Snapshot {snap.name}.")
+    print(f"Sending ONE request: part_a1, identical data, current part '{a1['current_part']}'.")
+
+    response = client.save_part(args.stage, args.student, a1)
+    data = response.get("data")
+    print(f"HTTP status {getattr(client, 'last_status', '?')}; response: success={response.get('success')!r}, "
+          f"message={str(response.get('message') or '')[:60]!r}, "
+          f"data={'keys ' + ', '.join(sorted(data)) if isinstance(data, dict) else type(data).__name__}")
+    print(f"Write requests sent: {len(writes)} ({', '.join(m for m, _ in writes)})")
+
     after = sync.fetch_student(client, args.stage, args.student)
+    status_after = roster_status(client, args.stage, args.student)
     snapshots.take(f"teacher_{args.teacher}", args.stage, after, "phase 3b stage 2a (no-op A1) - after")
     changed = compare("After the no-op save, compared with the snapshot", before, after, args.stage)
-    if changed:
-        print("STOP: PARAKH changed. Run restore-plan to see the restore requests; nothing more is sent.")
-    return 0 if not changed else 2
+    print(f"After: current part '{after.record.get('current_part')}', class list status '{status_after}'.")
+    ok = changed == 0 and after.record.get("current_part") == "mc" and status_after == status_before == "COMPLETED"
+    if not ok:
+        print("\nSTOP: something is not as before. The restore plan is below; NOTHING more is sent without your approval.")
+        restore_plan(SimpleNamespace(teacher=args.teacher, stage=args.stage, student=args.student,
+                                     snapshot=snap.name, confirm=""), send=False)
+        return 2
+    print("All checks passed: same data, current part 'mc', status COMPLETED.")
+    return 0
 
 
 def restore_plan(args, send: bool = False) -> int:

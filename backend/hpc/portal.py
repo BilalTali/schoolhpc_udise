@@ -240,6 +240,7 @@ class Portal:
         if resp.status_code == 401 and self.refresh(token):
             self._pace()
             resp = self.http.request(method, f"{API}{path}", timeout=30, **kwargs)
+        self.last_status = resp.status_code                 # for callers that report it (e.g. phase 3b)
         if resp.status_code == 401:
             raise PortalError("Portal session expired. Please start the HPC session again.")
         if resp.status_code == 403:
