@@ -290,13 +290,15 @@ def sync_workbook(portal: Portal, path, dry_run: bool = False, on_result=lambda 
 def sync_student(portal: Portal, stage: str, student_id: str, row: Dict[str, Any],
                  lookups: Lookups, dry_run: bool = False, resolve: Optional[activity_grid.Resolver] = None,
                  before_save: Optional[Callable[[StudentData], Any]] = None,
-                 on_step: Callable[[str], None] = lambda step: None) -> SyncResult:
+                 on_step: Callable[[str], None] = lambda step: None,
+                 data: Optional[StudentData] = None) -> SyncResult:
     """before_save keeps a copy of what PARAKH holds; nothing is written without one. on_step is told each
-    step in plain words, for a live view."""
+    step in plain words, for a live view. data: the card just read from PARAKH by the caller (not read twice)."""
     name = str(row.get("student_name") or student_id)
     try:
-        on_step("Reading the card from PARAKH")
-        data = fetch_student(portal, stage, student_id)
+        if data is None:
+            on_step("Reading the card from PARAKH")
+            data = fetch_student(portal, stage, student_id)
         name = (data.record.get("stu_info") or {}).get("student_name") or name
         on_step("Checking the values")
         payloads, errors = build_payloads(stage, data, row, lookups, resolve)

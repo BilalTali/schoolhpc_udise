@@ -257,3 +257,17 @@ def test_bulk_entry_uses_the_class_list_fetched_on_the_roster_tab(teacher_client
     monkeypatch.setattr(portal, "roster", lambda stage: (_ for _ in ()).throw(AssertionError("PARAKH asked for the class")))
     rows = client.get(f"{API}/teacher/hpc-cards/Preparatory/levels").json()["rows"]
     assert [r["student_name"] for r in rows] == ["FROM THE STORED LIST"]
+
+
+def test_submitting_a_card_reads_it_from_parakh_only_once(teacher_client, monkeypatch):
+    client, portal = teacher_client
+    reads = []
+    real = portal.student
+
+    def counted(stage, student_id, hpc_col=None):
+        reads.append(hpc_col)
+        return real(stage, student_id, hpc_col)
+    monkeypatch.setattr(portal, "student", counted)
+    status = client.post(f"{API}/teacher/hpc-cards/Preparatory/1001/submit").json()["status"]
+    checks_after = 1 if status == "COMPLETED" else 0                                 # the record read after saving
+    assert reads.count(None) == 1 + checks_after and len(reads) == 7 + checks_after  # record + 6 parts, read once

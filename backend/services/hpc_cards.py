@@ -295,7 +295,8 @@ def submit(client: Portal, owner: str, teacher_id: str, session: str, stage: str
     row = {**sync.to_row(stage, data, lookups), **_cell_values(stage, index, draft["values"])}
     from backend.services import snapshots
     result = sync.sync_student(client, stage, student_id, row, lookups, resolve=_resolver(teacher_id, stage, lookups),
-                               before_save=snapshots.hook(f"teacher_{teacher_id}", stage, "card submit"))
+                               before_save=snapshots.hook(f"teacher_{teacher_id}", stage, "card submit"),
+                               data=data)                # just read above: not read a second time
     from backend.services import audit
     audit.record(f"teacher:{teacher_id}", "save_to_parakh", "student", student_id, None,
                  {"stage": stage, "status": result.status, "saved_parts": result.saved_parts, "errors": result.errors[:5],
