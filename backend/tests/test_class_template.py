@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 from openpyxl import load_workbook
+from openpyxl.utils import get_column_letter
 
 from backend.database import SessionLocal
 from backend.hpc import sync, template, workbook
@@ -199,8 +200,9 @@ def test_template_layout_only_ready_students_locked_sheets_ids_only(world):
     assert "a1_working_1" not in keys and "a1_medium" not in keys and "d_1_max" not in keys and "d_declaration" not in keys
     assert "d_1_obtained" in keys and "a1_present_1" in keys and "c_PSLS1_awareness" in keys
     assert not any(str(k or "").startswith("b_") for k in keys)                 # nothing of Part B to type
-    assert ws.protection.sheet is True and ws["E4"].protection.locked is False and ws["A4"].protection.locked is True
-    assert ws.row_dimensions[3].hidden and ws.freeze_panes == "E4"
+    assert ws.protection.sheet is True and ws["D4"].protection.locked is False and ws["A4"].protection.locked is True
+    assert ws.row_dimensions[3].hidden and ws.freeze_panes == "D4"
+    assert ws["D2"].value != "To fill or check (when the file was made)" and keys[3]          # no problems column
     r3001 = next(r for r in range(4, ws.max_row + 1) if ws.cell(row=r, column=1).value == "3001")
     mt = keys.index("a1_mother_tongue") + 1
     assert ws.cell(row=r3001, column=mt).value == "Kashmiri" and ws.cell(row=r3001, column=mt).protection.locked is False
@@ -274,21 +276,31 @@ def test_upload_rechecks_and_skips_a_student_who_became_unready(world):
     assert portal.saved == []                                               # the check never writes
 
 
-def test_column_d_is_short_and_grouped():
-    found = ["PART B NOT READY: No activity chosen for: Mathematics",
-             "Part A1 - General Info & Attendance: Attendance May: days present (23) is more than working days (22)",
-             "Part A1 - General Info & Attendance: Attendance Jun: days present (24) is more than working days (23)",
-             *[f"Part C - Subject Assessment: {s}: {a}: required" for s in ("Mathematics", "Art Education", "Language 1 (R1)")
-               for a in ("Sensitivity", "Creativity")],
-             "HPC Credit: Mathematics: summative marks obtained: required",
-             "HPC Credit: Art Education: marks obtained (40) are more than max marks (30)"]
-    assert template.short_problems("Preparatory", found).split("\n") == [
-        "Part B not ready: No activity chosen for: Mathematics",
-        "Days present more than working days (check Class settings or the days present): May 23>22, Jun 24>23",
-        "Part C to fill: Sensitivity, Creativity for every subject (3)",
-        "Marks obtained to fill: Mathematics",
-        "Marks obtained: Art Education: marks obtained (40) are more than max marks (30)"]
-    assert template.short_problems("Preparatory", []) == "None"
+def test_problems_are_live_cell_colours(world):
+    """Red where a value is wrong, yellow where a required one is empty; Excel works them out as the teacher types."""
+    client, portal, lookups, teacher, tmp_path = world
+    client.put(f"{API}/teacher/settings/Preparatory", json={"values": SETTINGS})
+    hpc_cards.save_draft(teacher.id, portal.ay, "Preparatory", "3001", {**grid(), **ANSWERS})
+    run_check(client)
+    path = tmp_path / "dl.xlsx"
+    path.write_bytes(client.get(f"{API}/teacher/template/Preparatory/download").content)
+    ws = load_workbook(path)["Preparatory"]
+    keys = [c.value for c in ws[3]]
+    rules = {}
+    for area, items in ws.conditional_formatting._cf_rules.items():
+        rules[str(area.sqref)] = [(r.formula[0], r.dxf.fill.fgColor.rgb if r.dxf and r.dxf.fill else None) for r in items]
+    col = lambda key: get_column_letter(keys.index(key) + 1)
+
+    may = rules[f"{col('a1_present_2')}4:{col('a1_present_2')}5"]
+    red = [f for f, colour in may if colour and colour.endswith("FECACA")]
+    assert len(red) == 1 and f"{col('a1_present_2')}4>IF(COUNTIFS('Exceptions'!$A:$A,$A4,'Exceptions'!$B:$B,\"Working days - May\")>0" in red[0]
+    assert red[0].endswith("'Settings'!$B$7))")                       # May's class working days, unless an exception
+    marks = rules[f"{col('d_1_obtained')}4:{col('d_1_obtained')}5"]
+    assert any(colour and colour.endswith("FEF3C7") and f == f'AND($C4<>"No",LEN(TRIM({col("d_1_obtained")}4))=0)'
+               for f, colour in marks)                                 # yellow while empty (not for Sync = No)
+    assert any('"Max marks - ' in f and "'Settings'!$B$" in f for f, _ in marks)
+    level = rules[f"{col('c_PSLS1_awareness')}4:{col('c_PSLS1_awareness')}5"]
+    assert any("COUNTIF(Lists!" in f for f, _ in level)               # a value not in the list is red
 
 
 def test_a_blank_mark_is_reported_once():

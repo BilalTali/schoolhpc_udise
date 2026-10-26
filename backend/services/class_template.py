@@ -160,10 +160,7 @@ def build_download(teacher, stage: str, include_all: bool, path, labels: Dict[st
         _, grid_values, _ = sync.grid_state(stage, parts, row, lookups, job.get("typed"))
         rows[r["student_id"]] = row
         part_b[r["student_id"]] = template.part_b_view(stage, {**row, **grid_values}, lookups, labels)
-        found = list(r["other_problems"])
-        if not r["ready"]:
-            found = [f"PART B NOT READY: {p}" for p in r["part_b_problems"]] + found
-        problems[r["student_id"]] = [template.short_problems(stage, found)]
+        problems[r["student_id"]] = [] if r["ready"] else list(r["part_b_problems"])   # the rest: live colours
     students = [{"student_id": r["student_id"], "student_name": r["student_name"]} for r in chosen]
     in_file = {r["student_id"] for r in chosen}
     summary = {"generated_at": _now(), "ready_as_of": job["finished_at"],
