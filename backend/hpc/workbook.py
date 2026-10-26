@@ -141,18 +141,22 @@ def build(sections: List[Section], path: Path) -> Path:
     return path
 
 
-def read(path: Path) -> Dict[str, Dict[str, Any]]:
-    """student_id -> {field key: cell value, 'stage': ..., 'sync': bool, 'student_name': ...}."""
+def read(path: Path, exception_problems: List[str] = None) -> Dict[str, Dict[str, Any]]:
+    """student_id -> {field key: cell value, 'stage': ..., 'sync': bool, 'student_name': ...}.
+    Reads every workbook this app made: the per-part sheets (keys in row 2) and the class template
+    (keys in row 3, plus its Exceptions sheet). Locked sheets (Part B, Settings, summary) are never read."""
+    from backend.hpc import template
     wb = load_workbook(path, data_only=True)
     out: Dict[str, Dict[str, Any]] = {}
     for ws in wb.worksheets:
-        if ws.title in ("How to use", "Lists") or ws.max_row < 2:
+        if ws.title in template.LOCKED_SHEETS or ws.max_row < 2:
             continue
-        keys = [c.value for c in ws[2]]
-        if ID_KEY not in keys:
+        key_row = next((r for r in (2, 3) if ID_KEY in [c.value for c in ws[r]]), None)
+        if key_row is None:
             continue
+        keys = [c.value for c in ws[key_row]]
         id_col = keys.index(ID_KEY)
-        for row in ws.iter_rows(min_row=3, values_only=True):
+        for row in ws.iter_rows(min_row=key_row + 1, values_only=True):
             sid = row[id_col]
             if sid in (None, ""):
                 continue
@@ -160,9 +164,22 @@ def read(path: Path) -> Dict[str, Dict[str, Any]]:
             for key, value in zip(keys, row):
                 if key and key != ID_KEY:
                     entry[key] = value
+    meta = template.info(wb)
+    if meta["is_template"] and meta.get("stage"):
+        exceptions, problems = template.read_exceptions(wb, meta["stage"], set(out))
+        for sid, values in exceptions.items():
+            out[sid].update(values)
+        if exception_problems is not None:
+            exception_problems.extend(problems)
     for entry in out.values():
         entry[SYNC_KEY] = str(entry.get(SYNC_KEY, "Yes")).strip().lower() in ("yes", "y", "true", "1")
     return out
+
+
+def template_info(path: Path) -> Dict[str, Any]:
+    from backend.hpc import template
+    wb = load_workbook(path, read_only=False, data_only=True)
+    return template.info(wb)
 
 
 def detect_stages(path: Path) -> List[str]:

@@ -38,6 +38,7 @@ import { NavLink, Route, Routes } from "react-router-dom";
 import { API_BASE, apiFetch } from "./api";
 import { ActivityLibraryPage } from "./activities/ActivityLibraryPage";
 import { ActivitiesGrid } from "./activities/ActivitiesGrid";
+import { ClassSettings } from "./activities/ClassSettings";
 import { CaptchaStep } from "./CaptchaStep";
 import type { CaptchaResult } from "./CaptchaStep";
 
@@ -173,7 +174,7 @@ interface HpcStatus {
 
 type StatusMsg = { type: "success" | "error" | "info" | "warning"; text: string } | null;
 type AuthTab = "admin_login" | "teacher_login" | "register";
-type TeacherTab = "roster" | "upload" | "bulk" | "activities";
+type TeacherTab = "roster" | "settings" | "upload" | "bulk" | "activities";
 
 /** Display label and avatar style for a gender value; an empty value is "Not recorded", never guessed. */
 function genderInfo(value?: string): { label: string; cls: "male" | "female" | "other" } {
@@ -2424,13 +2425,29 @@ export default function App() {
               >
                 <CheckCircle2 size={16} /> 4. Activities
               </button>
+              <button
+                className={`tab-btn ${teacherTab === "settings" ? "active" : ""}`}
+                onClick={() => setTeacherTab("settings")}
+              >
+                <Layers size={16} /> 5. Class settings
+              </button>
             </div>
+
+            {/* Tab 5: class settings for the Excel template (medium, working days, max marks, declaration) */}
+            {teacherTab === "settings" && (
+              <>
+                {renderTeacherStageSwitcher()}
+                <ClassSettings key={activeTeacherStage} api={cardsApi} stage={activeTeacherStage} />
+              </>
+            )}
 
             {/* Tab 4: Part B activities and levels per subject */}
             {teacherTab === "activities" && (
               <>
                 {renderTeacherStageSwitcher()}
                 <ActivitiesGrid key={activeTeacherStage} api={cardsApi} stage={activeTeacherStage}
+                                onOpenCard={(id, name) => setOpenCard({ id, name })}
+                                onOpenSettings={() => setTeacherTab("settings")}
                                 uploadedFile={validationReport?.warnings?.some((w) => w.message.includes("old Activity columns"))
                                   ? uploadedFileName : undefined} />
               </>

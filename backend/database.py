@@ -16,6 +16,7 @@ def init_db() -> None:
     """Creates missing tables and adds columns that older databases don't have yet."""
     import backend.models.entities  # noqa: F401  (registers the models)
     import backend.models.library   # noqa: F401
+    import backend.models.settings  # noqa: F401
     try:
         Base.metadata.create_all(bind=engine)
     except Exception as exc:

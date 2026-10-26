@@ -52,6 +52,7 @@ function fakeGrid() {
     const method = init?.method || "GET";
     const body = init?.body ? JSON.parse(String(init.body)) : undefined;
     state.calls.push({ method, path, body });
+    if (method === "GET" && path.startsWith("/teacher/template/")) return json(200, { job: null, settings_complete: false, settings_missing: ["Medium of instruction"] });
     if (method === "GET") return json(200, data());
     const one = path.match(/^\/teacher\/activities-grid\/Preparatory\/(\d+)$/);
     if (method === "PUT" && one) {

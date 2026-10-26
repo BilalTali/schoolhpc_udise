@@ -72,6 +72,14 @@ def sa_applicable(stage: str, index: int) -> bool:
     return subject.get("saApplicable", True) and sa_credits > 0
 
 
+def summative_subjects(stage: str) -> List[tuple]:
+    """(number used in the workbook keys d_<n>_max / d_<n>_obtained, subject name) for subjects with marks."""
+    key = stage.lower()
+    if key not in TABLES or key == "foundational":
+        return []
+    return [(str(i + 1), SUBJECT_LABELS[s["key"]]) for i, s in enumerate(subjects(key)) if sa_applicable(key, i)]
+
+
 def build_tables(stage: str, part_c: Dict[str, Any], domains: List[str],
                  marks: List[List[str]], grade_code: str) -> Dict[str, Any]:
     """

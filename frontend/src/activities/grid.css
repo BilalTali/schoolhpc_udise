@@ -78,3 +78,30 @@
   .grid-scroll { max-height: 65vh; }
   .grid-subjects-list { left: 0; right: auto; }
 }
+
+/* Class settings (tab 5) */
+.spin { animation: spin 1s linear infinite; }
+.cs-panel { display: flex; flex-direction: column; gap: 1rem; }
+.cs-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1.25rem; }
+.cs-months, .cs-marks { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 0.6rem 0.8rem; }
+.cs-marks { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
+.cs-month { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.85rem; font-weight: 600; color: var(--chakra-navy); }
+.cs-month .form-input { width: 100%; }
+.cs-bad { border-color: var(--danger-500) !important; }
+.cs-warn { font-size: 0.78rem; color: #92400E; }
+.cs-inline { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; }
+.cs-small { width: 5rem; }
+.cs-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 0.6rem; }
+
+/* Excel template panel (under the Activities grid) */
+.tp { margin-top: 1.5rem; padding-top: 1.25rem; border-top: 1px solid var(--border-light); display: flex; flex-direction: column; gap: 0.75rem; }
+.tp-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem 1rem; }
+.tp-summary { display: flex; align-items: center; gap: 0.4rem; margin: 0; }
+.tp-list summary { cursor: pointer; font-weight: 700; color: var(--chakra-navy); }
+.tp-list ul { list-style: none; padding: 0; margin: 0.5rem 0 0; display: flex; flex-direction: column; gap: 0.4rem; }
+.tp-list li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem; padding: 0.45rem 0.6rem; border: 1px solid var(--border-light); border-radius: var(--radius-sm); font-size: 0.86rem; }
+.tp-fix { padding: 0.25rem 0.6rem; font-size: 0.8rem; }
+@media (max-width: 640px) {
+  .cs-months { grid-template-columns: repeat(3, 1fr); }
+  .cs-actions { justify-content: stretch; }
+}

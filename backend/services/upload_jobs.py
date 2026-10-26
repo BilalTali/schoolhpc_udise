@@ -20,8 +20,13 @@ def _grid_hooks(client: Portal, teacher_id: Optional[str]) -> Dict[str, Any]:
     """The Activities grid's choices live in the teacher's drafts, not in the file: add them to each row."""
     if not teacher_id:
         return {}
-    from backend.services import activity_grid, activity_library
-    return {"extra_values": lambda stage, sid: activity_grid.draft_values(teacher_id, client.ay, stage, sid),
+    from backend.services import activity_library, class_settings, class_template
+
+    def settings_for(stage, sid):
+        row = class_settings.load(teacher_id, stage)
+        return class_settings.row_values(stage, row.values) if row else {}
+    return {"extra_values": lambda stage, sid: class_template.dashboard_values(teacher_id, client.ay, stage, sid),
+            "base_values": settings_for,
             "resolver_for": lambda stage: activity_library.resolver_for_teacher(teacher_id, stage)}
 
 
@@ -31,11 +36,34 @@ def old_layout_rows(rows: Dict[str, Dict[str, Any]]) -> List[str]:
     return [sid for sid, row in rows.items() if any(str(row.get(k) or "").strip() for k in old)]
 
 
+def change_summary(changes: List[str], names: int = 6) -> str:
+    """'A1 (14 fields), C (3 fields), Part B activities. First: Mother Tongue, ...' (field names, no values)."""
+    counts: Dict[str, int] = {}
+    for c in changes:
+        if ": " in c:
+            part = c.split(": ", 1)[0]
+            counts[part] = counts.get(part, 0) + 1
+    parts = [f"{p} ({n} field{'s' if n != 1 else ''})" for p, n in counts.items()]
+    if "Part B activities" in changes:
+        parts.append("Part B activities")
+    first = [c.split(": ", 1)[1] for c in changes if ": " in c][:names]
+    return ", ".join(parts) + (f". First: {', '.join(first)}" + (" ..." if len(changes) > names + 1 else "") if first else "")
+
+
 def check_workbook(client: Portal, path: Path, teacher_id: Optional[str] = None) -> Dict[str, Any]:
     """Validation report in the shape the web app shows."""
     rows = workbook.read(path)
     row_numbers = {sid: i for i, sid in enumerate(rows, start=3)}     # Students sheet row
-    results = sync.sync_workbook(client, path, dry_run=True, **_grid_hooks(client, teacher_id))
+    exception_problems: List[str] = []
+    results = sync.sync_workbook(client, path, dry_run=True, exception_problems=exception_problems,
+                                 **_grid_hooks(client, teacher_id))
+    meta = workbook.template_info(path)
+    included = set(meta.get("included") or [])
+    ready_as_of = str(meta.get("ready_as_of") or "").replace("T", " ")[:16]
+    for r in results:                                    # Part B changed on the dashboard after the download
+        if r.student_id in included and any(e.startswith("Part B") for e in r.errors):
+            r.errors = [f"{e.partition(': ')[0]}: no longer ready since the file was made (ready as of {ready_as_of} UTC)"
+                        f" - {e.partition(': ')[2]}" if e.startswith("Part B") else e for e in r.errors]
     errors: List[Dict[str, Any]] = []
     for r in results:
         for message in r.errors:
@@ -47,6 +75,14 @@ def check_workbook(client: Portal, path: Path, teacher_id: Optional[str] = None)
     skipped = [r for r in results if r.status == "SKIPPED"]
     warnings = [{"row": row_numbers.get(r.student_id, 0), "field": r.name, "message": "Sync is set to No - skipped",
                  "severity": "WARNING", "sheet": "Students", "rejected_value": None, "guidance": ""} for r in skipped]
+    for message in exception_problems:
+        warnings.append({"row": 0, "field": "Exceptions", "message": message, "severity": "WARNING", "sheet": "Exceptions",
+                         "rejected_value": None, "guidance": ""})
+    for r in ready:
+        if r.changes:
+            warnings.append({"row": row_numbers.get(r.student_id, 0), "field": f"Student {r.student_id}",
+                             "message": "Will change on PARAKH: " + change_summary(r.changes),
+                             "severity": "INFO", "sheet": r.stage, "rejected_value": None, "guidance": ""})
     old = old_layout_rows(rows)
     if old:
         warnings.append({"row": 0, "field": "Part B", "severity": "WARNING", "sheet": "B", "rejected_value": None,

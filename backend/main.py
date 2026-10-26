@@ -14,6 +14,7 @@ from backend.models.entities import encrypt_stored_passwords
 from backend.routers.activities_grid import router as activities_grid_router
 from backend.routers.activity_library import router as activity_library_router
 from backend.routers.auth import router as auth_router
+from backend.routers.class_template import router as class_template_router
 from backend.routers.hpc_cards import router as hpc_cards_router
 from backend.routers.schools import router as schools_router
 from backend.routers.teachers import router as teachers_router
@@ -48,7 +49,7 @@ app.add_middleware(
 )
 
 for router in (auth_router, schools_router, teachers_router, hpc_cards_router, activity_library_router,
-               activities_grid_router):
+               activities_grid_router, class_template_router):
     app.include_router(router, prefix="/api/v1")
 
 

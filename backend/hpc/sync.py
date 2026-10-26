@@ -40,6 +40,7 @@ class SyncResult:
     errors: List[str] = field(default_factory=list)
     saved_parts: List[str] = field(default_factory=list)
     stage: str = ""
+    changes: List[str] = field(default_factory=list)   # dry run: what a save would change on PARAKH (field names)
 
 
 def fetch_student(portal: Portal, stage: str, student_id: str) -> StudentData:
@@ -207,6 +208,24 @@ def export_workbook(portal: Portal, stages: List[str], path):
     return workbook.build(sections, path), by_stage
 
 
+def planned_changes(stage: str, data: StudentData, row: Dict[str, Any], payloads, lookups) -> List[str]:
+    """The fields (by name, no values) a save would change on PARAKH, for the upload preview."""
+    from backend.hpc.fields import _cell_text
+    st = get_stage(stage)
+    portal_row = to_row(stage, data, lookups)
+    out = []
+    for part, payload in zip(st.PARTS, payloads):
+        if part.code == "B":
+            stored = part.load(data.raw_parts.get(part.col))
+            if payload["formdata"] != stored:
+                out.append("Part B activities")
+            continue
+        for f in part.fields(lookups):
+            if f.key in row and _cell_text(row[f.key]) != _cell_text(portal_row.get(f.key)):
+                out.append(f"{part.code}: {f.label}")
+    return out
+
+
 def grid_baseline(stage: str, data: StudentData, lookups: Lookups) -> Dict[str, str]:
     """The Activities grid's values from what PARAKH holds (plus Part C levels where Part B has none)."""
     st = get_stage(stage)
@@ -224,11 +243,12 @@ def d_summary(stage: str, data: StudentData, lookups: Lookups) -> str:
 
 def sync_workbook(portal: Portal, path, dry_run: bool = False, on_result=lambda result: None,
                   extra_values=lambda stage, student_id: {}, resolver_for=lambda stage: None,
-                  before_save_for=lambda stage: None) -> List[SyncResult]:
+                  before_save_for=lambda stage: None, base_values=lambda stage, student_id: {},
+                  exception_problems: Optional[List[str]] = None) -> List[SyncResult]:
     """Checks, then uploads every student marked Sync=Yes, stage by stage. Calls on_result after each student.
     extra_values adds values kept outside the file (the Activities grid); resolver_for gives the activity list."""
     from backend.hpc import workbook
-    rows = workbook.read(path)
+    rows = workbook.read(path, exception_problems)
     stages = workbook.detect_stages(path)
     only_stage = stages[0] if len(stages) == 1 else ""     # older one-stage files have no Stage column
     lookups: Dict[str, Lookups] = {}
@@ -243,7 +263,8 @@ def sync_workbook(portal: Portal, path, dry_run: bool = False, on_result=lambda 
         else:
             if stage not in lookups:
                 lookups[stage] = Lookups(portal, stage_code(stage))
-            row = {**row, **extra_values(stage, sid)}
+            # class settings under the file's values (an exception in the file wins); the dashboard's Part B on top
+            row = {**base_values(stage, sid), **row, **extra_values(stage, sid)}
             result = sync_student(portal, stage, sid, row, lookups[stage], dry_run=dry_run, resolve=resolver_for(stage),
                                   before_save=before_save_for(stage))
         results.append(result)
@@ -263,7 +284,7 @@ def sync_student(portal: Portal, stage: str, student_id: str, row: Dict[str, Any
         if errors:
             return SyncResult(student_id, name, "INVALID", errors, stage=stage)
         if dry_run:
-            return SyncResult(student_id, name, "READY", stage=stage)
+            return SyncResult(student_id, name, "READY", stage=stage, changes=planned_changes(stage, data, row, payloads, lookups))
         if before_save is None:
             return SyncResult(student_id, name, "FAILED", ["Not saved: no copy of the current PARAKH values could be "
                                                            "kept first (no snapshot step was set up)."], stage=stage)

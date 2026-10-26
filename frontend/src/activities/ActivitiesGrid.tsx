@@ -3,6 +3,7 @@ import { AlertCircle, CheckCircle2, ChevronDown, ChevronUp, Clock, FileUp, Lock,
 import { ApiError, call } from "../api";
 import type { Api } from "../api";
 import { QuickFill } from "./QuickFill";
+import { TemplatePanel } from "./TemplatePanel";
 import { ABILITY_KEYS, ABILITY_LABEL, LEVEL_VALUES, REPLACE_KEY, actKey, gradeOf, levelKey } from "./gridTypes";
 import type { GridData, GridStudent } from "./gridTypes";
 
@@ -13,7 +14,11 @@ type SaveState = "saving" | "saved" | "error" | "conflict" | undefined;
 const SAVE_DELAY = 800;
 const SHORT: Record<string, string> = { Beginner: "B", Proficient: "P", Advanced: "A" };
 
-export function ActivitiesGrid({ api, stage, uploadedFile }: { api: Api; stage: string; uploadedFile?: string }) {
+export function ActivitiesGrid({ api, stage, uploadedFile, onOpenCard, onOpenSettings }: {
+  api: Api; stage: string; uploadedFile?: string;
+  onOpenCard?: (studentId: string, name: string) => void;
+  onOpenSettings?: () => void;
+}) {
   const [data, setData] = useState<GridData | null>(null);
   const [rows, setRows] = useState<Record<string, GridStudent>>({});
   const [error, setError] = useState<string | null>(null);
@@ -261,6 +266,13 @@ export function ActivitiesGrid({ api, stage, uploadedFile }: { api: Api; stage: 
           {visibleSorted.length === 0 && <p className="lib-muted grid-none">No students match. <button type="button" className="portal-link-btn" onClick={() => { setSearch(""); setGradeFilter(""); setOnlyProblems(false); }}>Show everyone</button></p>}
         </div>
       )}
+
+      <TemplatePanel api={api} stage={stage} total={order.length} onOpenSettings={() => onOpenSettings?.()}
+                     onFix={(sid, where, name) => {
+                       if (where === "card") { onOpenCard?.(sid, name); return; }
+                       setSearch(""); setGradeFilter(""); setOnlyProblems(false); setExpanded(sid);
+                       window.setTimeout(() => document.getElementById(`grid-row-${sid}`)?.scrollIntoView({ block: "center" }), 0);
+                     }} />
     </div>
   );
 }
@@ -301,7 +313,7 @@ const GridRow = memo(function GridRow({ row, subjects, options, labels, ticked, 
   const span = 2 + subjects.length * 4;
   return (
     <>
-      <tr className={`${row.ready ? "" : "grid-row-todo"} ${lockedOut ? "grid-row-locked" : ""}`}>
+      <tr id={`grid-row-${sid}`} className={`${row.ready ? "" : "grid-row-todo"} ${lockedOut ? "grid-row-locked" : ""}`}>
         <th scope="row" className="grid-sticky grid-student">
           <input type="checkbox" checked={ticked} onChange={() => onToggle(sid)} aria-label={`Tick ${row.student_name}`} />
           <span className="grid-name">
