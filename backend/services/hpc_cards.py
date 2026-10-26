@@ -161,9 +161,32 @@ def to_cell_value(f: Field, value: Any) -> Any:
     return value
 
 
-def stage_fields(stage: str, lookups: Lookups) -> List[Dict[str, Any]]:
-    return [{"code": p.code, "title": p.title, "fields": [field_meta(f) for f in p.fields(lookups)]}
-            for p in get_stage(stage).PARTS]
+# Bulk entry covers only answers that are usually the same for much of the class. Medium and rural/urban
+# are class settings; everything else is typed per student in the Excel file.
+COMMON_KEYS = ("a1_mother_tongue", "a1_guardian_relation", "b_resources", "a3_resources", "a3_support",
+               "a4_resources", "a4_support")
+
+
+def stage_fields(stage: str, lookups: Lookups, common: bool = False) -> List[Dict[str, Any]]:
+    out = []
+    for p in get_stage(stage).PARTS:
+        fields = [field_meta(f) for f in p.fields(lookups) if not common or f.key in COMMON_KEYS]
+        if fields:
+            out.append({"code": p.code, "title": p.title, "fields": fields})
+    return out
+
+
+def _common_only(key: str) -> None:
+    if key not in COMMON_KEYS:
+        from fastapi import HTTPException, status
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"'{key}' is not one of the class-wide fields bulk entry covers.")
+
+
+def common_values(teacher_id: str, session: str, stage: str, student_id: str, lookups) -> Dict[str, Any]:
+    """Bulk-entry answers in a student's draft, as cell values (they prefill the Excel template)."""
+    index = {f.key: f for f in (f for p in get_stage(stage).PARTS for f in p.fields(lookups)) if f.key in COMMON_KEYS}
+    draft = (load_draft(teacher_id, session, stage, student_id) or {}).get("values") or {}
+    return {k: to_cell_value(index[k], v) for k, v in draft.items() if k in index}
 
 
 def _field_index(stage: str, lookups: Lookups) -> Dict[str, Field]:
@@ -304,6 +327,7 @@ def _part_of(stage: str, lookups: Lookups, key: str):
 
 
 def bulk_read(client: Portal, owner: str, teacher_id: str, session: str, stage: str, key: str) -> Dict[str, Any]:
+    _common_only(key)
     lookups = lookups_for(owner, client, stage)
     part, f = _part_of(stage, lookups, key)
     students = sync.roster(client, stage, lookups)
@@ -326,6 +350,7 @@ def bulk_read(client: Portal, owner: str, teacher_id: str, session: str, stage: 
 def bulk_write(client: Portal, owner: str, teacher_id: str, session: str, stage: str, key: str,
                values: Dict[str, Any]) -> Dict[str, Any]:
     """Puts one field's value into each listed student's draft. Invalid values are reported, not saved."""
+    _common_only(key)
     lookups = lookups_for(owner, client, stage)
     _, f = _part_of(stage, lookups, key)
     saved, problems = [], {}

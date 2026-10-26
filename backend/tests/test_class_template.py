@@ -182,7 +182,8 @@ def test_download_needs_settings_first_and_all_needs_confirmation(world):
 def test_template_layout_only_ready_students_locked_sheets_ids_only(world):
     client, portal, lookups, teacher, tmp_path = world
     client.put(f"{API}/teacher/settings/Preparatory", json={"values": SETTINGS})
-    hpc_cards.save_draft(teacher.id, portal.ay, "Preparatory", "3001", {**grid("Advanced"), **ANSWERS})
+    hpc_cards.save_draft(teacher.id, portal.ay, "Preparatory", "3001", {**grid("Advanced"), **ANSWERS,
+                                                                        "a1_mother_tongue": "Kashmiri"})   # from bulk entry
     run_check(client)
     res = client.get(f"{API}/teacher/template/Preparatory/download")
     path = tmp_path / "dl.xlsx"
@@ -200,6 +201,9 @@ def test_template_layout_only_ready_students_locked_sheets_ids_only(world):
     assert not any(str(k or "").startswith("b_") for k in keys)                 # nothing of Part B to type
     assert ws.protection.sheet is True and ws["E4"].protection.locked is False and ws["A4"].protection.locked is True
     assert ws.row_dimensions[3].hidden and ws.freeze_panes == "E4"
+    r3001 = next(r for r in range(4, ws.max_row + 1) if ws.cell(row=r, column=1).value == "3001")
+    mt = keys.index("a1_mother_tongue") + 1
+    assert ws.cell(row=r3001, column=mt).value == "Kashmiri" and ws.cell(row=r3001, column=mt).protection.locked is False
     assert any(dv.type == "decimal" for dv in ws.data_validations.dataValidation)            # marks capped at max
 
     b = wb["Part B (from dashboard)"]

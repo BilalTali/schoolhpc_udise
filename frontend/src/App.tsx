@@ -39,6 +39,7 @@ import { API_BASE, apiFetch } from "./api";
 import { ActivityLibraryPage } from "./activities/ActivityLibraryPage";
 import { ActivitiesGrid } from "./activities/ActivitiesGrid";
 import { ClassSettings } from "./activities/ClassSettings";
+import { TemplatePanel } from "./activities/TemplatePanel";
 import { CaptchaStep } from "./CaptchaStep";
 import type { CaptchaResult } from "./CaptchaStep";
 
@@ -289,6 +290,7 @@ export default function App() {
   const [studentStatusFilter, setStudentStatusFilter] = useState("ALL");
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [openCard, setOpenCard] = useState<{ id: string; name: string } | null>(null);
+  const [gridFocus, setGridFocus] = useState<string | undefined>(undefined);   // student to open on the Activities tab
 
   // School Admin students states
   const [schoolStudents, setSchoolStudents] = useState<StudentItem[]>([]);
@@ -2408,10 +2410,10 @@ export default function App() {
                 <FileSpreadsheet size={16} /> 1. Class Students Roster {students.length > 0 ? `(${students.length})` : ""}
               </button>
               <button
-                className={`tab-btn ${teacherTab === "upload" ? "active" : ""}`}
-                onClick={() => setTeacherTab("upload")}
+                className={`tab-btn ${teacherTab === "activities" ? "active" : ""}`}
+                onClick={() => { setGridFocus(undefined); setTeacherTab("activities"); }}
               >
-                <Upload size={16} /> 2. Validate &amp; Upload
+                <CheckCircle2 size={16} /> 2. Activities
               </button>
               <button
                 className={`tab-btn ${teacherTab === "bulk" ? "active" : ""}`}
@@ -2420,20 +2422,20 @@ export default function App() {
                 <Layers size={16} /> 3. Bulk Entry
               </button>
               <button
-                className={`tab-btn ${teacherTab === "activities" ? "active" : ""}`}
-                onClick={() => setTeacherTab("activities")}
-              >
-                <CheckCircle2 size={16} /> 4. Activities
-              </button>
-              <button
                 className={`tab-btn ${teacherTab === "settings" ? "active" : ""}`}
                 onClick={() => setTeacherTab("settings")}
               >
-                <Layers size={16} /> 5. Class settings
+                <Layers size={16} /> 4. Class settings
+              </button>
+              <button
+                className={`tab-btn ${teacherTab === "upload" ? "active" : ""}`}
+                onClick={() => setTeacherTab("upload")}
+              >
+                <Upload size={16} /> 5. Download &amp; Upload
               </button>
             </div>
 
-            {/* Tab 5: class settings for the Excel template (medium, working days, max marks, declaration) */}
+            {/* Tab 4: class settings for the Excel template (medium, working days, max marks, declaration) */}
             {teacherTab === "settings" && (
               <>
                 {renderTeacherStageSwitcher()}
@@ -2441,19 +2443,17 @@ export default function App() {
               </>
             )}
 
-            {/* Tab 4: Part B activities and levels per subject */}
+            {/* Tab 2: Part B activities and levels per subject */}
             {teacherTab === "activities" && (
               <>
                 {renderTeacherStageSwitcher()}
-                <ActivitiesGrid key={activeTeacherStage} api={cardsApi} stage={activeTeacherStage}
-                                onOpenCard={(id, name) => setOpenCard({ id, name })}
-                                onOpenSettings={() => setTeacherTab("settings")}
+                <ActivitiesGrid key={activeTeacherStage} api={cardsApi} stage={activeTeacherStage} focusStudent={gridFocus}
                                 uploadedFile={validationReport?.warnings?.some((w) => w.message.includes("old Activity columns"))
                                   ? uploadedFileName : undefined} />
               </>
             )}
 
-            {/* Tab 3: Bulk entry of one field */}
+            {/* Tab 3: class-wide answers (mother tongue and the like), one field for many students */}
             {teacherTab === "bulk" && (
               <>
                 {renderTeacherStageSwitcher()}
@@ -2461,7 +2461,19 @@ export default function App() {
               </>
             )}
 
-            {/* Tab 1: Upload */}
+            {/* Tab 5: download the class template, then upload the filled file */}
+            {teacherTab === "upload" && renderTeacherStageSwitcher()}
+            {teacherTab === "upload" && (
+              <div className="ui-panel">
+                <TemplatePanel key={activeTeacherStage} api={cardsApi} stage={activeTeacherStage} total={students.length}
+                               onOpenSettings={() => setTeacherTab("settings")}
+                               onFix={(id, where, name) => {
+                                 if (where === "card") { setOpenCard({ id, name }); return; }
+                                 setGridFocus(id);
+                                 setTeacherTab("activities");
+                               }} />
+              </div>
+            )}
             {teacherTab === "upload" && (
               <div className="ui-panel">
                 <div className="panel-header">

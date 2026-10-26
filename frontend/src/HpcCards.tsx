@@ -586,7 +586,7 @@ export function HpcBulkEntry({ api, stage }: { api: CardsApi; stage: string }) {
     setField(null);
     setRows([]);
     setMessage(null);
-    call<{ parts: { code: string; title: string; fields: FieldMeta[] }[] }>(api, "GET", `/teacher/hpc-cards/${encodeURIComponent(stage)}/fields`)
+    call<{ parts: { code: string; title: string; fields: FieldMeta[] }[] }>(api, "GET", `/teacher/hpc-cards/${encodeURIComponent(stage)}/fields?common=true`)
       .then((d) => { if (live) setParts(d.parts); })
       .catch((e) => { if (live) setMessage({ type: "error", text: e.message }); })
       .finally(() => { if (live) setLoadingFields(false); });
@@ -657,10 +657,12 @@ export function HpcBulkEntry({ api, stage }: { api: CardsApi; stage: string }) {
   return (
     <div className="ui-panel">
       <div className="panel-header">
-        <div className="panel-title"><Layers size={20} color="#003399" /><span>Fill One Field for the Whole Class</span></div>
+        <div className="panel-title"><Layers size={20} color="#003399" /><span>Class-wide answers</span></div>
       </div>
       <p className="form-hint" style={{ fontSize: "0.85rem", marginBottom: "1rem" }}>
-        Pick a field, enter it for every student, and save. Values go into each student's draft — they reach PARAKH when you submit the student's card.
+        Answers that are usually the same for much of the class, such as mother tongue. Fill them here once; they are pre-filled
+        in the Excel file you download on tab 5, where you can still change them for any student. Medium of instruction and
+        rural/urban are set once on tab 4 (Class settings).
       </p>
 
       <div className="bulk-toolbar">

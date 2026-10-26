@@ -52,7 +52,6 @@ function fakeGrid() {
     const method = init?.method || "GET";
     const body = init?.body ? JSON.parse(String(init.body)) : undefined;
     state.calls.push({ method, path, body });
-    if (method === "GET" && path.startsWith("/teacher/template/")) return json(200, { job: null, settings_complete: false, settings_missing: ["Medium of instruction"] });
     if (method === "GET") return json(200, data());
     const one = path.match(/^\/teacher\/activities-grid\/Preparatory\/(\d+)$/);
     if (method === "PUT" && one) {
@@ -94,6 +93,13 @@ const puts = (fake: ReturnType<typeof fakeGrid>) => fake.state.calls.filter((c) 
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 describe("Activities grid", () => {
+  it("opens the student named by 'Fix in Activities'", async () => {
+    vi.stubGlobal("fetch", vi.fn(fakeGrid().fetch));
+    render(<ActivitiesGrid api={api} stage="Preparatory" focusStudent="1" />);
+    const one = (await screen.findByRole("rowheader", { name: /STUDENT ONE/ })).closest("tr")!;
+    expect(within(one).getByRole("button", { name: /Hide details/ })).toHaveAttribute("aria-expanded", "true");
+  });
+
   it("shows every student with a status, subjects in groups and plain radio labels", async () => {
     setup();
     expect(await screen.findByText("STUDENT ONE")).toBeInTheDocument();

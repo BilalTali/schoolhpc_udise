@@ -3,7 +3,6 @@ import { AlertCircle, CheckCircle2, ChevronDown, ChevronUp, Clock, FileUp, Lock,
 import { ApiError, call } from "../api";
 import type { Api } from "../api";
 import { QuickFill } from "./QuickFill";
-import { TemplatePanel } from "./TemplatePanel";
 import { ABILITY_KEYS, ABILITY_LABEL, LEVEL_VALUES, REPLACE_KEY, actKey, gradeOf, levelKey } from "./gridTypes";
 import type { GridData, GridStudent } from "./gridTypes";
 
@@ -14,10 +13,9 @@ type SaveState = "saving" | "saved" | "error" | "conflict" | undefined;
 const SAVE_DELAY = 800;
 const SHORT: Record<string, string> = { Beginner: "B", Proficient: "P", Advanced: "A" };
 
-export function ActivitiesGrid({ api, stage, uploadedFile, onOpenCard, onOpenSettings }: {
+export function ActivitiesGrid({ api, stage, uploadedFile, focusStudent }: {
   api: Api; stage: string; uploadedFile?: string;
-  onOpenCard?: (studentId: string, name: string) => void;
-  onOpenSettings?: () => void;
+  focusStudent?: string;                          // opened and scrolled to (from "Fix in Activities")
 }) {
   const [data, setData] = useState<GridData | null>(null);
   const [rows, setRows] = useState<Record<string, GridStudent>>({});
@@ -29,7 +27,7 @@ export function ActivitiesGrid({ api, stage, uploadedFile, onOpenCard, onOpenSet
   const [search, setSearch] = useState("");
   const [gradeFilter, setGradeFilter] = useState("");
   const [onlyProblems, setOnlyProblems] = useState(false);
-  const [expanded, setExpanded] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<string | null>(focusStudent ?? null);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [showFill, setShowFill] = useState(true);
 
@@ -136,6 +134,10 @@ export function ActivitiesGrid({ api, stage, uploadedFile, onOpenCard, onOpenSet
       (!q || r.student_name.toLowerCase().includes(q)) && (!gradeFilter || gradeOf(r) === gradeFilter) && (!onlyProblems || !r.ready));
   }, [rows, search, gradeFilter, onlyProblems]);
   const order = useMemo(() => (data?.students || []).map((s) => s.student_id), [data]);
+  const loaded = !!data;
+  useEffect(() => {
+    if (loaded && focusStudent) document.getElementById(`grid-row-${focusStudent}`)?.scrollIntoView?.({ block: "center" });
+  }, [loaded, focusStudent]);
   const visibleSorted = useMemo(() => {
     const ids = new Set(visible.map((r) => r.student_id));
     return order.filter((id) => ids.has(id)).map((id) => rows[id]);
@@ -266,13 +268,6 @@ export function ActivitiesGrid({ api, stage, uploadedFile, onOpenCard, onOpenSet
           {visibleSorted.length === 0 && <p className="lib-muted grid-none">No students match. <button type="button" className="portal-link-btn" onClick={() => { setSearch(""); setGradeFilter(""); setOnlyProblems(false); }}>Show everyone</button></p>}
         </div>
       )}
-
-      <TemplatePanel api={api} stage={stage} total={order.length} onOpenSettings={() => onOpenSettings?.()}
-                     onFix={(sid, where, name) => {
-                       if (where === "card") { onOpenCard?.(sid, name); return; }
-                       setSearch(""); setGradeFilter(""); setOnlyProblems(false); setExpanded(sid);
-                       window.setTimeout(() => document.getElementById(`grid-row-${sid}`)?.scrollIntoView({ block: "center" }), 0);
-                     }} />
     </div>
   );
 }

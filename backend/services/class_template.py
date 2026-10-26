@@ -2,6 +2,9 @@
 "Download template (Part B complete students only)": checks which students' Part B is complete
 (the real save's own checks, nothing re-written here), then builds the class workbook for them.
 
+Bulk-entry answers (mother tongue and the like) saved as drafts are put into the file pre-filled; the
+teacher can still change them there.
+
 A student is READY when sync.build_payloads - the code a real save runs - reports no Part B problem
 for them, with PARAKH's data plus everything set on the dashboard (Activities grid and the card
 editor's Part B answers). Problems in other parts are listed in the workbook, but do not exclude.
@@ -43,12 +46,12 @@ def dashboard_values(teacher_id: str, session: str, stage: str, student_id: str,
 
 
 def assess(stage: str, data: sync.StudentData, lookups, dashboard: Dict[str, Any], settings: Dict[str, Any],
-           resolve) -> Dict[str, Any]:
+           resolve, common: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Runs the save's own build for one student; splits its problems into Part B and the rest. Pure."""
     st = get_stage(stage)
     part_b = next(p for p in st.PARTS if p.code == "B")
     portal_row = sync.to_row(stage, data, lookups)
-    row = {**portal_row, **class_settings.row_values(stage, settings), **dashboard}
+    row = {**portal_row, **class_settings.row_values(stage, settings), **(common or {}), **dashboard}
     _, errors = sync.build_payloads(stage, data, row, lookups, resolve)
     prefix = f"{part_b.title}: "
     part_b_problems = [e[len(prefix):] for e in errors if e.startswith(prefix)]
@@ -114,7 +117,7 @@ def _run(job, client: Portal, teacher_id: str, stage: str, students, resolve, lo
                                        "part_b_problems": [f"Could not read this student's card from PARAKH ({exc})."]})
             else:
                 result = assess(stage, data, lookups, dashboard_values(teacher_id, job["session"], stage, sid, lookups),
-                                settings, resolve)
+                                settings, resolve, hpc_cards.common_values(teacher_id, job["session"], stage, sid, lookups))
                 job["data"][sid] = (data, result["row"])
                 job["results"].append({**base, **{k: result[k] for k in ("ready", "part_b_problems", "other_problems", "fix")}})
             job["done"] += 1

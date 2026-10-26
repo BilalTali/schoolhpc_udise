@@ -65,10 +65,10 @@ def _warm(owner, client, stage):
 
 
 @router.get("/hpc-cards/{stage}/fields")
-def fields(stage: str, teacher: Teacher = Depends(require_teacher)):
+def fields(stage: str, common: bool = False, teacher: Teacher = Depends(require_teacher)):
     client, stage = _portal(teacher), _stage(teacher, stage)
     return {"stage": stage, "parts": _portal_call(lambda: hpc_cards.stage_fields(
-        stage, hpc_cards.lookups_for(f"teacher_{teacher.id}", client, stage)))}
+        stage, hpc_cards.lookups_for(f"teacher_{teacher.id}", client, stage), common))}
 
 
 @router.get("/hpc-cards/{stage}/bulk")
