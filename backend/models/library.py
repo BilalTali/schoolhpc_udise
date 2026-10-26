@@ -78,6 +78,20 @@ class SchoolActivitySetting(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class TeacherActivityEdit(Base):
+    """A teacher's own changes to a PARAKH activity's texts (on top of the school's); used for their students' cards."""
+    __tablename__ = "teacher_activity_edits"
+    __table_args__ = (UniqueConstraint("teacher_id", "activity_id", name="uq_teacher_activity"),)
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    school_id = Column(String(36), ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True)
+    teacher_id = Column(String(36), ForeignKey("teachers.id", ondelete="CASCADE"), nullable=False, index=True)
+    activity_id = Column(String(36), ForeignKey("library_activities.id", ondelete="CASCADE"), nullable=False, index=True)
+    edited = Column(JSON, nullable=True)
+    version = Column(Integer, default=1, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class StageActivityDefault(Base):
     __tablename__ = "stage_activity_defaults"
     __table_args__ = (UniqueConstraint("school_id", "teacher_id", "stage", name="uq_stage_default"),)

@@ -50,6 +50,8 @@ class ActivityTexts(BaseModel):
     goals: Optional[List[str]] = None
     competencies: Optional[List[str]] = None
     subjects: Optional[List[str]] = Field(None, description="subject codes of the stage, e.g. PSLS1")
+    approaches: Optional[List[int]] = Field(None, description="Middle: 1 Art, 2 Sports, 3 Toy, 4 Technology, 5 Any other")
+    approach_other: Optional[str] = None
 
     def changes(self) -> Dict[str, Any]:
         out = self.model_dump(exclude_none=True, exclude={"rubric"})
@@ -122,6 +124,12 @@ def list_activities(stage: str, q: str = "", source: str = "", subject: str = ""
 @router.get("/dropdown/{stage}")
 def dropdown(stage: str, actor: lib.Actor = Depends(_actor), db: Session = Depends(get_db)):
     return {"stage": lib.check_stage(stage), "entries": lib.dropdown_entries(db, actor, lib.check_stage(stage))}
+
+
+@router.get("/codes/{stage}")
+def codes(stage: str, actor: lib.Actor = Depends(_actor), db: Session = Depends(get_db)):
+    """Goal and competency codes a new activity can use (taken from PARAKH's own activities)."""
+    return {"stage": lib.check_stage(stage), **lib.known_codes(db, actor, lib.check_stage(stage))}
 
 
 @router.get("/defaults/{stage}")

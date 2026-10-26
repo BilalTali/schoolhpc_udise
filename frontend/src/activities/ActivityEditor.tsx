@@ -6,10 +6,11 @@ import type { Api } from "../api";
 import { Modal } from "./Dialog";
 import { useConfirm } from "./useConfirm";
 import { CoverageBadge, SourceBadge } from "./Badges";
-import { ABILITIES, LEVELS, SOURCE_LABEL, formatWhen } from "./types";
-import type { ActivityDetail, Rubric, ShareLevel, Subject } from "./types";
+import { ABILITIES, APPROACHES, LEVELS, SOURCE_LABEL, formatWhen } from "./types";
+import type { ActivityDetail, CodeOption, Rubric, ShareLevel, Subject } from "./types";
 
-// View, edit or create one activity. Edits are saved to this app only, never to PARAKH.
+// View, edit or create one activity. PARAKH's activity bank is never changed: edited texts are used for the
+// copy of the activity on each student's card (as the PARAKH page does when a teacher edits one there).
 
 interface Form {
   title: string;
@@ -17,9 +18,11 @@ interface Form {
   activity_text: string;
   assessment_text: string;
   rubric: Rubric;
-  goals: string;
-  competencies: string;
+  goals: string[];
+  competencies: string[];
   subjects: string[];
+  approaches: number[];
+  approach_other: string;
 }
 
 const emptyRubric = (): Rubric => ({
@@ -31,10 +34,9 @@ const emptyRubric = (): Rubric => ({
 const toForm = (a: ActivityDetail): Form => ({
   title: a.title, display_name: a.source === "local" ? "" : a.title,
   activity_text: a.activity_text, assessment_text: a.assessment_text, rubric: a.rubric,
-  goals: a.goals.join(", "), competencies: a.competencies.join(", "), subjects: a.subjects,
+  goals: a.goals, competencies: a.competencies, subjects: a.subjects,
+  approaches: a.approaches || [], approach_other: a.approach_other || "",
 });
-
-const splitList = (s: string) => s.split(",").map((x) => x.trim()).filter(Boolean);
 
 const SHARE_OPTIONS: { value: ShareLevel; label: string; hint: string }[] = [
   { value: "private", label: "Only me", hint: "You and your school admin can see it." },
@@ -56,8 +58,9 @@ export function ActivityEditor({ api, stage, subjects, activityId, consentText, 
   const [detail, setDetail] = useState<ActivityDetail | null>(null);
   const [form, setForm] = useState<Form | null>(creating ? {
     title: "", display_name: "", activity_text: "", assessment_text: "", rubric: emptyRubric(),
-    goals: "", competencies: "", subjects: subjects.map((s) => s.code),
+    goals: [], competencies: [], subjects: subjects.map((s) => s.code), approaches: [], approach_other: "",
   } : null);
+  const [codes, setCodes] = useState<{ goals: CodeOption[]; competencies: CodeOption[] } | null>(null);
   const [baseline, setBaseline] = useState<string>(() => (creating ? JSON.stringify(form) : ""));   // what "no changes" means
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -66,7 +69,7 @@ export function ActivityEditor({ api, stage, subjects, activityId, consentText, 
   const [share, setShare] = useState<ShareLevel>(isAdmin ? "school" : "private");
   const [consent, setConsent] = useState(false);
   const [confirmUi, confirm] = useConfirm();
-  const ids = { title: useId(), name: useId(), desc: useId(), assess: useId(), goals: useId(), cpt: useId(), consent: useId() };
+  const ids = { title: useId(), name: useId(), desc: useId(), assess: useId(), goals: useId(), cpt: useId(), consent: useId(), other: useId() };
 
   const load = async () => {
     if (!activityId) return;
@@ -85,6 +88,13 @@ export function ActivityEditor({ api, stage, subjects, activityId, consentText, 
     }
   };
   useEffect(() => { load(); }, [activityId]);   // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    let live = true;
+    call<{ goals: CodeOption[]; competencies: CodeOption[] }>(api, "GET", `/activity-library/codes/${stage}`)
+      .then((c) => { if (live) setCodes(c); })
+      .catch(() => { if (live) setCodes({ goals: [], competencies: [] }); });
+    return () => { live = false; };
+  }, [api, stage]);
 
   const dirty = form !== null && JSON.stringify(form) !== baseline;
   const editable = creating || !!detail?.can_edit;
@@ -138,8 +148,10 @@ export function ActivityEditor({ api, stage, subjects, activityId, consentText, 
       if (Object.keys(rubric).length) out.rubric = rubric;
       if (isLocal) {
         if (form.title !== was.title) out.title = form.title;
-        if (form.goals !== was.goals) out.goals = splitList(form.goals);
-        if (form.competencies !== was.competencies) out.competencies = splitList(form.competencies);
+        if (JSON.stringify(form.goals) !== JSON.stringify(was.goals)) out.goals = form.goals;
+        if (JSON.stringify(form.competencies) !== JSON.stringify(was.competencies)) out.competencies = form.competencies;
+        if (JSON.stringify(form.approaches) !== JSON.stringify(was.approaches)) out.approaches = form.approaches;
+        if (form.approach_other !== was.approach_other) out.approach_other = form.approach_other;
       }
     }
     if (canRename && form.display_name !== was.display_name) out.display_name = form.display_name;
@@ -158,11 +170,14 @@ export function ActivityEditor({ api, stage, subjects, activityId, consentText, 
     try {
       if (creating) {
         const body = { stage, title: form.title, activity_text: form.activity_text, assessment_text: form.assessment_text,
-                       rubric: form.rubric, goals: splitList(form.goals), competencies: splitList(form.competencies),
-                       subjects: form.subjects, ...(share !== "private" ? { share, consent } : {}) };
+                       rubric: form.rubric, goals: form.goals, competencies: form.competencies, subjects: form.subjects,
+                       ...(stage === "Middle" ? { approaches: form.approaches, approach_other: form.approach_other } : {}),
+                       ...(share !== "private" ? { share, consent } : {}) };
         const made = await call<ActivityDetail>(api, "POST", "/activity-library", body);
         setBaseline(JSON.stringify(form));
-        onSaved(`"${made.label}" was added to the library.`);
+        onSaved(made.usable_in_excel
+          ? `"${made.label}" was added and can now be chosen on the Activities tab.`
+          : `"${made.label}" was added. Before it can be chosen for students it still needs: ${made.portal_ready.missing.join(", ")}.`);
         onClose();
         return;
       }
@@ -192,18 +207,22 @@ export function ActivityEditor({ api, stage, subjects, activityId, consentText, 
     }
   };
 
+  const mineOnly = detail?.edit_scope === "me";
   const resetToOriginal = async () => {
     if (!detail) return;
-    if (!(await confirm({ title: "Go back to the PARAKH original?",
-                          message: "Your school's changes to the texts and subjects of this activity will be removed. The name shown in Excel is kept.",
-                          confirmLabel: "Go back to original", danger: true }))) return;
+    if (!(await confirm(mineOnly
+      ? { title: "Remove your version?", confirmLabel: "Remove my version", danger: true,
+          message: detail.edited_by_school ? "Your changes go; your school's version is used again for your students."
+                                           : "Your changes go; the PARAKH original is used again for your students." }
+      : { title: "Go back to the PARAKH original?", confirmLabel: "Go back to original", danger: true,
+          message: "Your school's changes to the texts and subjects of this activity will be removed. The name shown in Excel is kept." }))) return;
     try {
       const d = await call<ActivityDetail>(api, "POST", `/activity-library/${detail.id}/reset`);
       setDetail(d);
       const f = toForm(d);
       setForm(f);
       setBaseline(JSON.stringify(f));
-      onSaved(`"${d.label}" is back to the PARAKH original.`);
+      onSaved(mineOnly ? `Your version of "${d.label}" was removed.` : `"${d.label}" is back to the PARAKH original.`);
     } catch (e: any) {
       setSaveError(e.message);
     }
@@ -226,7 +245,8 @@ export function ActivityEditor({ api, stage, subjects, activityId, consentText, 
   return (
     <Modal wide title={title} onClose={close} footer={footer}
            subtitle={detail && <span className="lib-badges"><SourceBadge source={detail.source} /><CoverageBadge activity={detail} />
-             {detail.edited && <span className="lib-badge lib-badge-edited">Changed by your school</span>}</span>}>
+             {detail.edited_by_school && <span className="lib-badge lib-badge-edited">Changed by your school</span>}
+             {detail.edited_by_me && <span className="lib-badge lib-badge-edited">Your version</span>}</span>}>
       {loadError ? (
         <div className="alert-box alert-error" role="alert"><AlertCircle size={18} aria-hidden="true" />
           <div>{loadError} <button type="button" className="portal-link-btn" onClick={load}>Try again</button></div></div>
@@ -239,9 +259,17 @@ export function ActivityEditor({ api, stage, subjects, activityId, consentText, 
               <div>Someone else changed this activity while you were editing. <button type="button" className="portal-link-btn" onClick={load}>Load their version</button> (your changes here will be lost).</div></div>
           )}
           {saveError && <div className="alert-box alert-error" role="alert"><AlertCircle size={18} aria-hidden="true" /><div>{saveError}</div></div>}
-          {detail && !detail.usable_in_excel && <p className="lib-note"><AlertCircle size={14} aria-hidden="true" /> Not offered in the Excel sheet: {detail.not_usable_reason}</p>}
+          {detail && !detail.usable_in_excel && <p className="lib-note"><AlertCircle size={14} aria-hidden="true" /> Cannot be chosen for students yet: {detail.not_usable_reason}</p>}
           {detail && !isLocal && (
-            <p className="lib-muted">From the {SOURCE_LABEL[detail.source]} (PARAKH number {detail.portal_id}). Changes you make here are kept in this app only; PARAKH is not changed.</p>
+            <p className="lib-muted">
+              From the {SOURCE_LABEL[detail.source]} (PARAKH number {detail.portal_id}).{" "}
+              {mineOnly
+                ? "You can change the activity and assessment texts. Your version is used on your own students' cards only (marked there as an edited copy, as PARAKH does); other teachers and PARAKH's bank are not changed."
+                : "Changes here are used on the cards of every teacher in your school (unless a teacher has their own version). PARAKH's bank is not changed."}
+            </p>
+          )}
+          {creating && (
+            <p className="lib-muted">Your own activity goes on students' cards as an activity written by the teacher. Fill every part below so PARAKH accepts it as finished.</p>
           )}
 
           {isLocal ? (
@@ -313,34 +341,52 @@ export function ActivityEditor({ api, stage, subjects, activityId, consentText, 
           ))}
 
           <div className="lib-two">
-            <div className="form-group">
-              <label className="form-label" htmlFor={ids.goals}>Curricular goal code(s)</label>
-              <input id={ids.goals} className="form-input" value={form.goals} disabled={!editable || !isLocal}
-                     placeholder="e.g. L1CG1" onChange={(e) => set("goals", e.target.value)} />
-            </div>
-            <div className="form-group">
-              <label className="form-label" htmlFor={ids.cpt}>Competency code(s)</label>
-              <input id={ids.cpt} className="form-input" value={form.competencies} disabled={!editable || !isLocal}
-                     placeholder="e.g. L1C1.1" onChange={(e) => set("competencies", e.target.value)} />
-            </div>
+            <CodePicker id={ids.goals} label="Curricular goal code(s)" value={form.goals} options={codes?.goals}
+                        disabled={!editable || !isLocal} onChange={(v) => set("goals", v)} />
+            <CodePicker id={ids.cpt} label="Competency code(s)" value={form.competencies} options={codes?.competencies}
+                        disabled={!editable || !isLocal} onChange={(v) => set("competencies", v)} />
           </div>
 
+          {stage === "Middle" && (
+            <fieldset className="lib-fieldset" disabled={!editable || !isLocal}>
+              <legend className="form-label">Approach (the Middle card asks for it)</legend>
+              <div className="lib-checks">
+                {APPROACHES.map((a) => (
+                  <label key={a.value} className="lib-check">
+                    <input type="checkbox" checked={form.approaches.includes(a.value)}
+                           onChange={(e) => set("approaches", e.target.checked
+                             ? [...form.approaches, a.value].sort((x, y) => x - y)
+                             : form.approaches.filter((x) => x !== a.value))} />
+                    {a.label}
+                  </label>
+                ))}
+              </div>
+              {form.approaches.includes(5) && (
+                <div className="form-group">
+                  <label className="form-label" htmlFor={ids.other}>Any other approach</label>
+                  <input id={ids.other} className="form-input" maxLength={500} value={form.approach_other}
+                         onChange={(e) => set("approach_other", e.target.value)} />
+                </div>
+              )}
+            </fieldset>
+          )}
+
           {isLocal && detail && !detail.portal_ready.ok && (
-            <p className="lib-note">To be added to PARAKH later, this activity still needs: {detail.portal_ready.missing.join(", ")}.</p>
+            <p className="lib-note">Before it can be chosen for students, this activity still needs: {detail.portal_ready.missing.join(", ")}.</p>
           )}
 
           {detail && !isLocal && (detail.diff?.length ?? 0) > 0 && (
             <section className="lib-diff" aria-labelledby="lib-diff-title">
               <div className="lib-diff-head">
-                <h3 id="lib-diff-title" className="lib-section-title">Your school's changes compared with PARAKH</h3>
-                {detail.can_manage && (
+                <h3 id="lib-diff-title" className="lib-section-title">Changes compared with PARAKH</h3>
+                {detail.can_reset && (
                   <button type="button" className="btn btn-outline" onClick={resetToOriginal}>
-                    <RotateCcw size={14} aria-hidden="true" /> Go back to original
+                    <RotateCcw size={14} aria-hidden="true" /> {mineOnly ? "Remove my version" : "Go back to original"}
                   </button>
                 )}
               </div>
               <table className="data-table lib-diff-table">
-                <thead><tr><th scope="col">What</th><th scope="col">On PARAKH</th><th scope="col">Your school</th></tr></thead>
+                <thead><tr><th scope="col">What</th><th scope="col">On PARAKH</th><th scope="col">Used here</th></tr></thead>
                 <tbody>
                   {detail.diff!.map((d) => (
                     <tr key={d.field}>
@@ -400,7 +446,41 @@ export function ActivityEditor({ api, stage, subjects, activityId, consentText, 
   );
 }
 
+/** Codes picked from the ones PARAKH's own activities use (a typo would put an unknown code on the card). */
+function CodePicker({ id, label, value, options, disabled, onChange }: {
+  id: string; label: string; value: string[]; options?: CodeOption[]; disabled: boolean; onChange: (v: string[]) => void;
+}) {
+  const left = (options || []).filter((o) => !value.includes(o.code));
+  return (
+    <div className="form-group">
+      <label className="form-label" htmlFor={id}>{label}</label>
+      {value.length > 0 && (
+        <ul className="lib-chips" aria-label={`${label} chosen`}>
+          {value.map((c) => (
+            <li key={c} className="mono-chip">
+              {c}
+              {!disabled && (
+                <button type="button" className="lib-chip-x" onClick={() => onChange(value.filter((x) => x !== c))}
+                        aria-label={`Remove ${c}`}>×</button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      {!disabled && (
+        <select id={id} className="form-select" value="" disabled={!options}
+                onChange={(e) => { if (e.target.value) onChange([...value, e.target.value]); }}>
+          <option value="">{options ? (left.length ? "Add a code…" : "No more codes") : "Loading codes…"}</option>
+          {left.map((o) => <option key={o.code} value={o.code}>{o.code} (used by {o.used_by} PARAKH {o.used_by === 1 ? "activity" : "activities"})</option>)}
+        </select>
+      )}
+      {disabled && value.length === 0 && <div className="lib-muted" id={id}>None</div>}
+    </div>
+  );
+}
+
 const HISTORY_LABEL: Record<string, string> = {
+  edit_own: "changed their own version", reset_own: "removed their own version",
   create: "added", edit: "changed", status: "turned on/off", reset: "went back to the PARAKH original",
   duplicate: "copied", share: "changed who can use it", set_default: "made default", clear_default: "stopped being default",
 };

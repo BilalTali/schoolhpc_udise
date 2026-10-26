@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import { AlertCircle, CheckCircle2, ChevronDown, ChevronUp, Clock, FileUp, Lock, RefreshCw, Search } from "lucide-react";
 import { ApiError, call } from "../api";
 import type { Api } from "../api";
@@ -13,9 +14,10 @@ type SaveState = "saving" | "saved" | "error" | "conflict" | undefined;
 const SAVE_DELAY = 800;
 const SHORT: Record<string, string> = { Beginner: "B", Proficient: "P", Advanced: "A" };
 
-export function ActivitiesGrid({ api, stage, uploadedFile, focusStudent }: {
+export function ActivitiesGrid({ api, stage, uploadedFile, focusStudent, libraryHref }: {
   api: Api; stage: string; uploadedFile?: string;
   focusStudent?: string;                          // opened and scrolled to (from "Fix in Activities")
+  libraryHref?: string;                           // the Activity Library, where activities are edited or added
 }) {
   const [data, setData] = useState<GridData | null>(null);
   const [rows, setRows] = useState<Record<string, GridStudent>>({});
@@ -181,7 +183,8 @@ export function ActivitiesGrid({ api, stage, uploadedFile, focusStudent }: {
           </button>
         </div>
       </div>
-      <p className="lib-muted">Choose an activity and the three levels for each subject. Changes are saved automatically and go into your Excel download. They reach PARAKH when you submit the card or upload the Excel file.</p>
+      <p className="lib-muted">Choose an activity and the three levels for each subject. Changes are saved automatically and go into your Excel download. They reach PARAKH when you submit the card or upload the Excel file.
+        {libraryHref && <> To change an activity's texts and questions, or add your own, open the <Link to={libraryHref}>Activity Library</Link>.</>}</p>
 
       <div aria-live="polite">
         {message && (

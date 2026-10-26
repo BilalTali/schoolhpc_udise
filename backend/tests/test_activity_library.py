@@ -345,7 +345,8 @@ def test_teacher_activity_sharing_needs_consent(world):
     assert res.status_code == 201, res.text
     act = res.json()
     assert act["source"] == "local" and act["share_state"] == "private" and act["covers_all"] is True
-    assert act["usable_in_excel"] is False and "not on PARAKH" in act["not_usable_reason"]
+    assert act["usable_in_excel"] is False and "Not finished yet" in act["not_usable_reason"]
+    assert "Curricular goal" in act["not_usable_reason"]
     assert "Curricular goal" in act["portal_ready"]["missing"]
     url = f"{API}/activity-library/{act['id']}"
 
@@ -382,11 +383,10 @@ def test_permissions_and_portal_rules(world):
     fake.records = [bank_record(1, "Preparatory", "A")]
     sync(users["admin_a"])
     a = by_code(items(users["t1"]), "A")
-    assert a["can_edit"] is False and a["can_manage"] is False
+    assert a["can_edit"] is True and a["edit_scope"] == "me" and a["can_manage"] is False
     url = f"{API}/activity-library/{a['id']}"
-    assert client.patch(url, headers=users["t1"], json={"activity_text": "x"}).status_code == 403
     assert client.patch(url, headers=users["t1"], json={"status": "disabled"}).status_code == 403
-    assert client.post(f"{url}/reset", headers=users["t1"]).status_code == 403
+    assert client.post(f"{url}/reset", headers=users["t1"]).status_code == 200          # nothing of theirs to reset
     assert client.delete(url, headers=users["admin_a"]).status_code == 400       # PARAKH activities: turn off instead
     assert client.get(f"{API}/activity-library/{uuid.uuid4()}", headers=users["t1"]).status_code == 404
     assert client.get(f"{API}/activity-library", params={"stage": "Secondary"}, headers=users["t1"]).status_code == 400
@@ -419,3 +419,80 @@ def test_sync_status_reports_last_sync_per_stage(world):
     assert "Middle" not in status_["last_synced"]
     other = client.get(f"{API}/activity-library/sync/{status_['latest']['id']}", headers=users["admin_b"])
     assert other.status_code == 404                  # another school's job
+
+
+# ---------------------------------------------------------------------------
+# Teachers edit any activity; activities made here are used on cards
+# ---------------------------------------------------------------------------
+
+def _teacher_id(headers):
+    return client.get(f"{API}/auth/me", headers=headers).json()["id"]
+
+
+def test_teacher_edits_a_parakh_activity_for_their_own_students(world):
+    users, fake = world
+    fake.records = [bank_record(1, "Preparatory", "A")]
+    sync(users["admin_a"])
+    a = by_code(items(users["t1"]), "A")
+    url = f"{API}/activity-library/{a['id']}"
+    res = client.patch(url, headers=users["t1"], json={
+        "activity_text": "Our way of doing it", "assessment_text": "New question?",
+        "rubric": {"awareness": {"beginner": "new b"}}, "version": a["version"]})
+    assert res.status_code == 200, res.text
+    mine = res.json()
+    assert mine["activity_text"] == "Our way of doing it" and mine["assessment_text"] == "New question?"
+    assert mine["rubric"]["awareness"]["beginner"] == "new b" and mine["rubric"]["awareness"]["proficient"] == "a-p"
+    assert mine["edited_by_me"] and mine["modified"] and mine["can_reset"] and mine["usable_in_excel"]
+    # only this teacher's version: the other teacher and the school keep PARAKH's text
+    assert by_code(items(users["t2"]), "A")["activity_text"] == "Pairs act out a short conversation."
+    assert by_code(items(users["admin_a"]), "A")["edited"] is False
+    assert client.patch(url, headers=users["t1"], json={"activity_text": "x", "version": a["version"]}).status_code == 409
+
+    resolve = lib.resolver_for_teacher(_teacher_id(users["t1"]), "Preparatory")
+    entry = resolve("P1")
+    assert entry["modified"] is True and entry["content"]["desc"][0] == "Our way of doing it"
+    assert entry["content"]["awr"][:3] == ["new b", "a-p", "a-a"] and entry["content"]["gl"] == ["CG1"]
+    assert lib.resolver_for_teacher(_teacher_id(users["t2"]), "Preparatory")("P1")["modified"] is False
+
+    # the school admin's edit is the base; the teacher's own edit stays on top; reset goes back to the school's
+    client.patch(url, headers=users["admin_a"], json={"assessment_text": "School question?"})
+    assert by_code(items(users["t2"]), "A")["assessment_text"] == "School question?"
+    assert by_code(items(users["t1"]), "A")["assessment_text"] == "New question?"
+    after = client.post(f"{url}/reset", headers=users["t1"]).json()
+    assert after["activity_text"] == "Pairs act out a short conversation." and after["assessment_text"] == "School question?"
+    assert after["edited_by_me"] is False and after["edited_by_school"] is True
+    with SessionLocal() as db:
+        actions = {r.action for r in db.query(AuditLog).filter(AuditLog.entity_id == a["id"]).all()}
+    assert {"edit_own", "reset_own"} <= actions
+
+
+def test_activity_made_here_is_usable_once_finished_and_codes_come_from_parakh(world):
+    users, fake = world
+    fake.records = [bank_record(1, "Preparatory", "A")]
+    sync(users["admin_a"])
+    codes = client.get(f"{API}/activity-library/codes/Preparatory", headers=users["t1"]).json()
+    assert codes["goals"] == [{"code": "CG1", "used_by": 1}] and codes["competencies"][0]["code"] == "C1.1"
+
+    rubric = {a: {"beginner": f"{a} b", "proficient": f"{a} p", "advanced": f"{a} a"}
+              for a in ("awareness", "sensitivity", "creativity")}
+    body = {"stage": "Preparatory", "title": "Story circle", "activity_text": "Children retell a story.",
+            "assessment_text": "Can you tell it again?", "rubric": rubric, "goals": ["CG1"], "competencies": ["ZZ9"]}
+    bad = client.post(f"{API}/activity-library", headers=users["t1"], json=body)
+    assert bad.status_code == 422 and "ZZ9" in bad.text
+    act = client.post(f"{API}/activity-library", headers=users["t1"], json={**body, "competencies": ["C1.1"]}).json()
+    assert act["usable_in_excel"] is True and act["portal_ready"]["ok"]
+    key = f"L{act['id']}"
+    dropdown = client.get(f"{API}/activity-library/dropdown/Preparatory", headers=users["t1"]).json()["entries"]
+    assert key in {e["key"] for e in dropdown}
+    resolve = lib.resolver_for_teacher(_teacher_id(users["t1"]), "Preparatory")
+    assert resolve(key)["portal_id"] is None and resolve(key)["caption"] == "Story circle"
+    assert resolve.typed == {"Story circle": key}
+
+    # Middle needs the approach as well
+    mid = client.post(f"{API}/activity-library", headers=users["t1"], json={**body, "stage": "Middle", "competencies": []})
+    assert "Approach" in mid.json()["portal_ready"]["missing"]
+    fixed = client.patch(f"{API}/activity-library/{mid.json()['id']}", headers=users["t1"],
+                         json={"approaches": [5], "version": mid.json()["version"]}).json()
+    assert "Approach (any other) text" in fixed["portal_ready"]["missing"]
+    assert client.patch(f"{API}/activity-library/{mid.json()['id']}", headers=users["t1"],
+                        json={"approaches": [9]}).status_code == 422

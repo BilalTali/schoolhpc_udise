@@ -8,6 +8,8 @@ Teacher endpoints for working on HPC cards in the web app (instead of, or next t
   DELETE /teacher/hpc-cards/{stage}/{student_id}/draft       discard the draft
   POST   /teacher/hpc-cards/{stage}/{student_id}/submit      save to the portal and mark complete
   GET    /teacher/hpc-cards/{stage}/{student_id}/preview     read-only card for print
+  GET    /teacher/hpc-cards/{stage}/levels                   Part C levels for the whole class
+  PUT    /teacher/hpc-cards/{stage}/levels                   save them (drafts)
   GET    /teacher/hpc-cards/{stage}/bulk?field=<key>         one field for the whole class
   PUT    /teacher/hpc-cards/{stage}/bulk                     set that field for many students (drafts)
 Every endpoint takes ?session=<code> (default: the current session). Past sessions are read-only.
@@ -34,6 +36,10 @@ class DraftRequest(BaseModel):
 class BulkRequest(BaseModel):
     field: str
     values: Dict[str, Any] = Field(..., description="student_id -> value")
+
+
+class LevelsRequest(BaseModel):
+    values: Dict[str, Dict[str, Any]] = Field(..., description="student_id -> {Part C level key: value}")
 
 
 def _ctx(teacher: Teacher, stage: str, session: Optional[str], writing: bool = False):
@@ -69,6 +75,20 @@ def fields(stage: str, common: bool = False, teacher: Teacher = Depends(require_
     client, stage = _portal(teacher), _stage(teacher, stage)
     return {"stage": stage, "parts": _portal_call(lambda: hpc_cards.stage_fields(
         stage, hpc_cards.lookups_for(f"teacher_{teacher.id}", client, stage), common))}
+
+
+@router.get("/hpc-cards/{stage}/levels")
+def levels_read(stage: str, session: Optional[str] = None, teacher: Teacher = Depends(require_teacher)):
+    client, stage, session = _ctx(teacher, stage, session)
+    return _portal_call(hpc_cards.levels_read, client, f"teacher_{teacher.id}", teacher.id, session, stage)
+
+
+@router.put("/hpc-cards/{stage}/levels")
+def levels_write(stage: str, payload: LevelsRequest, session: Optional[str] = None,
+                 teacher: Teacher = Depends(require_teacher)):
+    client, stage, session = _ctx(teacher, stage, session, writing=True)
+    return _portal_call(hpc_cards.levels_write, client, f"teacher_{teacher.id}", teacher.id, session, stage,
+                        payload.values)
 
 
 @router.get("/hpc-cards/{stage}/bulk")

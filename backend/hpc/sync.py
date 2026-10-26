@@ -127,11 +127,13 @@ def part_c_levels(stage: str, parts: Dict[str, Any], lookups: Lookups) -> Dict[s
     return out
 
 
-def grid_state(stage: str, parts: Dict[str, Any], row: Dict[str, Any], lookups: Lookups):
-    """(current PARAKH activities, grid values to use, where each value came from)."""
+def grid_state(stage: str, parts: Dict[str, Any], row: Dict[str, Any], lookups: Lookups,
+               typed: Optional[Dict[str, str]] = None):
+    """(current PARAKH activities, grid values to use, where each value came from). `typed` names the
+    activities made in this app, which a card holds without a bank id."""
     st = get_stage(stage)
     part_b = next(p for p in st.PARTS if p.code == "B")
-    now = activity_grid.current(st.DOMAINS, parts[part_b.col])
+    now = activity_grid.current(st.DOMAINS, parts[part_b.col], typed)
     draft = {k: row[k] for k in activity_grid.grid_keys(st.DOMAINS) if k in row}
     values, source = activity_grid.effective(st.DOMAINS, now, draft, part_c_levels(stage, parts, lookups))
     return now, values, source
@@ -139,13 +141,14 @@ def grid_state(stage: str, parts: Dict[str, Any], row: Dict[str, Any], lookups: 
 
 def apply_activity_grid(stage: str, parts: Dict[str, Any], row: Dict[str, Any], lookups: Lookups,
                         resolve: activity_grid.Resolver) -> List[str]:
-    """Rebuilds Part B from the grid when the grid differs from PARAKH; otherwise leaves it exactly as it is."""
+    """Rebuilds Part B from the grid when the grid differs from PARAKH, or when an activity on the card was
+    edited in the library since; otherwise leaves it exactly as it is."""
     st = get_stage(stage)
     part_b = next(p for p in st.PARTS if p.code == "B")
-    now, values, _ = grid_state(stage, parts, row, lookups)
+    now, values, _ = grid_state(stage, parts, row, lookups, activity_grid.typed_keys(resolve))
     replace = str(values.get(activity_grid.REPLACE_KEY, "")).lower() in ("yes", "true", "1")
     unchanged = all(values[k] == now.values.get(k, "") for k in values if k != activity_grid.REPLACE_KEY)
-    if now.existing and unchanged and not replace:
+    if now.existing and unchanged and not replace and not activity_grid.stale_texts(parts[part_b.col], now, resolve):
         return []
     return activity_grid.apply(st.DOMAINS, dict(zip(st.DOMAINS, st.SUBJECTS)), st.ACTIVITY_GRID, parts[part_b.col], values, resolve)
 

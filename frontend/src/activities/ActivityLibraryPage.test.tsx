@@ -134,7 +134,7 @@ describe("Managing activities (school admin)", () => {
     await user.click(within(dialog).getByRole("button", { name: "Save changes" }));
     await waitFor(() => expect(calls(fake, "PATCH", "/activity-library/a1")).toHaveLength(1));
     expect(calls(fake, "PATCH", "/activity-library/a1")[0].body).toEqual({ activity_text: "Our version.", version: 1 });
-    expect(await within(dialog).findByRole("heading", { name: /Your school's changes compared with PARAKH/ })).toBeInTheDocument();
+    expect(await within(dialog).findByRole("heading", { name: /Changes compared with PARAKH/ })).toBeInTheDocument();
     expect(within(dialog).queryByText("Unsaved changes")).not.toBeInTheDocument();
 
     await user.click(within(dialog).getByRole("button", { name: /Go back to original/ }));
@@ -176,7 +176,42 @@ describe("Adding activities", () => {
     const body = calls(fake, "POST", "/activity-library")[0].body;
     expect(body).toMatchObject({ stage: "Preparatory", title: "Story circle", share: "school", consent: true });
     expect(body.subjects).toHaveLength(7);
-    expect(await screen.findByText('"Story circle" was added to the library.')).toBeInTheDocument();
+    expect(await screen.findByText(/"Story circle" was added\. Before it can be chosen for students it still needs: Curricular goal, Competency/)).toBeInTheDocument();
+  });
+
+  it("a teacher's own activity picks goal and competency codes from PARAKH's and can then be used", async () => {
+    const { fake, user } = setup({ isAdmin: false });
+    await user.click((await screen.findAllByRole("button", { name: /Add your own activity/ }))[0]);
+    const dialog = await screen.findByRole("dialog", { name: "New Preparatory activity" });
+    await user.type(within(dialog).getByLabelText(/Activity name/), "Story circle");
+    await user.selectOptions(await within(dialog).findByLabelText("Curricular goal code(s)"), "CG1");
+    expect(within(dialog).getByRole("list", { name: /Curricular goal code\(s\) chosen/ })).toHaveTextContent("CG1");
+    expect(within(dialog).getByLabelText("Curricular goal code(s)")).not.toHaveTextContent(/^CG1 \(/);   // not offered twice
+    await user.selectOptions(within(dialog).getByLabelText("Competency code(s)"), "C1.1");
+    await user.click(within(dialog).getByRole("button", { name: "Add activity" }));
+    await waitFor(() => expect(fake.state.created).not.toBeNull());
+    expect(fake.state.created).toMatchObject({ goals: ["CG1"], competencies: ["C1.1"] });
+    expect(fake.state.created.approaches).toBeUndefined();                       // Preparatory: no approach
+    expect(await screen.findByText(/"Story circle" was added and can now be chosen on the Activities tab/)).toBeInTheDocument();
+  });
+
+  it("a teacher edits a PARAKH activity as their own version, and can remove it again", async () => {
+    const { fake, user } = setup({ isAdmin: false });
+    await user.click(await screen.findByRole("button", { name: "L1CG 1, C 1.1" }));
+    const dialog = await screen.findByRole("dialog", { name: "L1CG 1, C 1.1" });
+    expect(within(dialog).getByText(/used on your own students' cards only/)).toBeInTheDocument();
+    const assess = within(dialog).getByLabelText("How it is assessed");
+    await user.clear(assess);
+    await user.type(assess, "Ask: what would you say?");
+    await user.click(within(dialog).getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(calls(fake, "PATCH", "/activity-library/a1")).toHaveLength(1));
+    expect(calls(fake, "PATCH", "/activity-library/a1")[0].body).toEqual({ assessment_text: "Ask: what would you say?", version: 1 });
+    expect(await within(dialog).findByText("Your version")).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: /Remove my version/ }));
+    const sure = await screen.findByRole("alertdialog", { name: "Remove your version?" });
+    await user.click(within(sure).getByRole("button", { name: "Remove my version" }));
+    await waitFor(() => expect(calls(fake, "POST", "/activity-library/a1/reset")).toHaveLength(1));
+    await waitFor(() => expect(within(dialog).queryByText("Your version")).not.toBeInTheDocument());
   });
 
   it("teachers see no admin controls", async () => {

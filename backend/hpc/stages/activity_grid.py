@@ -56,7 +56,8 @@ def check_value(key: str, value: Any) -> Optional[str]:
     if not text:
         return None
     if key.startswith("b_act_"):
-        return None if portal_id(text) is not None else "Choose an activity from the list."
+        ok = portal_id(text) is not None or (text.startswith("L") and len(text) > 1)    # L<id>: made in this app
+        return None if ok else "Choose an activity from the list."
     if key.startswith("b_lvl_"):
         return None if text in LEVEL_TO_PORTAL else "Choose Beginner, Proficient or Advanced."
     if key == REPLACE_KEY:
@@ -88,7 +89,12 @@ class Current:
     locked: bool = False                             # a subject is covered by more than one activity
 
 
-def current(subjects: List[str], fd: List[Dict[str, Any]]) -> Current:
+def typed_keys(resolve: Optional["Resolver"]) -> Dict[str, str]:
+    """Activity name -> grid key for activities made in this app (on a card they have no bank id)."""
+    return dict(getattr(resolve, "typed", None) or {})
+
+
+def current(subjects: List[str], fd: List[Dict[str, Any]], typed: Optional[Dict[str, str]] = None) -> Current:
     acts = [a for a in fd or [] if _real(a)]
     values: Dict[str, str] = {}
     cover: Dict[str, int] = {}
@@ -96,14 +102,14 @@ def current(subjects: List[str], fd: List[Dict[str, Any]]) -> Current:
     for i, act in enumerate(acts):
         dt = act["dt"]
         bank = dt.get("act_bank_id")
-        key = key_for(bank, dt.get("is_global")) if str(bank or "").isdigit() else ""
+        key = key_for(bank, dt.get("is_global")) if str(bank or "").isdigit() else (typed or {}).get(act.get("nm") or "", "")
         domains = [s for s in subjects if s in (dt.get("domain") or [])]
         existing.append({"key": key, "name": act.get("nm") or "Activity", "subjects": domains,
                          "complete": bool(act.get("is_complete")), "from_bank": bool(key)})
         for s in domains:
             cover[s] = cover.get(s, 0) + 1
             if act_key(s) in values or not key:
-                continue                             # first activity wins; teacher-typed ones have no key
+                continue                             # first activity wins; typed ones not from this app have no key
             values[act_key(s)] = key
             for ability, short in ABILITIES:
                 level = PORTAL_TO_LEVEL.get(str((dt.get(short) or ["", "", "", ""])[3]).strip(), "")
@@ -131,6 +137,50 @@ def effective(subjects: List[str], now: Current, draft: Dict[str, Any], part_c_l
 # Grid values -> PARAKH's activity list
 # ---------------------------------------------------------------------------
 
+TEXT_KEYS = ("gl", "cpt", "desc")
+
+
+def texts_differ(dt: Dict[str, Any], content: Dict[str, Any]) -> bool:
+    """True when a card's copy of an activity has other texts than the library's version."""
+    if any(list(dt.get(k) or []) != list(content.get(k) or []) for k in ("gl", "cpt")):
+        return True
+    if (list(dt.get("desc") or []) + ["", ""])[:2] != (list(content.get("desc") or []) + ["", ""])[:2]:
+        return True
+    return any((list(dt.get(k) or []) + ["", "", ""])[:3] != (list(content.get(k) or []) + ["", "", ""])[:3]
+               for _, k in ABILITIES)
+
+
+def set_texts(dt: Dict[str, Any], content: Dict[str, Any], from_bank) -> None:
+    """Puts the library's texts into a card's copy; the chosen levels and the student's answers stay."""
+    dt["gl"], dt["cpt"] = list(content.get("gl") or []), list(content.get("cpt") or [])
+    dt["desc"] = (list(content.get("desc") or []) + ["", ""])[:2]
+    for _, k in ABILITIES:
+        level = (list(dt.get(k) or []) + ["", "", "", ""])[3]
+        dt[k] = (list(content.get(k) or []) + ["", "", ""])[:3] + [level]
+    for k, v in from_bank(content).items():
+        if k == "any_other":                         # Middle: only any_other[0] belongs to the activity
+            other = (list(dt.get("any_other") or []) + ["", "", ""])[:3]
+            other[0] = v[0]
+            dt["any_other"] = other
+        else:
+            dt[k] = v
+
+
+def new_card_activity(spec: "GridSpec", entry: Dict[str, Any], portal_levels: List[str]) -> Dict[str, Any]:
+    """A card's copy of a library activity: a PARAKH bank activity (marked modified when this app's texts
+    differ from PARAKH's), or - for one made in this app - an activity typed into the card, as the
+    PARAKH page's own blank activity has it (no bank id)."""
+    if entry.get("portal_id") is None:
+        dt = spec.blank()
+        set_texts(dt, entry["content"], spec.from_bank)
+        for (_, k), level in zip(ABILITIES, portal_levels):
+            dt[k][3] = level
+        return {"nm": entry["caption"], "dt": dt, "is_modified": False}
+    dt = bank_dt(spec.blank, entry["content"], int(entry["portal_id"]), bool(entry.get("is_global", True)),
+                 spec.from_bank, portal_levels)
+    return {"nm": entry["caption"], "dt": dt, "is_modified": bool(entry.get("modified"))}
+
+
 @dataclass
 class Plan:
     activities: List[Dict[str, Any]]
@@ -141,7 +191,9 @@ class Plan:
 def plan(subjects: List[str], names: Dict[str, str], spec: GridSpec, fd: List[Dict[str, Any]],
          values: Dict[str, str], resolve: Resolver) -> Plan:
     """Pure: works out the new activity list. Nothing is changed when there are errors."""
-    now = current(subjects, fd)
+    typed = typed_keys(resolve)
+    typed_name = {k: n for n, k in typed.items()}
+    now = current(subjects, fd, typed)
     replace = str(values.get(REPLACE_KEY, "")).strip().lower() in ("yes", "true", "1")
     errors: List[str] = []
     if now.locked and not replace:
@@ -179,7 +231,12 @@ def plan(subjects: List[str], names: Dict[str, str], spec: GridSpec, fd: List[Di
                 continue
             for i, act in existing:
                 dt = act["dt"]
-                if i in used or str(dt.get("act_bank_id") or "") != str(portal_id(gk[0]) or "-"):
+                if i in used:
+                    continue
+                if gk[0] in typed_name:              # made in this app: matched by its name (no bank id)
+                    if dt.get("act_bank_id") or (act.get("nm") or "") != typed_name[gk[0]]:
+                        continue
+                elif str(dt.get("act_bank_id") or "") != str(portal_id(gk[0]) or "-"):
                     continue
                 if exact and set(dt.get("domain") or []) != set(subs):
                     continue
@@ -199,6 +256,11 @@ def plan(subjects: List[str], names: Dict[str, str], spec: GridSpec, fd: List[Di
             dt = act["dt"]
             before = (sorted(dt.get("domain") or []), [str((dt.get(k) or ["", "", "", ""])[3]) for _, k in ABILITIES])
             changed = before != (sorted(subs), portal_levels)
+            entry = resolve(key)
+            if entry and entry.get("modified") and texts_differ(dt, entry["content"]):
+                set_texts(dt, entry["content"], spec.from_bank)       # your edited texts replace the card's copy
+                act["is_modified"] = bool(dt.get("act_bank_id"))
+                changed = True
             take_shared = changed or i == first
             changes.append({"action": "update" if changed else "keep", "name": act.get("nm") or key,
                             "subjects": [names[s] for s in subs]})
@@ -210,9 +272,8 @@ def plan(subjects: List[str], names: Dict[str, str], spec: GridSpec, fd: List[Di
             if not entry.get("usable", True):
                 errors.append(f"'{entry['caption']}' cannot be added: {entry.get('reason') or 'not available'}")
                 continue
-            dt = bank_dt(spec.blank, entry["content"], int(entry["portal_id"]), bool(entry.get("is_global", True)),
-                         spec.from_bank, portal_levels)
-            act = {"nm": entry["caption"], "dt": dt, "is_modified": False}
+            act = new_card_activity(spec, entry, portal_levels)
+            dt = act["dt"]
             take_shared = True
             changes.append({"action": "add", "name": entry["caption"], "subjects": [names[s] for s in subs]})
         dt["domain"] = list(subs)
@@ -249,6 +310,17 @@ def plan(subjects: List[str], names: Dict[str, str], spec: GridSpec, fd: List[Di
     if errors:
         return Plan(fd, changes, errors)
     return Plan(out, changes, [])
+
+
+def stale_texts(fd: List[Dict[str, Any]], now: Current, resolve: Optional["Resolver"]) -> bool:
+    """True when a card holds an activity whose texts were edited in this app since (so a save updates it)."""
+    if resolve is None:
+        return False
+    for act, info in zip([a for a in fd or [] if _real(a)], now.existing):
+        entry = resolve(info["key"]) if info["key"] else None
+        if entry and entry.get("modified") and texts_differ(act["dt"], entry["content"]):
+            return True
+    return False
 
 
 def apply(subjects: List[str], names: Dict[str, str], spec: GridSpec, fd: List[Dict[str, Any]],

@@ -43,6 +43,13 @@ export interface Activity {
   can_edit: boolean;
   can_manage: boolean;
   can_delete: boolean;
+  can_reset: boolean;
+  edited_by_school: boolean;
+  edited_by_me: boolean;
+  modified: boolean;                  // the texts used on cards differ from PARAKH's
+  edit_scope: "me" | "school" | "activity";
+  approaches: number[];               // Middle: 1 Art, 2 Sports, 3 Toy, 4 Technology, 5 Any other
+  approach_other: string;
   version: number;
   portal_ready: { ok: boolean; missing: string[] };
 }
@@ -52,6 +59,16 @@ export interface ActivityDetail extends Activity {
   diff?: { field: string; label: string; original: unknown; current: unknown }[];
   history: { at: string; who: string; action: string }[];
 }
+
+export interface CodeOption {
+  code: string;
+  used_by: number;
+}
+
+export const APPROACHES: { value: number; label: string }[] = [
+  { value: 1, label: "Art-Integrated" }, { value: 2, label: "Sports-Integrated" }, { value: 3, label: "Toy-Based" },
+  { value: 4, label: "Technology-Integrated" }, { value: 5, label: "Any other" },
+];
 
 export interface SyncJob {
   id: string;

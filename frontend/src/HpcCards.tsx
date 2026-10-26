@@ -587,7 +587,7 @@ export function HpcBulkEntry({ api, stage }: { api: CardsApi; stage: string }) {
     setRows([]);
     setMessage(null);
     call<{ parts: { code: string; title: string; fields: FieldMeta[] }[] }>(api, "GET", `/teacher/hpc-cards/${encodeURIComponent(stage)}/fields?common=true`)
-      .then((d) => { if (live) setParts(d.parts); })
+      .then((d) => { if (live) setParts(d.parts.filter((p) => p.code !== "C")); })   // Part C levels: the grid above
       .catch((e) => { if (live) setMessage({ type: "error", text: e.message }); })
       .finally(() => { if (live) setLoadingFields(false); });
     return () => { live = false; };

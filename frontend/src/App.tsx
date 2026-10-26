@@ -40,6 +40,7 @@ import { ActivityLibraryPage } from "./activities/ActivityLibraryPage";
 import { ActivitiesGrid } from "./activities/ActivitiesGrid";
 import { ClassSettings } from "./activities/ClassSettings";
 import { TemplatePanel } from "./activities/TemplatePanel";
+import { LevelsGrid } from "./activities/LevelsGrid";
 import { CaptchaStep } from "./CaptchaStep";
 import type { CaptchaResult } from "./CaptchaStep";
 
@@ -2448,6 +2449,7 @@ export default function App() {
               <>
                 {renderTeacherStageSwitcher()}
                 <ActivitiesGrid key={activeTeacherStage} api={cardsApi} stage={activeTeacherStage} focusStudent={gridFocus}
+                                libraryHref={`/activities/${activeTeacherStage.toLowerCase()}`}
                                 uploadedFile={validationReport?.warnings?.some((w) => w.message.includes("old Activity columns"))
                                   ? uploadedFileName : undefined} />
               </>
@@ -2457,6 +2459,7 @@ export default function App() {
             {teacherTab === "bulk" && (
               <>
                 {renderTeacherStageSwitcher()}
+                <LevelsGrid key={`levels-${activeTeacherStage}`} api={cardsApi} stage={activeTeacherStage} />
                 <HpcBulkEntry api={cardsApi} stage={activeTeacherStage} />
               </>
             )}

@@ -23,8 +23,10 @@ export function makeActivity(over: Partial<Activity> & { id: string; code: strin
     rubric: rubric(), goals: ["CG1"], competencies: ["C1.1"], subjects, subject_names: [], covers_all: true,
     missing_subjects: [], portal_subject_names: ["Language 1 (R1)"], has_pictures: false, status: "active",
     is_default: false, edited: false, upstream_status: "present", portal_active: true, last_synced_at: "2026-10-25T10:00:00Z",
-    share_state: null, is_mine: false, usable_in_excel: true, not_usable_reason: "", can_edit: isAdmin, can_manage: isAdmin,
-    can_delete: false, version: 1, portal_ready: { ok: true, missing: [] }, ...over,
+    share_state: null, is_mine: false, usable_in_excel: true, not_usable_reason: "", can_edit: true, can_manage: isAdmin,
+    can_delete: false, can_reset: false, edited_by_school: false, edited_by_me: false, modified: false,
+    edit_scope: (over.source ?? "portal_global") === "local" ? "activity" : isAdmin ? "school" : "me",
+    approaches: [], approach_other: "", version: 1, portal_ready: { ok: true, missing: [] }, ...over,
   };
   return withCoverage(a);
 }
@@ -51,6 +53,7 @@ export function fakeLibraryApi({ isAdmin = true, activities }: { isAdmin?: boole
     jobPolls: 0,
     failList: 0,
     calls: [] as Call[],
+    created: null as any,
   };
 
   const json = (status: number, body: unknown) =>
@@ -117,10 +120,18 @@ export function fakeLibraryApi({ isAdmin = true, activities }: { isAdmin?: boole
       state.defaultId = body.activity_id;
       return json(200, { stage: "Preparatory", activity_id: body.activity_id });
     }
+    if (method === "GET" && path === "/activity-library/codes/Preparatory") {
+      return json(200, { stage: "Preparatory", goals: [{ code: "CG1", used_by: 2 }, { code: "CG2", used_by: 1 }],
+                         competencies: [{ code: "C1.1", used_by: 2 }] });
+    }
     if (method === "POST" && path === "/activity-library") {
+      state.created = body;
+      const missing = [...(body.goals?.length ? [] : ["Curricular goal"]), ...(body.competencies?.length ? [] : ["Competency"])];
       const made = makeActivity({ id: "new1", code: body.title, title: body.title, source: "local", subjects: body.subjects,
                                   share_state: body.share || "private", is_mine: true, can_edit: true, can_delete: true,
-                                  usable_in_excel: false, not_usable_reason: "Made in this app - not on PARAKH yet." }, isAdmin);
+                                  goals: body.goals || [], competencies: body.competencies || [],
+                                  usable_in_excel: missing.length === 0, portal_ready: { ok: missing.length === 0, missing },
+                                  not_usable_reason: missing.length ? `Not finished yet - still needs: ${missing.join(", ")}.` : "" }, isAdmin);
       state.activities.push(made);
       return json(201, detail(made));
     }
@@ -132,12 +143,17 @@ export function fakeLibraryApi({ isAdmin = true, activities }: { isAdmin?: boole
       if (method === "GET" && !action) return json(200, detail(a));
       if (method === "PATCH") {
         if (body.version !== undefined && body.version !== a.version) return json(409, { detail: "Someone else changed this activity." });
+        const texts = "activity_text" in body || "assessment_text" in body || "rubric" in body;
+        const mine = !isAdmin && a.source !== "local" && texts;
         const next = withCoverage({ ...a, ...body, rubric: a.rubric, version: a.version + 1,
-                                    edited: a.edited || "activity_text" in body || "subjects" in body,
+                                    edited: a.edited || texts || "subjects" in body,
+                                    edited_by_me: a.edited_by_me || mine, can_reset: a.can_reset || (a.source !== "local" && texts),
+                                    modified: a.modified || (a.source !== "local" && texts),
                                     title: body.display_name ?? body.title ?? a.title });
         return json(200, detail(replace(next)));
       }
-      if (method === "POST" && action === "/reset") return json(200, detail(replace({ ...a, edited: false, activity_text: "Pairs act out a conversation." })));
+      if (method === "POST" && action === "/reset") return json(200, detail(replace({ ...a, edited: false, edited_by_me: false, can_reset: false,
+                                                                                    modified: false, activity_text: "Pairs act out a conversation." })));
       if (method === "POST" && action === "/duplicate") {
         const copy = makeActivity({ id: `${id}copy`, code: `Copy of ${a.code}`, title: `Copy of ${a.code}`, source: "local",
                                     can_edit: true, can_delete: true, is_mine: !isAdmin }, isAdmin);

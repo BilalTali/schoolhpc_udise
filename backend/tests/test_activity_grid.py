@@ -208,3 +208,79 @@ def test_check_value_messages():
     assert grid.check_value("b_act_PSLS1", "85: something") == "Choose an activity from the list."
     assert grid.check_value("b_lvl_PSLS1_awareness", "Expert") == "Choose Beginner, Proficient or Advanced."
     assert grid.check_value("b_lvl_PSLS1_awareness", "") is None and grid.check_value("b_act_PSLS1", "T40321") is None
+
+
+
+# ---------------------------------------------------------------------------
+# Edited activities and activities made in this app
+# ---------------------------------------------------------------------------
+
+EDITED = {**copy.deepcopy(BANK_CONTENT), "desc": ["Our own way.", "Our own question?"],
+          "awr": ["new b", "new p", "new a", ""]}
+
+
+def edited_resolver(modified=True):
+    def resolve(key):
+        if key == "P85":
+            return {"portal_id": 85, "caption": "Bank 85", "content": EDITED if modified else BANK_CONTENT,
+                    "is_global": True, "usable": True, "modified": modified}
+        return None
+    return resolve
+
+
+def test_an_edited_activity_goes_on_the_card_as_parakh_marks_an_edited_copy():
+    b, errors = part_b("PREPARATORY", blank_student("PREPARATORY"), grid_row(), make_lookups("PREPARATORY"), edited_resolver())
+    assert errors == []
+    act = b["formdata"][0]
+    assert act["is_modified"] is True and act["dt"]["act_bank_id"] == 85 and act["dt"]["is_global"] is True
+    assert act["dt"]["desc"] == ["Our own way.", "Our own question?"] and act["dt"]["awr"] == ["new b", "new p", "new a", "proficient"]
+    assert b["act_bank_map"] == [{"id": act["id"], "bank_id": "85", "is_modified": True, "is_global": True}]
+
+
+def test_editing_updates_cards_that_already_have_the_activity_but_keeps_the_students_answers():
+    data = student_with(portal_activity(85, SUBJ, sa=[2] * 8))
+    lk = make_lookups("PREPARATORY")
+    b, errors = part_b("PREPARATORY", data, grid_row(), lk, edited_resolver())
+    assert errors == []
+    act = b["formdata"][0]
+    assert act["id"] == "1001_85_1" and act["is_modified"] is True
+    assert act["dt"]["desc"][0] == "Our own way." and act["dt"]["awr"][3] == "proficient"
+    assert act["dt"]["tfob"] == "kept notes"                     # the student's answers still come from the row
+    # nothing edited: the card's texts and its "modified" flag are left as they are
+    data = student_with(portal_activity(85, SUBJ))
+    b, errors = part_b("PREPARATORY", data, grid_row(), lk, edited_resolver(modified=False))
+    act = b["formdata"][0]
+    assert errors == [] and act["is_modified"] is False
+    assert act["dt"]["desc"] == BANK_CONTENT["desc"] and act["dt"]["awr"][:3] == BANK_CONTENT["awr"][:3]
+
+
+def local_resolver():
+    content = {"gl": ["L1CG1"], "cpt": ["L1C1.1"], "desc": ["Retell a story.", "Can you tell it again?"],
+               "awr": ["ab", "ap", "aa"], "sen": ["sb", "sp", "sa"], "cre": ["cb", "cp", "ca"]}
+
+    def resolve(key):
+        if key == "Lstory":
+            return {"portal_id": None, "caption": "Story circle", "content": content, "is_global": False,
+                    "usable": True, "modified": False}
+        return edited_resolver(False)(key)
+    resolve.typed = {"Story circle": "Lstory"}
+    return resolve
+
+
+def test_an_activity_made_here_goes_on_the_card_typed_and_is_recognised_again():
+    lk = make_lookups("PREPARATORY")
+    resolve = local_resolver()
+    row = grid_row(**{s: ("Lstory", "Advanced", "Proficient", "Beginner") for s in SUBJ})
+    b, errors = part_b("PREPARATORY", blank_student("PREPARATORY"), row, lk, resolve)
+    assert errors == []
+    act = b["formdata"][0]
+    assert act["nm"] == "Story circle" and act["dt"]["act_bank_id"] is None and "is_global" not in act["dt"]
+    assert act["dt"]["desc"] == ["Retell a story.", "Can you tell it again?"] and act["dt"]["awr"] == ["ab", "ap", "aa", "advance"]
+    assert act["is_complete"] and b["act_bank_map"] == [] and "global_activity_bank_id" not in b
+
+    # read back from PARAKH: shown as the same activity, and saving again keeps it (no "would remove")
+    data = student_with(*b["formdata"])
+    now = grid.current(SUBJ, data.raw_parts["part_b"], resolve.typed)
+    assert now.values["b_act_PSLS1"] == "Lstory" and now.values["b_lvl_PSLS1_awareness"] == "Advanced"
+    again, errors = part_b("PREPARATORY", data, row, lk, resolve)
+    assert errors == [] and again["formdata"][0]["id"] == act["id"]

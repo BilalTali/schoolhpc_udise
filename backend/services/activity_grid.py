@@ -73,9 +73,10 @@ def student_row(stage: str, student: Dict[str, Any], raw: Dict[str, Any], draft:
     st, subjects, names = _stage_info(stage)
     parts = _parts(stage, raw)
     draft_values = (draft or {}).get("values") or {}
-    now, values, source = sync.grid_state(stage, parts, draft_values, None)
+    now, values, source = sync.grid_state(stage, parts, draft_values, None, grid.typed_keys(resolve))
     replace = str(values.get(grid.REPLACE_KEY, "")).lower() in ("yes", "true", "1")
     unchanged = all(values[k] == now.values.get(k, "") for k in values if k != grid.REPLACE_KEY)
+    stale = grid.stale_texts(parts["part_b"], now, resolve)          # edited in the library since
     notes: List[str] = []
     if now.existing and unchanged and not replace and now.locked:
         problems = [f"Activity '{e['name']}' on PARAKH is not finished." for e in now.existing if not e["complete"]]
@@ -84,7 +85,7 @@ def student_row(stage: str, student: Dict[str, Any], raw: Dict[str, Any], draft:
         result = grid.plan(subjects, names, st.ACTIVITY_GRID, copy.deepcopy(parts["part_b"]), values, resolve)
         problems = result.errors
         notes += [f"{c['action'].capitalize()}: {c['name']} ({', '.join(c['subjects'])})"
-                  for c in result.changes if c["action"] != "keep"] if not unchanged or replace else []
+                  for c in result.changes if c["action"] != "keep"] if not unchanged or replace or stale else []
     covered = [s for s in subjects if values.get(grid.act_key(s))]
     return {
         "student_id": student["student_id"], "student_name": student.get("student_name", ""),
@@ -153,7 +154,7 @@ def save(client: Portal, teacher, stage: str, student: Dict[str, Any], values: D
     entries, labels, resolve = _context(client, teacher, stage)
     raw = _portal_parts(client, teacher.id, stage, [student], False)[student["student_id"]]
     _, subjects, _ = _stage_info(stage)
-    now = grid.current(subjects, _parts(stage, raw)["part_b"])
+    now = grid.current(subjects, _parts(stage, raw)["part_b"], grid.typed_keys(resolve))
     problems = _check_values(stage, values, {e["key"] for e in entries}, set(now.values.values()))
     if problems:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, {"problems": problems})
@@ -264,7 +265,8 @@ def import_old_layout(client: Portal, teacher, stage: str, students: List[Dict[s
             continue
         row = student_row(stage, s, raw[sid], hpc_cards.load_draft(teacher.id, session, stage, sid), resolve, labels)
         change = {k: v for k, v in old.items() if row["values"].get(k) != v}
-        allowed = {e["key"] for e in entries} | set(grid.current(subjects, _parts(stage, raw[sid])["part_b"]).values.values())
+        allowed = {e["key"] for e in entries} | set(grid.current(subjects, _parts(stage, raw[sid])["part_b"],
+                                                                 grid.typed_keys(resolve)).values.values())
         if any(k.startswith("b_act_") and v not in allowed for k, v in change.items()):
             unknown.append(row["student_name"])
             continue

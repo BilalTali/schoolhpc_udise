@@ -198,3 +198,20 @@ def test_passwords_are_encrypted_and_never_sent():
         t = db.query(Teacher).filter(Teacher.username == "secretteacher").one()
         assert secrets_box.is_encrypted(t.hpc_password_encrypted) and t.hpc_password == "portal-pass"
         assert t.plain_password is None
+
+
+
+def test_part_c_levels_for_the_whole_class(teacher_client):
+    client, _ = teacher_client
+    read = client.get(f"{API}/teacher/hpc-cards/Preparatory/levels").json()
+    assert read["options"] == ["Beginner", "Proficient", "Advanced"]
+    assert [s["code"] for s in read["subjects"]] == [f"PSLS{i}" for i in range(1, 8)]
+    assert read["subjects"][2] == {"code": "PSLS3", "name": "Mathematics", "fields": [
+        {"key": "c_PSLS3_awareness", "ability": "Awareness"}, {"key": "c_PSLS3_sensitivity", "ability": "Sensitivity"},
+        {"key": "c_PSLS3_creativity", "ability": "Creativity"}]}
+    assert read["rows"][0]["student_id"] == "1001" and len(read["rows"][0]["values"]) == 21
+    write = client.put(f"{API}/teacher/hpc-cards/Preparatory/levels", json={"values": {
+        "1001": {"c_PSLS3_awareness": "Advanced"}, "1002": {"c_PSLS3_remark": "x"}, "1003": {"c_PSLS1_awareness": "Great"}}}).json()
+    assert write["saved"] == ["1001"] and set(write["problems"]) == {"1002", "1003"}
+    again = client.get(f"{API}/teacher/hpc-cards/Preparatory/levels").json()
+    assert again["rows"][0]["values"]["c_PSLS3_awareness"] == "Advanced" and again["rows"][0]["in_draft"] == ["c_PSLS3_awareness"]

@@ -34,6 +34,7 @@ from backend.hpc.portal import Portal, PortalError
 from backend.hpc.stages import get_stage
 from backend.models.library import (
     SHARE_STATES, ActivitySyncJob, AuditLog, LibraryActivity, SchoolActivitySetting, StageActivityDefault,
+    TeacherActivityEdit,
 )
 
 STAGES = ("Foundational", "Preparatory", "Middle")
@@ -46,6 +47,7 @@ CONSENT_TEXT = ("I made this activity myself, it contains no student's personal 
                 "that other teachers using this app may use, copy and adapt it. I can stop sharing at any time; "
                 "copies already made stay with their users.")
 LEVELS = ("beginner", "proficient", "advanced")
+APPROACHES = {"Art-Integrated": 1, "Sports-Integrated": 2, "Toy-Based": 3, "Technology-Integrated": 4, "Any Other": 5}  # Middle
 ABILITIES = ("awareness", "sensitivity", "creativity")
 _RUBRIC_KEY = {"awareness": "awr", "sensitivity": "sen", "creativity": "cre"}
 _sleep = time.sleep                # replaced in tests
@@ -122,9 +124,10 @@ def can_view(actor: Actor, act: LibraryActivity) -> bool:
 
 
 def can_edit_text(actor: Actor, act: LibraryActivity) -> bool:
-    """Portal activities: the school admin edits the school's copy. Local: the owner (or the admin)."""
+    """PARAKH activities: anyone who sees them - the school admin edits the school's copy, a teacher their own
+    (used for their students only). Made in this app: the owner (or the admin)."""
     if act.source != "local":
-        return actor.is_admin
+        return can_view(actor, act)
     if act.owner_school_id != actor.school_id:
         return False
     return actor.is_admin or (act.owner_teacher_id is not None and act.owner_teacher_id == actor.id)
@@ -158,7 +161,7 @@ def _texts(content: Dict[str, Any]) -> Dict[str, Any]:
         rubric[ability] = dict(zip(LEVELS, (str(t or "") for t in texts[:3])))
     return {"activity_text": str(desc[0] or ""), "assessment_text": str(desc[1] or ""), "rubric": rubric,
             "goals": list(content.get("gl") or []), "competencies": list(content.get("cpt") or []),
-            "approaches": list(content.get("approaches") or [])}
+            "approaches": list(content.get("approaches") or []), "approach_other": str(content.get("any-other") or "")}
 
 
 def _apply_texts(content: Dict[str, Any], changes: Dict[str, Any]) -> Dict[str, Any]:
@@ -177,10 +180,47 @@ def _apply_texts(content: Dict[str, Any], changes: Dict[str, Any]) -> Dict[str, 
             if level in levels:
                 texts[i] = levels[level]
         out[key] = texts
-    for field, key in (("goals", "gl"), ("competencies", "cpt")):
+    for field, key in (("goals", "gl"), ("competencies", "cpt"), ("approaches", "approaches")):
         if field in changes:
             out[key] = list(changes[field])
+    if "approach_other" in changes:
+        out["any-other"] = changes["approach_other"]
     return out
+
+
+def _mine(db: Session, actor: Actor, activity_id: str, create: bool = False) -> Optional[TeacherActivityEdit]:
+    if actor.is_admin:
+        return None
+    row = db.query(TeacherActivityEdit).filter_by(teacher_id=actor.id, activity_id=activity_id).first()
+    if row is None and create:
+        row = TeacherActivityEdit(school_id=actor.school_id, teacher_id=actor.id, activity_id=activity_id)
+        db.add(row)
+        db.flush()
+    return row
+
+
+def _mine_for(db: Session, actor: Actor, ids: List[str]) -> Dict[str, TeacherActivityEdit]:
+    if actor.is_admin or not ids:
+        return {}
+    rows = db.query(TeacherActivityEdit).filter(TeacherActivityEdit.teacher_id == actor.id,
+                                                TeacherActivityEdit.activity_id.in_(ids)).all()
+    return {r.activity_id: r for r in rows}
+
+
+def _layers(setting: Optional[SchoolActivitySetting], mine: Optional[TeacherActivityEdit]):
+    return (setting.edited if setting else None) or {}, (mine.edited if mine else None) or {}
+
+
+def effective_content(act: LibraryActivity, setting: Optional[SchoolActivitySetting] = None,
+                      mine: Optional[TeacherActivityEdit] = None) -> Dict[str, Any]:
+    """The texts used for cards: PARAKH's original, then the school's edits, then the teacher's own."""
+    if act.source == "local":
+        return act.content or {}
+    school, own = _layers(setting, mine)
+    if not school and not own:
+        return act.content or {}
+    content = _apply_texts(act.content or {}, {k: v for k, v in school.items() if k != "subjects"})
+    return _apply_texts(content, {k: v for k, v in own.items() if k != "subjects"})
 
 
 def _setting(db: Session, school_id: str, activity_id: str, create: bool = False) -> Optional[SchoolActivitySetting]:
@@ -206,21 +246,24 @@ def default_id(db: Session, school_id: str, stage: str) -> Optional[str]:
 
 
 def view(act: LibraryActivity, setting: Optional[SchoolActivitySetting], actor: Actor,
-         default: Optional[str] = None) -> Dict[str, Any]:
-    edited = (setting.edited if setting else None) or {}
+         default: Optional[str] = None, mine: Optional[TeacherActivityEdit] = None) -> Dict[str, Any]:
+    school_edits, my_edits = _layers(setting, mine)
+    edited = {**school_edits, **my_edits}
     names = _subject_names(act.stage)
     all_codes = list(names)
+    content = effective_content(act, setting, mine)
     if act.source == "local":
-        content, subjects = act.content or {}, list(act.subjects or [])
+        subjects = list(act.subjects or [])
     else:
-        content = _apply_texts(act.content or {}, {k: v for k, v in edited.items() if k != "subjects"})
-        subjects = list(edited.get("subjects") or all_codes)     # portal activities can be used for every subject
+        # portal activities can be used for every subject
+        subjects = list(my_edits.get("subjects") or school_edits.get("subjects") or all_codes)
     subjects = [c for c in all_codes if c in subjects]
     missing = [names[c] for c in all_codes if c not in subjects]
     texts = _texts(content)
     title = (setting.display_name if setting else None) or act.title or ""
     status_ = setting.status if setting else "active"
     portal_active = act.source == "local" or bool((act.original_snapshot or {}).get("is_active", True))
+    ready = _portal_ready(act, content, subjects)
     usable, reason = True, ""
     if status_ != "active":
         usable, reason = False, "Turned off for your school."
@@ -228,8 +271,8 @@ def view(act: LibraryActivity, setting: Optional[SchoolActivitySetting], actor: 
         usable, reason = False, "No longer on PARAKH."
     elif not portal_active:
         usable, reason = False, "Turned off on PARAKH."
-    elif act.source == "local":
-        usable, reason = False, "Made in this app - not on PARAKH yet, so it cannot be saved to a card."
+    elif act.source == "local" and not ready["ok"]:
+        usable, reason = False, "Not finished yet - still needs: " + ", ".join(ready["missing"]) + "."
     elif act.has_pictures:
         usable, reason = False, "Has pictures - choose it on the PARAKH website instead."
     return {
@@ -243,6 +286,10 @@ def view(act: LibraryActivity, setting: Optional[SchoolActivitySetting], actor: 
         "portal_subject_names": [names.get(c, c) for c in (act.portal_subjects or [])],
         "has_pictures": bool(act.has_pictures), "status": status_, "is_default": act.id == default,
         "edited": bool(edited), "edited_fields": sorted(edited),
+        "edited_by_school": bool(school_edits), "edited_by_me": bool(my_edits),
+        "modified": act.source != "local" and any(k != "subjects" for k in edited),
+        "edit_scope": "activity" if act.source == "local" else ("school" if actor.is_admin else "me"),
+        "can_reset": act.source != "local" and bool(school_edits if actor.is_admin else my_edits),
         "upstream_status": act.upstream_status, "removed_at": _iso(act.removed_at), "portal_active": portal_active,
         "last_synced_at": _iso(act.last_synced_at), "used_counter": act.used_counter, "tier": act.tier,
         "share_state": act.share_state if act.source == "local" else None,
@@ -250,8 +297,9 @@ def view(act: LibraryActivity, setting: Optional[SchoolActivitySetting], actor: 
         "usable_in_excel": usable, "not_usable_reason": reason,
         "can_edit": can_edit_text(actor, act), "can_manage": actor.is_admin,
         "can_delete": act.source == "local" and can_edit_text(actor, act),
-        "version": act.version if act.source == "local" else (setting.version if setting else 1),
-        "portal_ready": _portal_ready(act, content, subjects),
+        "version": act.version if act.source == "local" else (
+            (setting.version if setting else 1) if actor.is_admin else (mine.version if mine else 1)),
+        "portal_ready": ready,
     }
 
 
@@ -274,6 +322,11 @@ def _portal_ready(act: LibraryActivity, content: Dict[str, Any], subjects: List[
     for ability in ABILITIES:
         if not all(t["rubric"][ability][lvl].strip() for lvl in LEVELS):
             missing.append(f"{ability.capitalize()} levels")
+    if act.stage == "Middle":                       # the Middle page needs the teaching approach
+        if not t["approaches"]:
+            missing.append("Approach")
+        elif 5 in t["approaches"] and not t["approach_other"].strip():
+            missing.append("Approach (any other) text")
     return {"ok": not missing, "missing": missing}
 
 
@@ -283,7 +336,7 @@ def _iso(dt: Optional[datetime]) -> Optional[str]:
 
 def detail(db: Session, actor: Actor, act: LibraryActivity) -> Dict[str, Any]:
     setting = _setting(db, actor.school_id, act.id)
-    out = view(act, setting, actor, default_id(db, actor.school_id, act.stage))
+    out = view(act, setting, actor, default_id(db, actor.school_id, act.stage), _mine(db, actor, act.id))
     if act.source != "local":
         original = view(act, None, actor)
         out["original"] = {k: original[k] for k in ("activity_text", "assessment_text", "rubric", "goals",
@@ -337,8 +390,9 @@ def _code_key(code: str):
 def list_views(db: Session, actor: Actor, stage: str) -> List[Dict[str, Any]]:
     acts = _visible_query(db, actor, stage)
     settings = _settings_for(db, actor.school_id, [a.id for a in acts])
+    mine = _mine_for(db, actor, [a.id for a in acts])
     default = default_id(db, actor.school_id, stage)
-    views = [view(a, settings.get(a.id), actor, default) for a in acts]
+    views = [view(a, settings.get(a.id), actor, default, mine.get(a.id)) for a in acts]
     views.sort(key=lambda v: (not v["is_default"], _code_key(v["code"]), v["title"].lower(), v["id"]))
     return views
 
@@ -370,23 +424,27 @@ def filter_views(views: List[Dict[str, Any]], q: str = "", source: str = "", sub
     return [v for v in views if keep(v)]
 
 
-def library_entries(db: Session, actor: Actor, stage: str) -> Dict[int, Dict[str, Any]]:
-    """PARAKH id -> what a save needs to add the activity to a card. The PARAKH original is always
-    used (your school's text edits stay in this app); turned-off or picture activities are not usable."""
-    acts = [a for a in _visible_query(db, actor, stage) if a.portal_id is not None]
+def library_entries(db: Session, actor: Actor, stage: str) -> Dict[str, Dict[str, Any]]:
+    """Grid key -> what a save needs to put the activity on a card. Texts are the ones used here: PARAKH's
+    original with the school's and this teacher's edits ("modified" when they differ, so the card's copy is
+    marked edited, as the PARAKH page does). Activities made in this app have no PARAKH id; they go on the
+    card as a typed activity once finished. Turned-off or picture activities are not usable."""
+    acts = _visible_query(db, actor, stage)
     settings = _settings_for(db, actor.school_id, [a.id for a in acts])
+    mine = _mine_for(db, actor, [a.id for a in acts])
     out = {}
     for a in acts:
-        v = view(a, settings.get(a.id), actor)
-        out[a.portal_id] = {"portal_id": a.portal_id, "caption": (a.original_snapshot or {}).get("activity_caption") or a.code,
-                            "label": v["label"], "content": a.content or {}, "is_global": a.source == "portal_global",
-                            "usable": v["usable_in_excel"], "reason": v["not_usable_reason"], "key": _key(v)}
+        v = view(a, settings.get(a.id), actor, mine=mine.get(a.id))
+        caption = a.title if a.source == "local" else (a.original_snapshot or {}).get("activity_caption") or a.code
+        out[_key(v)] = {"portal_id": a.portal_id, "caption": caption, "label": v["label"],
+                        "content": effective_content(a, settings.get(a.id), mine.get(a.id)),
+                        "is_global": a.source == "portal_global", "modified": v["modified"],
+                        "usable": v["usable_in_excel"], "reason": v["not_usable_reason"], "key": _key(v)}
     return out
 
 
 def resolver_for_teacher(teacher_id: str, stage: str, fallback=None):
     """A Part B activity resolver backed by the library (falls back to PARAKH's lists if never synced)."""
-    from backend.hpc.stages.activity_grid import portal_id
     from backend.models.entities import Teacher
     with SessionLocal() as db:
         t = db.get(Teacher, teacher_id)
@@ -395,10 +453,10 @@ def resolver_for_teacher(teacher_id: str, stage: str, fallback=None):
         return None                     # never synced: the save uses PARAKH's own lists
 
     def resolve(key: str):
-        pid = portal_id(key)
-        if pid in entries:
-            return entries[pid]
+        if key in entries:
+            return entries[key]
         return fallback(key) if fallback and not entries else None
+    resolve.typed = {e["caption"]: k for k, e in entries.items() if e["portal_id"] is None}
     return resolve
 
 
@@ -444,6 +502,16 @@ def _clean_changes(stage: str, changes: Dict[str, Any]) -> Dict[str, Any]:
     for f in ("goals", "competencies"):
         if changes.get(f) is not None:
             out[f] = [_clean_text(x, f, 60) for x in changes[f] if str(x or "").strip()]
+    if changes.get("approaches") is not None:
+        try:
+            approaches = sorted({int(x) for x in changes["approaches"]})
+        except (TypeError, ValueError):
+            approaches = [0]
+        if any(x not in APPROACHES.values() for x in approaches):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown approach.")
+        out["approaches"] = approaches
+    if changes.get("approach_other") is not None:
+        out["approach_other"] = _clean_text(changes["approach_other"], "Approach (any other)", 500)
     if changes.get("subjects") is not None:
         known = [s["code"] for s in stage_subjects(stage)]
         chosen = [c for c in known if c in set(changes["subjects"])]
@@ -456,12 +524,43 @@ def _clean_changes(stage: str, changes: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
+def known_codes(db: Session, actor: Actor, stage: str) -> Dict[str, List[Dict[str, Any]]]:
+    """Curricular goal and competency codes PARAKH's own activities use for this stage (PARAKH has no
+    list of its own we can read), with how many activities use each - what a new activity may pick from."""
+    goals: Dict[str, int] = {}
+    competencies: Dict[str, int] = {}
+    for a in _visible_query(db, actor, stage):
+        if a.source == "local":
+            continue
+        for code in (a.content or {}).get("gl") or []:
+            goals[str(code)] = goals.get(str(code), 0) + 1
+        for code in (a.content or {}).get("cpt") or []:
+            competencies[str(code)] = competencies.get(str(code), 0) + 1
+    as_list = lambda d: [{"code": c, "used_by": n} for c, n in sorted(d.items(), key=lambda kv: _code_key(kv[0]))]
+    return {"goals": as_list(goals), "competencies": as_list(competencies)}
+
+
+def _check_codes(db: Session, actor: Actor, stage: str, clean: Dict[str, Any]) -> None:
+    """Goal and competency codes must be ones PARAKH uses, or the card would carry a code it does not know."""
+    if "goals" not in clean and "competencies" not in clean:
+        return
+    known = known_codes(db, actor, stage)
+    for field, label in (("goals", "Curricular goal"), ("competencies", "Competency")):
+        allowed = {c["code"] for c in known[field]}
+        unknown = [c for c in clean.get(field) or [] if allowed and c not in allowed]
+        if unknown:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                f"{label} code(s) not used by any PARAKH activity for {stage}: {', '.join(unknown)}. "
+                                "Pick from the list.")
+
+
 def create_local(db: Session, actor: Actor, stage: str, title: str, changes: Dict[str, Any],
                  share: str = "", consent: bool = False) -> LibraryActivity:
     title = _clean_text(title, "Activity name", 200)
     if not title:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Give the activity a name.")
     clean = _clean_changes(stage, {"subjects": [s["code"] for s in stage_subjects(stage)], **changes})
+    _check_codes(db, actor, stage, clean)
     act = LibraryActivity(source="local", stage=stage, code=title, title=title,
                           content=_apply_texts({}, {k: v for k, v in clean.items() if k != "subjects"}),
                           subjects=clean["subjects"], owner_school_id=actor.school_id,
@@ -481,6 +580,7 @@ def update(db: Session, actor: Actor, act: LibraryActivity, changes: Dict[str, A
     new_status = changes.pop("status", None)
     title = changes.pop("title", None)
     clean = _clean_changes(act.stage, changes)
+    _check_codes(db, actor, act.stage, clean)
     if (clean or title is not None) and not can_edit_text(actor, act):
         _forbid("Only the school admin, or the teacher who made this activity, can change it.")
     if (display_name is not None or new_status is not None) and not actor.is_admin:
@@ -501,6 +601,17 @@ def update(db: Session, actor: Actor, act: LibraryActivity, changes: Dict[str, A
             act.updated_by = actor.key
             audit(db, actor, "edit", "activity", act.id, before, {"title": act.title, **_texts(act.content),
                                                                   "subjects": act.subjects})
+    if act.source != "local" and not actor.is_admin:
+        if clean:                                   # a teacher's own version, for their students only
+            mine = _mine(db, actor, act.id, create=True)
+            if version is not None and version != mine.version:
+                raise HTTPException(status.HTTP_409_CONFLICT, "This activity changed in another tab. Reload it to see the changes.")
+            school = _texts(effective_content(act, _setting(db, actor.school_id, act.id)))
+            before = mine.edited
+            mine.edited = _store_edits(act, _merge_edits(mine.edited or {}, clean), school)
+            mine.version += 1
+            audit(db, actor, "edit_own", "activity", act.id, {"edited": before}, {"edited": mine.edited})
+        return
     setting = _setting(db, actor.school_id, act.id, create=True)
     if act.source != "local" and version is not None and version != setting.version:
         raise HTTPException(status.HTTP_409_CONFLICT, "Someone else changed this activity. Reload it to see their changes.")
@@ -537,9 +648,10 @@ def _merge_edits(stored: Dict[str, Any], clean: Dict[str, Any]) -> Dict[str, Any
     return out
 
 
-def _store_edits(act: LibraryActivity, edits: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """Keeps only edits that differ from the portal original; an edit back to the original disappears."""
-    original = _texts(act.content or {})
+def _store_edits(act: LibraryActivity, edits: Dict[str, Any], base: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+    """Keeps only edits that differ from the base (the portal original, or for a teacher the school's
+    version); an edit back to the base disappears."""
+    original = base or _texts(act.content or {})
     out: Dict[str, Any] = {}
     for key, value in edits.items():
         if key == "rubric":
@@ -557,10 +669,16 @@ def _store_edits(act: LibraryActivity, edits: Dict[str, Any]) -> Optional[Dict[s
 
 
 def reset(db: Session, actor: Actor, act: LibraryActivity) -> None:
-    if not actor.is_admin:
-        _forbid("Only the school admin can reset activities.")
+    """Admin: the school's edits go. Teacher: their own edits go (back to the school's version)."""
     if act.source == "local":
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "This activity was made in this app, so there is no original to go back to.")
+    if not actor.is_admin:
+        mine = _mine(db, actor, act.id)
+        if mine and mine.edited:
+            audit(db, actor, "reset_own", "activity", act.id, before={"edited": mine.edited}, after={"edited": None})
+            mine.edited = None
+            mine.version += 1
+        return
     setting = _setting(db, actor.school_id, act.id)
     if setting and setting.edited:
         audit(db, actor, "reset", "activity", act.id, before={"edited": setting.edited}, after={"edited": None})
@@ -570,8 +688,9 @@ def reset(db: Session, actor: Actor, act: LibraryActivity) -> None:
 
 
 def duplicate(db: Session, actor: Actor, act: LibraryActivity) -> LibraryActivity:
-    v = view(act, _setting(db, actor.school_id, act.id), actor)
-    changes = {k: v[k] for k in ("activity_text", "assessment_text", "rubric", "goals", "competencies", "subjects")}
+    v = view(act, _setting(db, actor.school_id, act.id), actor, mine=_mine(db, actor, act.id))
+    changes = {k: v[k] for k in ("activity_text", "assessment_text", "rubric", "goals", "competencies", "subjects",
+                                 "approaches", "approach_other")}
     copy_ = create_local(db, actor, act.stage, f"Copy of {v['label']}"[:200], changes)
     audit(db, actor, "duplicate", "activity", copy_.id, before={"from": act.id})
     return copy_

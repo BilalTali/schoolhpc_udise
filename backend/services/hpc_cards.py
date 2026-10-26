@@ -378,6 +378,56 @@ def bulk_read(client: Portal, owner: str, teacher_id: str, session: str, stage: 
     return {"field": {**field_meta(f), "part": part.code, "part_title": part.title}, "rows": rows}
 
 
+def levels_read(client: Portal, owner: str, teacher_id: str, session: str, stage: str) -> Dict[str, Any]:
+    """Part C levels for the whole class on one screen: subjects, their three levels each, and every
+    student's values (the draft's where there is one, else PARAKH's)."""
+    lookups = lookups_for(owner, client, stage)
+    part = next(p for p in get_stage(stage).PARTS if p.code == "C")
+    fields = [f for f in part.fields(lookups) if is_common("C", f)]
+    subjects: Dict[str, Dict[str, Any]] = {}
+    for f in fields:
+        name, _, ability = f.label.partition(":")
+        code = f.key[2:].rsplit("_", 1)[0]
+        subjects.setdefault(code, {"code": code, "name": name.strip(), "fields": []})["fields"].append(
+            {"key": f.key, "ability": ability.replace("level", "").strip()})
+    students = _cached((owner, session, stage, "roster"), lambda: sync.roster(client, stage, lookups))
+
+    def row_for(s):
+        raw = _cached((owner, session, stage, s["student_id"], part.col),
+                      lambda: client.student(stage, s["student_id"], part.col).get("formdata"))
+        loaded = part.load(raw)
+        draft = (load_draft(teacher_id, session, stage, s["student_id"]) or {}).get("values") or {}
+        values, portal, in_draft = {}, {}, []
+        for f in fields:
+            portal[f.key] = to_api_value(f, f.read(loaded))
+            values[f.key] = draft[f.key] if f.key in draft else portal[f.key]
+            if f.key in draft:
+                in_draft.append(f.key)
+        return {"student_id": s["student_id"], "student_name": s["student_name"], "grade": s["grade"],
+                "section": s["section"], "values": values, "portal": portal, "in_draft": in_draft}
+
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        rows = list(pool.map(row_for, students))
+    return {"options": list(fields[0].options) if fields else [], "subjects": list(subjects.values()), "rows": rows}
+
+
+def levels_write(client: Portal, owner: str, teacher_id: str, session: str, stage: str,
+                 values: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+    """Saves Part C levels for many students into their drafts. Only Part C level fields are accepted."""
+    lookups = lookups_for(owner, client, stage)
+    allowed = {f.key for p in get_stage(stage).PARTS if p.code == "C" for f in p.fields(lookups) if is_common("C", f)}
+    saved, problems = [], {}
+    for student_id, per_key in values.items():
+        unknown = [k for k in per_key if k not in allowed]
+        errs = validate_values(stage, lookups, {k: v for k, v in per_key.items() if k in allowed})
+        if unknown or errs:
+            problems[str(student_id)] = "; ".join([*(f"{k}: not a Part C level" for k in unknown), *errs.values()])
+            continue
+        save_draft(teacher_id, session, stage, str(student_id), per_key)
+        saved.append(str(student_id))
+    return {"saved": saved, "problems": problems}
+
+
 def bulk_write(client: Portal, owner: str, teacher_id: str, session: str, stage: str, key: str,
                values: Dict[str, Any]) -> Dict[str, Any]:
     """Puts one field's value into each listed student's draft. Invalid values are reported, not saved."""

@@ -183,3 +183,9 @@
 .captcha-img { height: 56px; border: 1px solid var(--border-medium); border-radius: 6px; background: #FFFFFF; image-rendering: pixelated; }
 .captcha-input { width: 120px; font-size: 1.1rem; }
 .captcha-row .btn { padding: 0.45rem 0.9rem; }
+
+/* Goal and competency codes picked from PARAKH's list */
+.lib-chips { list-style: none; display: flex; flex-wrap: wrap; gap: 0.35rem; padding: 0; margin: 0 0 0.4rem; }
+.lib-chips .mono-chip { display: inline-flex; align-items: center; gap: 0.3rem; }
+.lib-chip-x { border: none; background: transparent; cursor: pointer; font-size: 1rem; line-height: 1; padding: 0 0.15rem; color: inherit; }
+.lib-chip-x:focus-visible { outline: 2px solid var(--chakra-blue); outline-offset: 1px; }
