@@ -128,16 +128,104 @@ def restore_preview(args) -> int:
     return 0
 
 
+# Places in each part's formdata that hold personal identifiers: shown as (hidden, N characters).
+PERSONAL_PATHS = {
+    "part_a1": {"basic[0]", "basic[1]", "basic[2]", "gen[1]", "gen[4]", "gen[21]", "gen[22]", "gen[24]", "gen[25]"},
+    "part_a2": {"gen[0]"},
+    "part_a3": {"pr1[0]", "pr1[1]", "pr2[0]", "pr2[1]", "mtr_oth"},
+}
+
+
+def _parse(value):
+    import json
+    if isinstance(value, str):
+        try:
+            return json.loads(value) if value.strip() else None
+        except ValueError:
+            return value
+    return value
+
+
+def diff(old, new, path=""):
+    """Every place where the two structures differ: (path, old value, new value)."""
+    out = []
+    if isinstance(old, dict) and isinstance(new, dict):
+        for k in list(old) + [k for k in new if k not in old]:
+            p = f"{path}.{k}" if path else str(k)
+            if k not in new:
+                out.append((p, old[k], "<missing>"))
+            elif k not in old:
+                out.append((p, "<missing>", new[k]))
+            else:
+                out += diff(old[k], new[k], p)
+    elif isinstance(old, list) and isinstance(new, list):
+        for i in range(max(len(old), len(new))):
+            p = f"{path}[{i}]"
+            if i >= len(new):
+                out.append((p, old[i], "<missing>"))
+            elif i >= len(old):
+                out.append((p, "<missing>", new[i]))
+            else:
+                out += diff(old[i], new[i], p)
+    elif old != new:
+        out.append((path, old, new))
+    return out
+
+
+def _show(col, path, value):
+    import json
+    if any(path == p or path.startswith(p + ".") or path.startswith(p + "[") for p in PERSONAL_PATHS.get(col, ())):
+        text = value if isinstance(value, str) else json.dumps(value)
+        return f"(hidden, {len(text)} characters)" if text not in ("", '""') else "''"
+    text = json.dumps(value, ensure_ascii=False)
+    return text if len(text) <= 70 else text[:67] + "..."
+
+
+def dry_run(args) -> int:
+    """Builds exactly what a save would send (no edits) and diffs it with what PARAKH holds. Sends nothing."""
+    client = read_only_client(args.teacher)
+    lookups, data = fetch(client, args.stage, args.student)
+    row = sync.to_row(args.stage, data, lookups)                 # the card as it is: nothing edited
+    payloads, errors = sync.build_payloads(args.stage, data, row, lookups)
+    st = get_stage(args.stage)
+    print(f"Round-trip dry run, student {args.student}: PARAKH current part = '{data.current_part}'. Nothing is sent.")
+    if errors:
+        print("Checks a real save would fail on:")
+        for e in errors:
+            print(f"   - {e}")
+    for part, payload in zip(st.PARTS, payloads):
+        stored, sent = _parse(data.raw_parts.get(part.col)), _parse(payload["formdata"])
+        changes = diff(stored, sent)
+        extra = {k: v for k, v in payload.items() if k not in ("formdata",)}
+        text_same = payload["formdata"] == data.raw_parts.get(part.col) if part.as_json_string else None
+        print(f"\n== {part.title} ({part.col}): {len(changes)} difference(s) in the data")
+        print(f"   request keys besides the data: {json_short(extra)}")
+        if text_same is not None:
+            print(f"   stored text byte-for-byte identical to what would be sent: {'yes' if text_same else 'no'}")
+        for p, a, b in changes:
+            print(f"   {p}: PARAKH {_show(part.col, p, a)} -> save {_show(part.col, p, b)}")
+    a1 = dict(payloads[0])
+    a1["current_part"] = data.current_part or a1["current_part"]
+    print(f"\nStage 2a would send ONE request: part_a1 with current_part = '{a1['current_part']}' "
+          f"(a normal save would send '{payloads[0]['current_part']}'), and nothing for the other parts.")
+    return 0
+
+
+def json_short(value) -> str:
+    import json
+    return json.dumps(value, ensure_ascii=False)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("command", choices=["preview", "restore-preview"])
+    ap.add_argument("command", choices=["preview", "restore-preview", "dry-run"])
     ap.add_argument("--teacher", required=True)
     ap.add_argument("--stage", required=True, choices=["Foundational", "Preparatory", "Middle"])
     ap.add_argument("--student", required=True)
     ap.add_argument("--snapshot")
     args = ap.parse_args()
     try:
-        return preview(args) if args.command == "preview" else restore_preview(args)
+        return {"preview": preview, "restore-preview": restore_preview, "dry-run": dry_run}[args.command](args)
     except (PortalError, ReadOnly) as exc:
         print(f"Stopped: {exc}")
         return 1
