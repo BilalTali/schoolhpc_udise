@@ -113,3 +113,27 @@
 
 /* Bulk Entry: when the app's copy was read from PARAKH */
 .bulk-readat { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 1rem; margin-bottom: 0.6rem; }
+
+/* Live view of an upload (tab 5) */
+.ul-card { border: 1px solid var(--border-light); border-radius: 12px; padding: 1rem 1.2rem; margin-bottom: 1.25rem; background: #FBFCFE; display: flex; flex-direction: column; gap: 0.7rem; }
+.ul-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 0.5rem; }
+.ul-head .lib-section-title { display: flex; align-items: center; gap: 0.45rem; margin: 0; }
+.ul-counts { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.ul-chip { display: inline-flex; align-items: center; gap: 0.25rem; border-radius: 999px; padding: 0.12rem 0.55rem; font-size: 0.78rem; font-weight: 700; border: 1px solid transparent; }
+.ul-saved { background: #DCFCE7; color: #14532D; border-color: #86EFAC; }
+.ul-failed { background: #FEE2E2; color: #7F1D1D; border-color: #FCA5A5; }
+.ul-skipped { background: #F1F5F9; color: #334155; border-color: #CBD5E1; }
+.ul-working { background: #DBEAFE; color: #1E3A8A; border-color: #93C5FD; }
+.ul-waiting { background: #FFFFFF; color: #475569; border-color: #CBD5E1; }
+.ul-now p { margin: 0; font-size: 0.92rem; }
+.ul-grid { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 1rem; align-items: start; }
+.ul-table td, .ul-table th { padding: 0.4rem 0.6rem; font-size: 0.84rem; }
+.ul-table tr.ul-current td { background: #EFF6FF; }
+.ul-timeline { border-left: 3px solid #E2E8F0; padding-left: 0.8rem; max-height: 22rem; overflow: auto; }
+.ul-timeline h4 { margin: 0 0 0.4rem; font-size: 0.85rem; color: var(--chakra-navy); }
+.ul-timeline ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.8rem; }
+.ul-time { color: #64748B; font-variant-numeric: tabular-nums; }
+.ul-ev-saved { color: #14532D; }
+.ul-ev-failed { color: #7F1D1D; }
+.ul-actions { display: flex; justify-content: flex-end; }
+@media (max-width: 760px) { .ul-grid { grid-template-columns: 1fr; } }

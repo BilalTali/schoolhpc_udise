@@ -6,6 +6,7 @@ check_workbook()  dry run: reads every student's current portal data, applies th
 run_job()         background task: syncs every student marked Sync=Yes and records the
                   outcome of each one in student_records as it goes.
 """
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -104,6 +105,31 @@ def check_workbook(client: Portal, path: Path, teacher_id: Optional[str] = None)
     }
 
 
+# What each running job is doing right now (in memory; the database keeps the results).
+_live: Dict[str, Dict[str, Any]] = {}
+_live_lock = threading.Lock()
+LIVE_EVENTS = 60
+
+
+def live_view(job_id: str) -> Dict[str, Any]:
+    with _live_lock:
+        live = _live.get(job_id) or {}
+        return {"current": dict(live["current"]) if live.get("current") else None,
+                "events": list(live.get("events", []))}
+
+
+def _live_event(job_id: str, student_id: str, name: str, text: str, kind: str = "step") -> None:
+    now = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+    with _live_lock:
+        live = _live.setdefault(job_id, {"current": None, "events": []})
+        if kind == "step":
+            live["current"] = {"student_id": student_id, "student_name": name, "step": text, "since": now}
+        else:
+            live["current"] = None
+        live["events"].append({"at": now, "student_id": student_id, "student_name": name, "text": text, "kind": kind})
+        del live["events"][:-LIVE_EVENTS]
+
+
 def run_job(job_id: str, client: Portal, path: str, teacher_id: Optional[str] = None) -> None:
     db = SessionLocal()
     job = db.get(UploadJob, job_id)
@@ -111,6 +137,17 @@ def run_job(job_id: str, client: Portal, path: str, teacher_id: Optional[str] = 
         job.status = "IN_PROGRESS"
         db.commit()
         records = {r.admission_number: r for r in job.records}
+        names = {sid: r.student_name for sid, r in records.items()}
+        started: set = set()
+
+        def step(student_id: str, text: str) -> None:
+            if student_id not in started:            # the list shows this student as being worked on
+                started.add(student_id)
+                row = records.get(student_id)
+                if row is not None and row.status in ("PENDING", "VALIDATED"):
+                    row.status = "IN_PROGRESS"
+                    db.commit()
+            _live_event(job_id, student_id, names.get(student_id, student_id), text)
 
         def record(result: sync.SyncResult) -> None:
             row = records.get(result.student_id)
@@ -132,6 +169,9 @@ def run_job(job_id: str, client: Portal, path: str, teacher_id: Optional[str] = 
 
         def record_and_tidy(result: sync.SyncResult) -> None:
             record(result)
+            outcome = {"COMPLETED": ("Saved to PARAKH", "saved"), "SKIPPED": ("Skipped (Sync = No)", "skipped")}.get(
+                result.status, (("Not saved: " + "; ".join(result.errors[:2]))[:300], "failed"))
+            _live_event(job_id, result.student_id, names.get(result.student_id, result.student_id), *outcome)
             if result.status != "SKIPPED":
                 audit.record(actor, "save_to_parakh", "student", result.student_id, None,
                              {"stage": result.stage, "status": result.status, "saved_parts": result.saved_parts,
@@ -144,7 +184,8 @@ def run_job(job_id: str, client: Portal, path: str, teacher_id: Optional[str] = 
         from backend.services import snapshots
         owner = f"teacher_{teacher_id}" if teacher_id else "unknown"
         sync.sync_workbook(client, Path(path), on_result=record_and_tidy, **_grid_hooks(client, teacher_id),
-                           before_save_for=lambda stage: snapshots.hook(owner, stage, f"workbook upload (job {job_id[:8]})"))
+                           before_save_for=lambda stage: snapshots.hook(owner, stage, f"workbook upload (job {job_id[:8]})"),
+                           on_step=step)
         done = [r for r in records.values() if r.status != "SKIPPED"]
         job.status = ("COMPLETED" if done and all(r.status == "SUCCESS" for r in done)
                       else "PARTIAL_SUCCESS" if any(r.status == "SUCCESS" for r in done) else "FAILED")

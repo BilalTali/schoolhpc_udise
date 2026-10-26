@@ -247,7 +247,8 @@ def d_summary(stage: str, data: StudentData, lookups: Lookups) -> str:
 def sync_workbook(portal: Portal, path, dry_run: bool = False, on_result=lambda result: None,
                   extra_values=lambda stage, student_id: {}, resolver_for=lambda stage: None,
                   before_save_for=lambda stage: None, base_values=lambda stage, student_id: {},
-                  exception_problems: Optional[List[str]] = None) -> List[SyncResult]:
+                  exception_problems: Optional[List[str]] = None,
+                  on_step: Callable[[str, str], None] = lambda student_id, step: None) -> List[SyncResult]:
     """Checks, then uploads every student marked Sync=Yes, stage by stage. Calls on_result after each student.
     extra_values adds values kept outside the file (the Activities grid); resolver_for gives the activity list."""
     from backend.hpc import workbook
@@ -269,7 +270,7 @@ def sync_workbook(portal: Portal, path, dry_run: bool = False, on_result=lambda 
             # class settings under the file's values (an exception in the file wins); the dashboard's Part B on top
             row = {**base_values(stage, sid), **row, **extra_values(stage, sid)}
             result = sync_student(portal, stage, sid, row, lookups[stage], dry_run=dry_run, resolve=resolver_for(stage),
-                                  before_save=before_save_for(stage))
+                                  before_save=before_save_for(stage), on_step=lambda step, sid=sid: on_step(sid, step))
         results.append(result)
         on_result(result)
     return results
@@ -277,12 +278,16 @@ def sync_workbook(portal: Portal, path, dry_run: bool = False, on_result=lambda 
 
 def sync_student(portal: Portal, stage: str, student_id: str, row: Dict[str, Any],
                  lookups: Lookups, dry_run: bool = False, resolve: Optional[activity_grid.Resolver] = None,
-                 before_save: Optional[Callable[[StudentData], Any]] = None) -> SyncResult:
-    """before_save keeps a copy of what PARAKH holds; nothing is written without one."""
+                 before_save: Optional[Callable[[StudentData], Any]] = None,
+                 on_step: Callable[[str], None] = lambda step: None) -> SyncResult:
+    """before_save keeps a copy of what PARAKH holds; nothing is written without one. on_step is told each
+    step in plain words, for a live view."""
     name = str(row.get("student_name") or student_id)
     try:
+        on_step("Reading the card from PARAKH")
         data = fetch_student(portal, stage, student_id)
         name = (data.record.get("stu_info") or {}).get("student_name") or name
+        on_step("Checking the values")
         payloads, errors = build_payloads(stage, data, row, lookups, resolve)
         if errors:
             return SyncResult(student_id, name, "INVALID", errors, stage=stage)
@@ -292,15 +297,19 @@ def sync_student(portal: Portal, stage: str, student_id: str, row: Dict[str, Any
             return SyncResult(student_id, name, "FAILED", ["Not saved: no copy of the current PARAKH values could be "
                                                            "kept first (no snapshot step was set up)."], stage=stage)
         try:
+            on_step("Keeping a copy of the card before saving")
             before_save(data)
         except Exception as exc:
             return SyncResult(student_id, name, "FAILED", [f"Not saved: could not keep a copy of the current PARAKH "
                                                            f"values first ({exc})."], stage=stage)
 
         saved = []
-        for payload in payloads:
+        names = {p.col: ("HPC Credit" if p.code == "D" else f"Part {p.code}") for p in get_stage(stage).PARTS}
+        for i, payload in enumerate(payloads, start=1):
+            on_step(f"Saving {names.get(payload['hpc_col'], payload['hpc_col'])} ({i} of {len(payloads)})")
             portal.save_part(stage, student_id, payload)
             saved.append(payload["hpc_col"])
+        on_step("Checking that PARAKH shows the card completed")
 
         remember = getattr(resolve, "remember", None)
         part_b = next((p for p in payloads if p["hpc_col"] == "part_b"), None)

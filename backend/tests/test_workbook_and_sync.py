@@ -116,3 +116,30 @@ def test_a_successful_save_records_which_manual_activities_are_the_apps_own():
     sync.sync_student(portal, "Preparatory", "1001", filled_row("PREPARATORY"), lk, dry_run=True, resolve=resolve,
                       before_save=lambda data: None)
     assert seen == []
+
+
+def test_each_step_of_a_save_is_reported_for_the_live_view():
+    portal = _portal_with_student()
+    steps = []
+    result = sync.sync_student(portal, "Preparatory", "1001", filled_row("PREPARATORY"), make_lookups("PREPARATORY", portal),
+                               before_save=lambda data: None, on_step=steps.append)
+    assert result.status == "COMPLETED"
+    assert steps[:3] == ["Reading the card from PARAKH", "Checking the values", "Keeping a copy of the card before saving"]
+    assert steps[3:9] == [f"Saving {p} ({i} of 6)" for i, p in
+                          enumerate(["Part A1", "Part A2", "Part A3", "Part B", "Part C", "HPC Credit"], start=1)]
+    assert steps[-1] == "Checking that PARAKH shows the card completed"
+
+
+def test_the_live_view_shows_the_current_step_and_a_short_history():
+    from backend.services import upload_jobs
+    upload_jobs._live.pop("job-x", None)
+    upload_jobs._live_event("job-x", "1001", "STUDENT ONE", "Saving Part C (5 of 6)")
+    view = upload_jobs.live_view("job-x")
+    assert view["current"]["step"] == "Saving Part C (5 of 6)" and view["current"]["student_id"] == "1001"
+    upload_jobs._live_event("job-x", "1001", "STUDENT ONE", "Saved to PARAKH", "saved")
+    view = upload_jobs.live_view("job-x")
+    assert view["current"] is None and [e["kind"] for e in view["events"]] == ["step", "saved"]
+    for i in range(100):
+        upload_jobs._live_event("job-x", "1002", "STUDENT TWO", f"step {i}")
+    assert len(upload_jobs.live_view("job-x")["events"]) == upload_jobs.LIVE_EVENTS
+    assert upload_jobs.live_view("unknown") == {"current": None, "events": []}

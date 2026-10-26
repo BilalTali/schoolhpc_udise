@@ -41,6 +41,8 @@ import { ActivitiesGrid } from "./activities/ActivitiesGrid";
 import { ClassSettings } from "./activities/ClassSettings";
 import { TemplatePanel } from "./activities/TemplatePanel";
 import { LevelsGrid } from "./activities/LevelsGrid";
+import { UploadLive } from "./activities/UploadLive";
+import type { LiveJob } from "./activities/UploadLive";
 import { CaptchaStep } from "./CaptchaStep";
 import type { CaptchaResult } from "./CaptchaStep";
 
@@ -280,8 +282,7 @@ export default function App() {
   const [validationReport, setValidationReport] = useState<ValidationReport | null>(null);
   const [uploadedFileName, setUploadedFileName] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(0);
-  const [jobPollStatus, setJobPollStatus] = useState<UploadJobStatus | null>(null);
+  const [activeJobId, setActiveJobId] = useState<string | null>(null);   // the upload shown live on tab 5
 
   // Student roster states (Teacher)
   const [students, setStudents] = useState<StudentItem[]>([]);
@@ -979,8 +980,7 @@ export default function App() {
     const file = e.target.files?.[0];
     if (!file || !user) return;
     setValidationReport(null);
-    setJobPollStatus(null);
-    setUploadProgress(0);
+    if (!isSubmitting) setActiveJobId(null);           // a finished upload's live view makes way for the new file
     setLoading(true);
     setStatusMsg(null);
     setUploadedFileName(file.name);
@@ -1015,8 +1015,6 @@ export default function App() {
   const handleStartSubmission = async () => {
     if (!user || !uploadedFileName) return;
     setIsSubmitting(true);
-    setUploadProgress(10);
-    setJobPollStatus(null);
     setStatusMsg({ type: "info", text: "Initiating automated submission to PARAKH portal..." });
     try {
       const res = await apiFetch(`/teacher/upload/submit?file_name=${encodeURIComponent(uploadedFileName)}`, {
@@ -1029,55 +1027,8 @@ export default function App() {
       }
       const job = await res.json();
       if (res.ok) {
-        setUploadProgress(30);
-        const jobId = String(job.job_id || "");
-        setStatusMsg({ type: "info", text: `Job #${jobId ? jobId.substring(0, 8) : ""} queued — automation running in background...` });
-
-        // Poll job status every 3 seconds until terminal state
-        const pollInterval = setInterval(async () => {
-          try {
-            const pollRes = await apiFetch(`/teacher/upload/jobs`, {
-            });
-            if (pollRes.status === 401) {
-              clearInterval(pollInterval);
-              setIsSubmitting(false);
-              handleUnauthorized();
-              return;
-            }
-            if (pollRes.ok) {
-              const jobs: UploadJobStatus[] = await pollRes.json();
-              const thisJob = jobs.find((j) => String(j.job_id) === jobId);
-              if (thisJob) {
-                setJobPollStatus(thisJob);
-                const pct = thisJob.status === "COMPLETED" || thisJob.status === "PARTIAL_SUCCESS"
-                  ? 100
-                  : thisJob.status === "IN_PROGRESS" ? 65 : 40;
-                setUploadProgress(pct);
-                if (["COMPLETED", "PARTIAL_SUCCESS", "FAILED", "RECONCILIATION_REQUIRED"].includes(thisJob.status)) {
-                  clearInterval(pollInterval);
-                  setIsSubmitting(false);
-                  if (thisJob.status === "COMPLETED") {
-                    setStatusMsg({ type: "success", text: `✅ All ${thisJob.success_count} students submitted to PARAKH successfully!` });
-                  } else if (thisJob.status === "PARTIAL_SUCCESS") {
-                    setStatusMsg({ type: "warning", text: `⚠️ ${thisJob.success_count} submitted, ${thisJob.failed_count} failed. Re-upload the sheet after correcting failed rows.` });
-                  } else if (thisJob.status === "RECONCILIATION_REQUIRED") {
-                    setStatusMsg({ type: "warning", text: `⚠️ Discrepancy detected: ${thisJob.reconciliation_count || 0} student(s) require authoritative portal reconciliation.` });
-                  } else {
-                    setStatusMsg({ type: "error", text: `Submission failed. Check HPC session and try again.` });
-                  }
-                }
-              }
-            }
-          } catch (pollErr) {
-            // Ignore transient poll errors; keep polling
-          }
-        }, 3000);
-
-        // Safety timeout — stop polling after 5 minutes
-        setTimeout(() => {
-          clearInterval(pollInterval);
-          setIsSubmitting(false);
-        }, 300_000);
+        setStatusMsg(null);
+        setActiveJobId(String(job.job_id || ""));         // UploadLive follows it step by step
       } else {
         setStatusMsg({ type: "error", text: job.detail || "Submission failed." });
         setIsSubmitting(false);
@@ -1087,6 +1038,34 @@ export default function App() {
       setIsSubmitting(false);
     }
   };
+
+  const afterUpload = (job: LiveJob) => {
+    setIsSubmitting(false);
+    const skipped = job.students.filter((st) => st.status === "SKIPPED").length;
+    if (job.status === "COMPLETED") {
+      setStatusMsg({ type: "success", text: `All ${job.success_count} students were saved to PARAKH.${skipped ? ` ${skipped} skipped (Sync = No).` : ""}` });
+    } else if (job.status === "PARTIAL_SUCCESS") {
+      setStatusMsg({ type: "warning", text: `${job.success_count} saved, ${job.failed_count} not saved. Fix those rows (reasons below) and upload the file again.` });
+    } else {
+      setStatusMsg({ type: "error", text: "Nothing was saved. See the reasons below; check the PARAKH connection and try again." });
+    }
+  };
+
+  // An upload still running (for example after a page reload) is shown live again.
+  useEffect(() => {
+    if (!user || user.role === "SCHOOL_ADMIN") return;
+    apiFetch("/teacher/upload/jobs")
+      .then(async (res) => {
+        if (!res.ok) return;
+        const jobs: UploadJobStatus[] = await res.json();
+        const running = jobs.find((j) => j.status === "PENDING" || j.status === "IN_PROGRESS");
+        if (running) {
+          setActiveJobId(String(running.job_id));
+          setIsSubmitting(true);
+        }
+      })
+      .catch(() => undefined);
+  }, [user]);
 
   // ─── Auth ─────────────────────────────────────────────────────────────────
 
@@ -2479,6 +2458,7 @@ export default function App() {
             )}
             {teacherTab === "upload" && (
               <div className="ui-panel">
+                {activeJobId && <UploadLive api={cardsApi} jobId={activeJobId} onFinished={afterUpload} />}
                 <div className="panel-header">
                   <div className="panel-title"><Upload size={20} color="#FF671F" /><span>Upload Completed Class Grading Sheet</span></div>
                 </div>
@@ -2527,8 +2507,6 @@ export default function App() {
                             style={{ display: "none" }}
                             onChange={(e) => {
                               setValidationReport(null);
-                              setJobPollStatus(null);
-                              setUploadProgress(0);
                               setUploadedFileName("");
                               handleFileUpload(e);
                             }}
@@ -2547,72 +2525,6 @@ export default function App() {
                         )}
                       </div>
                     </div>
-
-                    {/* Live job status card while polling */}
-                    {(isSubmitting || jobPollStatus) && (
-                      <div style={{ marginBottom: "1.2rem", padding: "1rem 1.2rem", borderRadius: "10px", background: "#F8FAFC", border: "1px solid var(--border-light)" }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "0.86rem", fontWeight: 600, marginBottom: "0.6rem" }}>
-                          <span style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
-                            {isSubmitting && <RefreshCw size={14} className="spin" style={{ color: "var(--chakra-blue)" }} />}
-                            {jobPollStatus ? (
-                              <span>Job status: <b style={{ color: jobPollStatus.status === "COMPLETED" ? "#046A38" : jobPollStatus.status === "FAILED" ? "#DC2626" : "#D97706" }}>{jobPollStatus.status.replace("_", " ")}</b></span>
-                            ) : "Queuing job..."}
-                          </span>
-                          <span style={{ color: "var(--text-muted)" }}>{uploadProgress}%</span>
-                        </div>
-                        <div className="progress-bar-container">
-                          <div className="progress-fill" style={{ width: `${uploadProgress}%`, transition: "width 0.6s ease" }} />
-                        </div>
-                        {jobPollStatus && (
-                          <>
-                            <div style={{ marginTop: "0.5rem", fontSize: "0.8rem", color: "var(--text-muted)", display: "flex", flexWrap: "wrap", gap: "1.2rem" }}>
-                              <span>✅ Verified: <b style={{ color: "#046A38" }}>{jobPollStatus.success_count}</b></span>
-                              <span>❌ Failed: <b style={{ color: jobPollStatus.failed_count > 0 ? "#DC2626" : "var(--text-muted)" }}>{jobPollStatus.failed_count}</b></span>
-                              {(jobPollStatus.unverified_count ?? 0) > 0 && (
-                                <span>⚠️ Unverified: <b style={{ color: "#D97706" }}>{jobPollStatus.unverified_count}</b></span>
-                              )}
-                              {(jobPollStatus.reconciliation_count ?? 0) > 0 && (
-                                <span>🚨 Discrepancy: <b style={{ color: "#DC2626" }}>{jobPollStatus.reconciliation_count}</b></span>
-                              )}
-                              <span>Total: <b>{jobPollStatus.total_students}</b></span>
-                            </div>
-                            <div style={{ marginTop: "0.6rem", display: "flex", justifyContent: "flex-end" }}>
-                              <button
-                                type="button"
-                                style={{
-                                  padding: "0.3rem 0.6rem",
-                                  fontSize: "0.75rem",
-                                  borderRadius: "6px",
-                                  border: "1px solid var(--border-light)",
-                                  background: "#FFF",
-                                  cursor: "pointer",
-                                  fontWeight: 600,
-                                }}
-                                onClick={async () => {
-                                  try {
-                                    const res = await apiFetch(`/teacher/upload/jobs/${jobPollStatus.job_id}/export`, {
-                                    });
-                                    if (res.ok) {
-                                      const blob = await res.blob();
-                                      const url = window.URL.createObjectURL(blob);
-                                      const a = document.createElement("a");
-                                      a.href = url;
-                                      a.download = `hpc_job_${jobPollStatus.job_id.slice(0, 8)}_audit_report.csv`;
-                                      a.click();
-                                      window.URL.revokeObjectURL(url);
-                                    }
-                                  } catch (e) {
-                                    console.error("Failed to export report", e);
-                                  }
-                                }}
-                              >
-                                📥 Download Audit CSV
-                              </button>
-                            </div>
-                          </>
-                        )}
-                      </div>
-                    )}
 
                     {/* Error table */}
                     {validationReport.errors?.length > 0 && (

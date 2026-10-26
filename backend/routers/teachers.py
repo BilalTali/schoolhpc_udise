@@ -275,6 +275,16 @@ def job_records(job_id: str, teacher: Teacher = Depends(require_teacher), db: Se
         for r in records]}
 
 
+@router.get("/upload/jobs/{job_id}/live")
+def job_live(job_id: str, teacher: Teacher = Depends(require_teacher), db: Session = Depends(get_db)):
+    """While a job runs: who is being saved and which step, the recent steps, and every student's status."""
+    job = _own_job(db, teacher, job_id)
+    records = sorted(job.records, key=lambda r: r.row_number or 0)
+    return {**_job_response(job).model_dump(), **upload_jobs.live_view(job.id),
+            "students": [{"student_id": r.admission_number, "student_name": r.student_name, "status": r.status,
+                          "error": r.error_message} for r in records]}
+
+
 @router.get("/upload/jobs/{job_id}/export")
 def export_job(job_id: str, teacher: Teacher = Depends(require_teacher), db: Session = Depends(get_db)):
     """CSV report: one line per student with the outcome."""
