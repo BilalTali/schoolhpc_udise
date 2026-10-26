@@ -850,14 +850,14 @@ def _normalise(rec: Dict[str, Any], subject_codes: Dict[int, str]) -> Dict[str, 
     }
 
 
-def start_sync(db: Session, actor: Actor, stages: List[str]) -> Tuple[ActivitySyncJob, bool]:
+def start_sync(db: Session, actor: Actor, stages: List[str], started_by: Optional[str] = None) -> Tuple[ActivitySyncJob, bool]:
     """Returns (job, already_running). One sync per school at a time."""
     running = (db.query(ActivitySyncJob).filter(ActivitySyncJob.school_id == actor.school_id,
                                                 ActivitySyncJob.status.in_(("QUEUED", "RUNNING")))
                .order_by(ActivitySyncJob.created_at.desc()).first())
     if running:
         return running, True
-    job = ActivitySyncJob(school_id=actor.school_id, stages=",".join(stages), started_by=actor.key,
+    job = ActivitySyncJob(school_id=actor.school_id, stages=",".join(stages), started_by=started_by or actor.key,
                           step="Waiting to start", progress=0)
     db.add(job)
     db.commit()
@@ -921,6 +921,7 @@ def _apply(db: Session, actor: Actor, fetched: Dict[str, Dict[str, List[Dict[str
     counts: Dict[str, Dict[str, int]] = {}
     for stage, by_source in fetched.items():
         c = {"new": 0, "updated": 0, "removed": 0, "unchanged": 0}
+        changed: List[Dict[str, Any]] = []          # what the school admin is shown after the update
         for source, records in by_source.items():
             if source == "portal_teacher" and not with_my_activities:
                 continue
@@ -942,8 +943,10 @@ def _apply(db: Session, actor: Actor, fetched: Dict[str, Dict[str, List[Dict[str
                                           owner_teacher_id=actor.id if source == "portal_teacher" else None)
                     db.add(act)
                     c["new"] += 1
+                    changed.append({"code": rec["code"], "change": "new"})
                 elif act.snapshot_hash != rec["hash"] or act.upstream_status != "present" or act.stage != stage:
                     c["updated"] += 1
+                    changed.append({"code": rec["code"], "change": "changed"})
                 else:
                     c["unchanged"] += 1
                 act.stage, act.code, act.content = stage, rec["code"], rec["content"]
@@ -954,18 +957,21 @@ def _apply(db: Session, actor: Actor, fetched: Dict[str, Dict[str, List[Dict[str
                 if portal_id not in seen and act.upstream_status == "present":
                     act.upstream_status, act.removed_at, act.updated_by = "removed", now, "sync"   # kept: cards may use it
                     c["removed"] += 1
+                    changed.append({"code": act.code, "change": "removed"})
+        c["changed"] = changed[:100]
         counts[stage] = c
     return counts
 
 
 def job_view(job: ActivitySyncJob) -> Dict[str, Any]:
     return {"id": job.id, "stages": job.stages.split(","), "status": job.status, "step": job.step,
-            "progress": job.progress, "counts": job.counts, "error": job.error,
+            "progress": job.progress, "counts": job.counts, "error": job.error, "automatic": job.started_by == "auto",
             "started_at": _iso(job.created_at), "finished_at": _iso(job.finished_at)}
 
 
 def last_syncs(db: Session, school_id: str) -> Dict[str, Any]:
-    """Latest job overall, and the last successful sync time per stage."""
+    """Latest job overall, the last successful sync time per stage, and when the shared copy of PARAKH's
+    bank was last updated (by any school's admin) - what teachers see."""
     jobs = (db.query(ActivitySyncJob).filter(ActivitySyncJob.school_id == school_id)
             .order_by(ActivitySyncJob.created_at.desc()).limit(50).all())
     per_stage = {}
@@ -973,7 +979,106 @@ def last_syncs(db: Session, school_id: str) -> Dict[str, Any]:
         if j.status == "COMPLETED":
             for s in j.stages.split(","):
                 per_stage.setdefault(s, _iso(j.finished_at))
-    return {"latest": job_view(jobs[0]) if jobs else None, "last_synced": per_stage}
+    return {"latest": job_view(jobs[0]) if jobs else None, "last_synced": per_stage,
+            "bank_updated": {s: _iso(bank_updated(db, s)) for s in STAGES if bank_updated(db, s)}}
+
+
+# ---------------------------------------------------------------------------
+# Teachers read activities from here; the school admin's session keeps them up to date
+# ---------------------------------------------------------------------------
+
+AUTO_SYNC_AFTER_HOURS = 24
+_STAGE_BY_CODE = {s.upper(): s for s in STAGES}
+
+
+def bank_updated(db: Session, stage: str) -> Optional[datetime]:
+    """When PARAKH's Activity Bank for a stage was last copied here (the copy is shared by every school)."""
+    from sqlalchemy import func
+    return (db.query(func.max(LibraryActivity.last_synced_at))
+            .filter(LibraryActivity.source == "portal_global", LibraryActivity.stage == stage).scalar())
+
+
+def bank_activities(stage_code: str) -> Dict[int, Dict[str, Any]]:
+    """The Activity Bank as PARAKH's own lists give it (for Lookups), from the app's copy: no PARAKH call.
+    Picture activities are left out, as before."""
+    stage = _STAGE_BY_CODE.get(str(stage_code).upper())
+    if not stage:
+        return {}
+    with SessionLocal() as db:
+        rows = (db.query(LibraryActivity).filter(LibraryActivity.source == "portal_global", LibraryActivity.stage == stage,
+                                                 LibraryActivity.upstream_status == "present").all())
+        out = {}
+        for a in rows:
+            if a.has_pictures or a.portal_id is None:
+                continue
+            snap = a.original_snapshot or {}
+            out[a.portal_id] = {"id": a.portal_id, "activity_caption": snap.get("activity_caption") or a.code,
+                                "hpc_stage": stage.upper(), "domain_ids": list(snap.get("domain_ids") or []),
+                                "content": {"dt": a.content or {}}}
+        return out
+
+
+def stale_stages(db: Session) -> List[str]:
+    limit = datetime.utcnow().timestamp() - AUTO_SYNC_AFTER_HOURS * 3600
+    return [s for s in STAGES if (bank_updated(db, s) is None or bank_updated(db, s).timestamp() < limit)]
+
+
+def maybe_auto_sync(school_id: str, client_for=None) -> Optional[str]:
+    """Starts an automatic update of the stages not updated for a day, with the school admin's PARAKH session
+    (read-only, the same sync as the Update button). At most one automatic try per school a day; nothing
+    happens without a session. Returns the job id when one was started."""
+    import threading
+    from datetime import timedelta
+    from backend.models.entities import School
+    from backend.services import hpc_sessions
+    with SessionLocal() as db:
+        stages = stale_stages(db)
+        if not stages:
+            return None
+        since = datetime.utcnow() - timedelta(hours=AUTO_SYNC_AFTER_HOURS)
+        if (db.query(ActivitySyncJob).filter(ActivitySyncJob.school_id == school_id, ActivitySyncJob.started_by == "auto",
+                                             ActivitySyncJob.created_at >= since).first()):
+            return None
+        school = db.get(School, school_id)
+        if school is None:
+            return None
+        try:
+            client = (client_for or (lambda s: hpc_sessions.portal_for("school", s.id)))(school)
+        except HTTPException:
+            return None                              # not connected: the next connect or tick tries again
+        actor = Actor("SCHOOL_ADMIN", school.id, school.id, school.admin_name or "")
+        job, running = start_sync(db, actor, stages, started_by="auto")
+        if running:
+            return None
+        job_id = job.id
+    threading.Thread(target=run_sync, args=(job_id, client, actor, False), daemon=True).start()
+    return job_id
+
+
+def auto_sync_tick(session_exists=None) -> List[str]:
+    """Hourly: every school whose admin has a PARAKH session gets its automatic update when it is due."""
+    from backend.models.entities import School
+    from backend.services import hpc_sessions
+    exists = session_exists or (lambda school_id: hpc_sessions.session_path("school", school_id).exists())
+    with SessionLocal() as db:
+        if not stale_stages(db):
+            return []
+        ids = [s.id for s in db.query(School).all()]
+    return [j for j in (maybe_auto_sync(i) for i in ids if exists(i)) if j]
+
+
+def start_auto_sync_timer(every_seconds: int = 3600) -> None:
+    import threading
+
+    def loop():
+        import time as _time
+        while True:
+            _time.sleep(every_seconds)
+            try:
+                auto_sync_tick()
+            except Exception as exc:                 # never stops the server; tried again next hour
+                print(f"[auto-sync] skipped: {exc}")
+    threading.Thread(target=loop, daemon=True, name="activity-auto-sync").start()
 
 
 def recover_interrupted_syncs() -> int:
@@ -989,3 +1094,8 @@ def recover_interrupted_syncs() -> int:
     finally:
         db.close()
 
+
+
+# Lookups (backend.hpc.stages.common) reads the Activity Bank from the app's copy from now on.
+from backend.hpc.stages import common as _common  # noqa: E402
+_common.ACTIVITY_SOURCE = bank_activities

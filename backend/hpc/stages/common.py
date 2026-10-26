@@ -28,6 +28,11 @@ def clean(text: Any) -> str:
     return " ".join(str(text or "").split())
 
 
+# Where Lookups gets the Activity Bank: set by backend.services.activity_library to read the app's own copy
+# (kept up to date by the school admin's sync). PARAKH's bank is read only while that copy is empty.
+ACTIVITY_SOURCE: Optional[Callable[[str], Dict[int, Dict[str, Any]]]] = None
+
+
 class Lookups:
     """Dropdown lists the portal pages load from its API, fetched once per run."""
 
@@ -40,15 +45,16 @@ class Lookups:
             grades = pool.submit(get, f"/states/{portal.state}/grades")
             sections = pool.submit(get, f"/states/{portal.state}/districts/{portal.district_id}/schools/{portal.school_id}/sections")
             domains = pool.submit(portal.activity_categories, stage_code)
-            bank = pool.submit(portal.activity_bank_page, 1, 1000)
+            stored = ACTIVITY_SOURCE(stage_code) if ACTIVITY_SOURCE else {}
+            bank = None if stored else pool.submit(portal.activity_bank_page, 1, 1000)
             self.medium = cats.result()["MED_INST"]
             self.location = cats.result()["LOCATION"]
             self.interests = interests.result()
             self.grades = grades.result().get(stage_code, [])
             self.sections = sections.result()["records"]
             self.domains = domains.result()
-            records = bank.result()["records"]
-        self.activities: Dict[int, Dict[str, Any]] = {}
+            records = bank.result()["records"] if bank else []
+        self.activities: Dict[int, Dict[str, Any]] = dict(stored)
         for a in records:
             a["content"] = json.loads(a.get("activity_data_json") or "{}")
             # Activities with pictures need the page's image re-upload step, which we don't do.

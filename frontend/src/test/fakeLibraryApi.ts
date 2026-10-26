@@ -54,6 +54,7 @@ export function fakeLibraryApi({ isAdmin = true, activities }: { isAdmin?: boole
     failList: 0,
     calls: [] as Call[],
     created: null as any,
+    latest: null as SyncJob | null,
   };
 
   const json = (status: number, body: unknown) =>
@@ -90,7 +91,7 @@ export function fakeLibraryApi({ isAdmin = true, activities }: { isAdmin?: boole
                   disabled: marked.filter((a) => a.status === "disabled").length, covers_all: marked.filter((a) => a.covers_all).length,
                   edited: marked.filter((a) => a.edited).length, removed: 0, usable_in_excel: marked.filter((a) => a.usable_in_excel && a.status === "active").length },
         default_id: state.defaultId, default_label: state.defaultId ? find(state.defaultId).label : null,
-        sync: { latest: null, last_synced: { Preparatory: "2026-10-25T10:00:00Z" } },
+        sync: { latest: state.latest, last_synced: { Preparatory: "2026-10-25T10:00:00Z" }, bank_updated: { Preparatory: "2026-10-26T02:00:00Z" } },
         consent_text: "I made this activity myself and agree that other teachers may use it.",
       };
       return json(200, listing);

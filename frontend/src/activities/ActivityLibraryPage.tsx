@@ -186,7 +186,8 @@ function StageLibrary({ api, isAdmin, stage }: { api: Api; isAdmin: boolean; sta
         ))}
       </nav>
 
-      <SyncPanel api={api} stage={stage} latest={listing?.sync.latest || null} lastSynced={listing?.sync.last_synced || {}} onFinished={load} />
+      <SyncPanel api={api} stage={stage} isAdmin={isAdmin} latest={listing?.sync.latest || null}
+                 lastSynced={{ ...(listing?.sync.last_synced || {}), ...(listing?.sync.bank_updated || {}) }} onFinished={load} />
 
       <div className="lib-live" role="status" aria-live="polite">
         {message && (

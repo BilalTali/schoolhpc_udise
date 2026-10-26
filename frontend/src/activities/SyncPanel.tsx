@@ -5,14 +5,16 @@ import type { Api } from "../api";
 import { formatWhen } from "./types";
 import type { SyncJob } from "./types";
 
-// "Get activities from PARAKH": starts a read-only sync and follows it until it ends.
-// Polling stops as soon as the page is left (the sync itself keeps running on the server).
+// "Get activities from PARAKH" (school admin only): starts a read-only sync and follows it until it ends, and
+// shows what the last update - by hand or the daily automatic one - changed. Teachers get the app's copy and
+// only see when it was last updated. Polling stops as soon as the page is left (the sync keeps running).
 
 const POLL_MS = 1500;
 
-export function SyncPanel({ api, stage, latest, lastSynced, onFinished }: {
+export function SyncPanel({ api, stage, isAdmin, latest, lastSynced, onFinished }: {
   api: Api;
   stage: string;
+  isAdmin: boolean;
   latest: SyncJob | null;
   lastSynced: Record<string, string>;
   onFinished: () => void;
@@ -75,6 +77,20 @@ export function SyncPanel({ api, stage, latest, lastSynced, onFinished }: {
   const running = job && (job.status === "RUNNING" || job.status === "QUEUED");
   const total = (k: "new" | "updated" | "removed") =>
     Object.values(job?.counts || {}).reduce((n, c) => n + (c?.[k] || 0), 0);
+  const last = job || latest;                       // the update to report on: this one, or the last one (maybe automatic)
+  const changes = last?.status === "COMPLETED" ? last.counts?.[stage]?.changed || [] : [];
+
+  if (!isAdmin) {
+    return (
+      <section className="lib-sync" aria-labelledby="lib-sync-title">
+        <h2 id="lib-sync-title" className="lib-section-title"><CloudDownload size={18} aria-hidden="true" /> Activities from PARAKH</h2>
+        <p className="lib-muted">
+          Your school admin keeps the PARAKH activities up to date (it also happens automatically every day), so they
+          load quickly from here. {stage} last updated: <b>{formatWhen(lastSynced[stage])}</b>.
+        </p>
+      </section>
+    );
+  }
 
   return (
     <section className="lib-sync" aria-labelledby="lib-sync-title">
@@ -82,7 +98,8 @@ export function SyncPanel({ api, stage, latest, lastSynced, onFinished }: {
         <div>
           <h2 id="lib-sync-title" className="lib-section-title"><CloudDownload size={18} aria-hidden="true" /> Get activities from PARAKH</h2>
           <p className="lib-muted">
-            Reads the PARAKH Activity Bank and keeps a copy here. Nothing is changed on PARAKH.
+            Reads the PARAKH Activity Bank and keeps a copy here for your teachers. Nothing is changed on PARAKH.
+            It also runs automatically once a day while you are connected to PARAKH.
             {" "}{stage} last updated: <b>{formatWhen(lastSynced[stage])}</b>.
           </p>
         </div>
@@ -127,7 +144,29 @@ export function SyncPanel({ api, stage, latest, lastSynced, onFinished }: {
             <div><b>The update did not finish.</b> Your library was not changed. {job.error}</div>
           </div>
         )}
+        {!job && latest?.automatic && latest.status === "FAILED" && (
+          <div className="alert-box alert-warning lib-inline-alert">
+            <AlertCircle size={18} aria-hidden="true" />
+            <div><b>The automatic update on {formatWhen(latest.finished_at)} did not finish.</b> Nothing was changed. It runs
+              again after you connect to PARAKH, or press Update now.</div>
+          </div>
+        )}
+        {!job && latest?.status === "COMPLETED" && (
+          <p className="lib-muted">
+            {latest.automatic ? "Updated automatically" : "Last update"} on {formatWhen(latest.finished_at)}:{" "}
+            {changes.filter((c) => c.change === "new").length} new, {changes.filter((c) => c.change === "changed").length} changed,{" "}
+            {changes.filter((c) => c.change === "removed").length} no longer on PARAKH in {stage}.
+          </p>
+        )}
+        {changes.length > 0 && (
+          <details className="lib-history">
+            <summary>What changed in {stage} ({changes.length})</summary>
+            <ul>{changes.map((c, i) => <li key={i}>{CHANGE_LABEL[c.change]}: <b>{c.code}</b></li>)}</ul>
+          </details>
+        )}
       </div>
     </section>
   );
 }
+
+const CHANGE_LABEL = { new: "New on PARAKH", changed: "Changed on PARAKH", removed: "No longer on PARAKH" } as const;

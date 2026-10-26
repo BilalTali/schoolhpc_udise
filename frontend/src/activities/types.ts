@@ -76,7 +76,9 @@ export interface SyncJob {
   status: "QUEUED" | "RUNNING" | "COMPLETED" | "FAILED";
   step: string | null;
   progress: number;
-  counts: Record<string, { new: number; updated: number; removed: number; unchanged: number }> | null;
+  counts: Record<string, { new: number; updated: number; removed: number; unchanged: number;
+                            changed?: { code: string; change: "new" | "changed" | "removed" }[] }> | null;
+  automatic?: boolean;                // started by the daily automatic update
   error: string | null;
   started_at: string | null;
   finished_at: string | null;
@@ -93,7 +95,7 @@ export interface Listing {
   counts: { all: number; active: number; disabled: number; covers_all: number; edited: number; removed: number; usable_in_excel: number };
   default_id: string | null;
   default_label: string | null;
-  sync: { latest: SyncJob | null; last_synced: Record<string, string> };
+  sync: { latest: SyncJob | null; last_synced: Record<string, string>; bank_updated?: Record<string, string> };
   consent_text: string;
 }
 

@@ -34,6 +34,8 @@ async def lifespan(app):
         print(f"[startup] {count} upload(s) were interrupted by a restart and marked FAILED.")
     if recover_interrupted_syncs():
         print("[startup] An activity sync was interrupted by a restart and marked FAILED.")
+    from backend.services.activity_library import start_auto_sync_timer
+    start_auto_sync_timer()                      # daily update of the activities with the school admin's session
     yield
 
 

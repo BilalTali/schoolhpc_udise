@@ -106,6 +106,11 @@ def items(headers, stage="Preparatory", **params):
     return res.json()
 
 
+def numbers(counts):
+    """A sync's counts without the list of changes shown to the admin."""
+    return {k: v for k, v in counts.items() if k != "changed"}
+
+
 def by_code(listing, code):
     return next(i for i in listing["items"] if i["code"] == code)
 
@@ -120,7 +125,8 @@ def test_sync_new_updated_removed_and_restored(world):
                     bank_record(3, "Middle", "SCCG 1, C 1.1"), bank_record(4, "Middle", "SCCG 1, C 1.2")]
     job = sync(users["admin_a"])
     assert job["status"] == "COMPLETED" and job["progress"] == 100
-    assert job["counts"]["Preparatory"] == {"new": 2, "updated": 0, "removed": 0, "unchanged": 0}
+    assert numbers(job["counts"]["Preparatory"]) == {"new": 2, "updated": 0, "removed": 0, "unchanged": 0}
+    assert sorted(c["change"] for c in job["counts"]["Preparatory"]["changed"]) == ["new", "new"]   # shown to the admin
     assert job["counts"]["Middle"]["new"] == 2 and job["counts"]["Foundational"]["new"] == 0
 
     fake.records[0] = bank_record(1, "Preparatory", "L1CG 1, C 1.1", text="Changed upstream.")
@@ -128,7 +134,7 @@ def test_sync_new_updated_removed_and_restored(world):
     fake.records[1]["used_counter"] = 1000
     del fake.records[2]
     job = sync(users["admin_a"])
-    assert job["counts"]["Preparatory"] == {"new": 0, "updated": 1, "removed": 0, "unchanged": 1}
+    assert numbers(job["counts"]["Preparatory"]) == {"new": 0, "updated": 1, "removed": 0, "unchanged": 1}
     assert job["counts"]["Middle"]["removed"] == 1
 
     middle = items(users["admin_a"], "Middle")
@@ -219,17 +225,89 @@ def test_sync_needs_a_portal_session_and_runs_once(world, monkeypatch):
         assert lib.recover_interrupted_syncs() >= 1
 
 
-def test_teacher_sync_brings_their_own_portal_activities(world):
+def test_only_the_school_admin_fetches_from_parakh_and_teachers_get_the_copy(world):
     users, fake = world
     fake.records = [bank_record(1, "Middle", "SCCG 1, C 1.1")]
-    fake.mine = [bank_record(40321, "Middle", "My own role play")]
-    job = sync(users["t1"], "Middle")
-    assert job["status"] == "COMPLETED" and job["counts"]["Middle"]["new"] == 2
-    mine = by_code(items(users["t1"], "Middle"), "My own role play")
-    assert mine["source"] == "portal_teacher" and mine["usable_in_excel"]
-    assert "My own role play" not in [i["code"] for i in items(users["t2"], "Middle")["items"]]
-    assert "My own role play" in [i["code"] for i in items(users["admin_a"], "Middle")["items"]]
-    assert "My own role play" not in [i["code"] for i in items(users["admin_b"], "Middle")["items"]]
+    res = client.post(f"{API}/activity-library/sync", json={"stage": "Middle"}, headers=users["t1"])
+    assert res.status_code == 403 and "school admin" in res.text
+    job = sync(users["admin_a"], "Middle")
+    assert job["status"] == "COMPLETED" and job["counts"]["Middle"]["new"] == 1
+    assert by_code(items(users["t1"], "Middle"), "SCCG 1, C 1.1")["usable_in_excel"]      # teachers: from the app's copy
+    listing = items(users["t1"], "Middle")
+    assert "Middle" in listing["sync"]["bank_updated"]
+
+    # what every teacher screen's lists now read instead of PARAKH's bank
+    bank = lib.bank_activities("MIDDLE")
+    assert bank[1]["activity_caption"] == "SCCG 1, C 1.1" and bank[1]["content"]["dt"]["desc"][0].startswith("Pairs")
+    from backend.hpc.stages import common
+    assert common.ACTIVITY_SOURCE is lib.bank_activities
+
+
+class _NoBankPortal:
+    """Answers the small lists Lookups needs; the Activity Bank must not be asked for."""
+    state, district_id, school_id = "jk", 2, 1
+
+    def _request(self, method, path, **kwargs):
+        if "categories/MED_INST" in path:
+            return {"data": {"MED_INST": [], "LOCATION": []}}
+        if "sections" in path:
+            return {"data": {"records": []}}
+        return {"data": {} if "grades" in path else []}
+
+    def activity_categories(self, stage_code):
+        return []
+
+    def activity_bank_page(self, *args):
+        raise AssertionError("Lookups asked PARAKH for the Activity Bank")
+
+
+def test_lookups_read_activities_from_the_app_not_from_parakh(world):
+    users, fake = world
+    fake.records = [bank_record(7, "Preparatory", "From the copy")]
+    sync(users["admin_a"], "Preparatory")
+    from backend.hpc.stages.common import Lookups
+    lk = Lookups(_NoBankPortal(), "PREPARATORY")
+    assert lk.activities[7]["activity_caption"] == "From the copy" and lk.activity_label(7) == "7: From the copy"
+
+
+def test_automatic_update_runs_once_a_day_with_the_admins_session(world, monkeypatch):
+    import time as _time
+    from datetime import datetime
+    from backend.models.library import ActivitySyncJob
+    users, fake = world
+    fake.records = [bank_record(1, "Preparatory", "A")]
+    school_id = client.get(f"{API}/auth/me", headers=users["admin_a"]).json()["id"]
+    school_id_b = client.get(f"{API}/auth/me", headers=users["admin_b"]).json()["id"]
+    with SessionLocal() as db:                      # make every stage's copy older than a day
+        db.query(LibraryActivity).delete()
+        db.query(ActivitySyncJob).filter(ActivitySyncJob.started_by == "auto").delete()
+        db.commit()
+    monkeypatch.setattr(fake, "my_activities_page", lambda *a: (_ for _ in ()).throw(AssertionError("not for the admin")),
+                        raising=False)
+
+    def no_session(school):
+        from fastapi import HTTPException
+        raise HTTPException(401, "not connected")
+    assert lib.maybe_auto_sync(school_id, client_for=no_session) is None              # not connected: nothing
+    job_id = lib.maybe_auto_sync(school_id, client_for=lambda school: fake)
+    assert job_id
+    for _ in range(100):
+        with SessionLocal() as db:
+            job = db.get(ActivitySyncJob, job_id)
+            if job.status in ("COMPLETED", "FAILED"):
+                break
+        _time.sleep(0.05)
+    assert job.status == "COMPLETED" and job.started_by == "auto", job.error
+    assert job.counts["Preparatory"]["changed"] == [{"code": "A", "change": "new"}]
+    assert lib.maybe_auto_sync(school_id, client_for=lambda school: fake) is None     # one automatic try a day
+
+    with SessionLocal() as db:                      # Preparatory fresh; the other stages are still due
+        for a in db.query(LibraryActivity).all():
+            a.last_synced_at = datetime.utcnow()
+        db.commit()
+    with SessionLocal() as db:
+        assert lib.stale_stages(db) == ["Foundational", "Middle"]          # Preparatory was just updated
+    assert lib.auto_sync_tick(session_exists=lambda school_id: school_id == school_id_b) == []   # B has no session
 
 
 # ---------------------------------------------------------------------------

@@ -310,7 +310,15 @@ def verify_school_captcha(payload: HpcCaptchaRequest, admin: School = Depends(re
     result = hpc_sessions.verify_captcha(KIND, admin.id, payload.answer)
     if not result.get("success") and result.get("status") != "captcha_required":
         raise HTTPException(status.HTTP_400_BAD_REQUEST, result.get("error", "HPC login failed."))
+    _after_connect(admin, result)
     return result
+
+
+def _after_connect(admin: School, result) -> None:
+    """Once connected: the activities copy is updated now if it is more than a day old (read-only)."""
+    if result.get("status") == "authenticated":
+        from backend.services import activity_library
+        result["activities_update_started"] = bool(activity_library.maybe_auto_sync(admin.id))
 
 
 @router.post("/hpc/new-captcha")
@@ -326,6 +334,7 @@ def verify_school_otp(payload: HpcOtpRequest, admin: School = Depends(require_sc
     result = hpc_sessions.verify_otp(KIND, admin.id, payload.otp)
     if not result.get("success"):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, result.get("error", "Invalid OTP."))
+    _after_connect(admin, result)
     return result
 
 

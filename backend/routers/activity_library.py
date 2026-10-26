@@ -167,9 +167,12 @@ def start_sync(payload: SyncRequest, background_tasks: BackgroundTasks, actor: l
                db: Session = Depends(get_db)):
     stages = [lib.check_stage(payload.stage)] if payload.stage else list(lib.STAGES)
     client = _client(db, actor)                       # fails here (401) when there is no PARAKH session
+    if not actor.is_admin:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Your school admin updates the activities from PARAKH (it also "
+                            "happens automatically every day). You always get the latest copy here.")
     job, running = lib.start_sync(db, actor, stages)
     if not running:
-        background_tasks.add_task(lib.run_sync, job.id, client, actor, not actor.is_admin)
+        background_tasks.add_task(lib.run_sync, job.id, client, actor, False)
     return {**lib.job_view(job), "already_running": running}
 
 

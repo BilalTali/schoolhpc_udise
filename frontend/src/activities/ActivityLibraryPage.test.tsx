@@ -221,6 +221,25 @@ describe("Adding activities", () => {
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Make default/ })).not.toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: /^Copy/ })).toHaveLength(3);
+    // activities come from the app's copy: no update from PARAKH for teachers, only when it was last updated
+    expect(screen.queryByRole("button", { name: /Update Preparatory|Update all stages/ })).not.toBeInTheDocument();
+    expect(screen.getByText(/Your school admin keeps the PARAKH activities up to date/)).toBeInTheDocument();
+  });
+
+  it("the school admin sees what the automatic update changed", async () => {
+    const fake = fakeLibraryApi({ isAdmin: true });
+    fake.state.latest = { id: "auto1", stages: ["Preparatory"], status: "COMPLETED", step: "Done", progress: 100, error: null,
+                          automatic: true, started_at: "2026-10-26T02:00:00Z", finished_at: "2026-10-26T02:01:00Z",
+                          counts: { Preparatory: { new: 1, updated: 1, removed: 0, unchanged: 70,
+                                                   changed: [{ code: "NEW 1", change: "new" }, { code: "OLD 2", change: "changed" }] } } };
+    vi.stubGlobal("fetch", vi.fn(fake.fetch));
+    const router = createMemoryRouter([{ path: "/activities/:stage?", element: <ActivityLibraryPage api={api} isAdmin /> }],
+                                      { initialEntries: ["/activities/preparatory"] });
+    render(<RouterProvider router={router} />);
+    expect(await screen.findByText(/Updated automatically on .*1 new, 1 changed, 0 no longer on PARAKH in Preparatory/)).toBeInTheDocument();
+    expect(screen.getByText("What changed in Preparatory (2)")).toBeInTheDocument();
+    expect(screen.getByText("NEW 1")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Update Preparatory/ })).toBeInTheDocument();
   });
 });
 
