@@ -164,6 +164,10 @@ def cards_in_tmp(monkeypatch, tmp_path):
     """Each test has its own empty stored copy of cards, never the real data folder."""
     from backend.services import card_store
     monkeypatch.setattr(card_store, "CARDS_DIR", tmp_path / "cards")
+    # the background check against PARAKH is tested on its own (test_card_store.py); elsewhere it stays off
+    monkeypatch.setattr(card_store, "start_check", lambda *args, **kwargs: None)
+    card_store._checks.clear()
+    card_store._checked_at.clear()
 
 
 @pytest.fixture

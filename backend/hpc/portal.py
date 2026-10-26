@@ -181,6 +181,9 @@ def verify_otp(pending: Dict[str, Any], otp: str) -> Session:
 class Portal:
     """Authenticated API calls for one teacher/school session."""
 
+    _pacers: Dict[str, list] = {}               # login -> [lock, next allowed time]: shared by all its connections
+    _pacers_lock = threading.Lock()
+
     def __init__(self, session: Session, on_refresh: Callable[[Session], None] = lambda s: None):
         """on_refresh is called with the new Session whenever the token is renewed (so it can be saved)."""
         self.session = session
@@ -188,8 +191,9 @@ class Portal:
         self.http = _http()
         self.http.headers["Authorization"] = f"Bearer {session.access_token}"
         self._lock = threading.Lock()
-        self._pace_lock = threading.Lock()
-        self._next_at = 0.0
+        login = str((session.staff or {}).get("staff_id") or (session.staff or {}).get("user_id") or "") or f"conn-{id(self)}"
+        with Portal._pacers_lock:
+            self._pacer = Portal._pacers.setdefault(login, [threading.Lock(), 0.0])
         self.min_interval = 1.0 / max(PORTAL_MAX_PER_SECOND, 0.1)
         self.relogin: Optional[Callable[[], Session]] = None   # fallback when the refresh token is rejected too
         staff = session.staff
@@ -225,11 +229,13 @@ class Portal:
             return True
 
     def _pace(self) -> None:
-        """Keeps this session to PORTAL_MAX_PER_SECOND requests a second, across all its threads."""
-        with self._pace_lock:
+        """Keeps this PARAKH login to PORTAL_MAX_PER_SECOND requests a second, across all its threads and
+        connections (a background check and a screen together still keep to it)."""
+        lock = self._pacer[0]
+        with lock:
             now = time.monotonic()
-            wait = self._next_at - now
-            self._next_at = max(now, self._next_at) + self.min_interval
+            wait = self._pacer[1] - now
+            self._pacer[1] = max(now, self._pacer[1]) + self.min_interval
         if wait > 0:
             time.sleep(wait)
 

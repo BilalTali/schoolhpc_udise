@@ -2,9 +2,11 @@
 The app's stored copy of students' card parts, so Bulk Entry, the Part C levels screen and the Activities grid
 load from here instead of reading every student's card from PARAKH each time.
 
-A part is read from PARAKH (GET only) the first time it is needed and then kept. It is read again when the
-teacher presses "Read again from PARAKH" (the whole stage), and for one student after the app saves that
-student's card (its copy is dropped, so the next view reads it fresh).
+A part is read from PARAKH (GET only) the first time it is needed and then kept. Each time a screen loads from
+the copy, a background check reads the same parts from PARAKH again (one at a time, within the request limit)
+and updates the copy, so a change made on the PARAKH website shows up by itself; the screen asks for the
+check's result and refreshes. The same parts are not checked again within CHECK_EVERY_SECONDS. "Read again
+from PARAKH" reads the whole stage at once, and a save by the app drops that student's copy.
 
 Files: data/cards/<owner>/<session>/<stage>/<student_id>.json - inside the data folder, outside OneDrive,
 covered by the encrypted backups, like the snapshots. Logs carry IDs only.
@@ -12,6 +14,7 @@ covered by the encrypted backups, like the snapshots. Logs carry IDs only.
 import json
 import shutil
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
@@ -20,7 +23,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 from backend.config import DATA_DIR
 
 CARDS_DIR = DATA_DIR / "cards"
-_lock = threading.Lock()
+_lock = threading.RLock()                     # re-entrant: check_view is used while the lock is held
 
 
 def _dir(owner: str, session: str, stage: str) -> Path:
@@ -85,6 +88,9 @@ def forget(owner: str, session: str, stage: str, student_id: Optional[str] = Non
             _path(owner, session, stage, student_id).unlink(missing_ok=True)
         else:
             shutil.rmtree(_dir(owner, session, stage), ignore_errors=True)
+            key = (owner, str(session), stage.lower())
+            for k in [k for k in _checked_at if k[:3] == key]:
+                _checked_at[k] = time.time()          # just read in full: no background check needed now
 
 
 def forget_everywhere(owner: str, stage: str, student_id: str) -> None:
@@ -93,3 +99,70 @@ def forget_everywhere(owner: str, stage: str, student_id: str) -> None:
     if base.exists():
         for session_dir in base.iterdir():
             forget(owner, session_dir.name, stage, student_id)
+
+
+# ---------------------------------------------------------------------------
+# Checking the copy against PARAKH in the background
+# ---------------------------------------------------------------------------
+
+CHECK_EVERY_SECONDS = 10 * 60
+_checks: Dict[tuple, Dict[str, Any]] = {}
+_checked_at: Dict[tuple, float] = {}
+
+
+def check_view(owner: str, session: str, stage: str) -> Optional[Dict[str, Any]]:
+    """The latest check for this stage: progress, which students' cards changed on PARAKH (IDs only)."""
+    with _lock:
+        job = _checks.get((owner, str(session), stage.lower()))
+        return None if job is None else {k: (list(v) if isinstance(v, (list, set)) else v)
+                                         for k, v in job.items() if k != "cols"}
+
+
+def start_check(client, owner: str, session: str, stage: str, student_ids: List[str], cols: Iterable[str]) -> Optional[Dict[str, Any]]:
+    """Starts re-reading these parts from PARAKH unless they were checked in the last CHECK_EVERY_SECONDS or a
+    check is running. Returns the check as check_view shows it."""
+    key = (owner, str(session), stage.lower())
+    cols = list(cols)
+    now = time.time()
+    with _lock:
+        running = _checks.get(key)
+        if running and running["status"] == "RUNNING":
+            return check_view(owner, session, stage)
+        due = [c for c in cols if now - _checked_at.get(key + (c,), 0) >= CHECK_EVERY_SECONDS]
+        if not due or not student_ids:
+            return check_view(owner, session, stage)
+        for c in due:
+            _checked_at[key + (c,)] = now
+        job = {"id": f"{int(now * 1000)}", "status": "RUNNING", "done": 0, "total": len(student_ids),
+               "changed": [], "cols": due, "error": None, "finished_at": None}
+        _checks[key] = job
+    threading.Thread(target=_run_check, args=(job, client, owner, session, stage, list(student_ids), due),
+                     daemon=True).start()
+    return check_view(owner, session, stage)
+
+
+def _run_check(job, client, owner, session, stage, student_ids, cols) -> None:
+    try:
+        for sid in student_ids:
+            path = _path(owner, session, stage, sid)
+            fresh = {c: client.student(stage, sid, c).get("formdata") for c in cols}     # GET only, paced
+            with _lock:
+                stored = _load(path)
+                differs = any(c in stored["parts"] and stored["parts"][c] != fresh[c] for c in cols)
+                stored["parts"].update(fresh)
+                stored["read_at"].update({c: _now() for c in cols})
+                path.parent.mkdir(parents=True, exist_ok=True)
+                tmp = path.with_suffix(".tmp")
+                tmp.write_text(json.dumps(stored, ensure_ascii=False), encoding="utf-8")
+                tmp.replace(path)
+                if differs:
+                    job["changed"].append(sid)
+                job["done"] += 1
+        job["status"] = "COMPLETED"
+    except Exception as exc:                      # the copy stays as it was; the next screen load tries again
+        job["status"], job["error"] = "FAILED", f"Could not check PARAKH for changes ({exc})."
+        with _lock:
+            for c in cols:
+                _checked_at.pop((owner, str(session), stage.lower(), c), None)
+    finally:
+        job["finished_at"] = _now()

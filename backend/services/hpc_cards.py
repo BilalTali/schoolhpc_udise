@@ -368,8 +368,9 @@ def bulk_read(client: Portal, owner: str, teacher_id: str, session: str, stage: 
                 "section": s["section"], "status": s["status"], "value": value,
                 "portal_value": to_api_value(f, portal_value), "in_draft": in_draft}
 
+    check = card_store.start_check(client, owner, session, stage, [s["student_id"] for s in students], [part.col])
     return {"field": {**field_meta(f), "part": part.code, "part_title": part.title},
-            "rows": [value_for(s) for s in students], "read_at": read_at}
+            "rows": [value_for(s) for s in students], "read_at": read_at, "check": check}
 
 
 def levels_read(client: Portal, owner: str, teacher_id: str, session: str, stage: str,
@@ -401,8 +402,9 @@ def levels_read(client: Portal, owner: str, teacher_id: str, session: str, stage
         return {"student_id": s["student_id"], "student_name": s["student_name"], "grade": s["grade"],
                 "section": s["section"], "values": values, "portal": portal, "in_draft": in_draft}
 
+    check = card_store.start_check(client, owner, session, stage, [s["student_id"] for s in students], [part.col])
     return {"options": list(fields[0].options) if fields else [], "subjects": list(subjects.values()),
-            "rows": [row_for(s) for s in students], "read_at": read_at}
+            "rows": [row_for(s) for s in students], "read_at": read_at, "check": check}
 
 
 def levels_write(client: Portal, owner: str, teacher_id: str, session: str, stage: str,

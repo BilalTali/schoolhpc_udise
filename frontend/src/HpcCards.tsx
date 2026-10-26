@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { ApiError, call } from "./api";
 import type { Api } from "./api";
+import { useCardCheck } from "./activities/useCardCheck";
 
 // Editor for one student's HPC card and bulk entry of one field across the class.
 // Talks to backend/routers/hpc_cards.py. Edits are autosaved as a server-side draft;
@@ -571,6 +572,9 @@ export function HpcBulkEntry({ api, stage }: { api: CardsApi; stage: string }) {
   const [field, setField] = useState<(FieldMeta & { part_title: string }) | null>(null);
   const [rows, setRows] = useState<BulkRow[]>([]);
   const [readAt, setReadAt] = useState<string | null>(null);   // when the app's copy was read from PARAKH
+  const [changedOnParakh, setChangedOnParakh] = useState<string[]>([]);
+  const editsRef = useRef<Record<string, FieldValue>>({});
+  const fieldRef = useRef("");
   const [edits, setEdits] = useState<Record<string, FieldValue>>({});
   const [problems, setProblems] = useState<Record<string, string>>({});
   const [fillValue, setFillValue] = useState<FieldValue>("");
@@ -619,6 +623,13 @@ export function HpcBulkEntry({ api, stage }: { api: CardsApi; stage: string }) {
     setFieldKey(key);
     if (key) loadRows(key); else { setField(null); setRows([]); }
   };
+
+  useEffect(() => { editsRef.current = edits; fieldRef.current = fieldKey; });
+  const checking = useCardCheck(api, stage, !!field, (ids) => {
+    if (Object.keys(editsRef.current).length) setChangedOnParakh(ids);
+    else if (fieldRef.current) loadRows(fieldRef.current).then(() => setMessage({ type: "success",
+      text: `Updated from PARAKH: ${ids.length} student${ids.length === 1 ? "'s card was" : "s' cards were"} changed there.` }));
+  });
 
   const valueOf = (r: BulkRow) => (r.student_id in edits ? edits[r.student_id] : r.value);
 
@@ -700,11 +711,19 @@ export function HpcBulkEntry({ api, stage }: { api: CardsApi; stage: string }) {
         </div>
       ) : field && (
         <>
-          <div className="bulk-readat">
+          <div className="bulk-readat" aria-live="polite">
             {readAt && <span className="lib-muted">Loaded from the app's copy, read from PARAKH on {new Date(readAt).toLocaleString()}.</span>}
+            {checking && <span className="lib-muted">Checking PARAKH for changes… ({checking.done} of {checking.total})</span>}
             <button type="button" className="portal-link-btn" onClick={() => loadRows(fieldKey, true)}
                     disabled={saving || Object.keys(edits).length > 0}>Read again from PARAKH</button>
           </div>
+          {changedOnParakh.length > 0 && (
+            <div className="alert-box alert-warning">
+              <AlertCircle size={18} /> Changed on PARAKH since your copy: {changedOnParakh.map((id) => rows.find((r) => r.student_id === id)?.student_name || id).join(", ")}.{" "}
+              <button type="button" className="portal-link-btn" onClick={() => { setChangedOnParakh([]); loadRows(fieldKey); }}>Show the new values</button>
+              {" "}(unsaved changes for this field will be lost; save them first to keep them).
+            </div>
+          )}
           <div className="data-table-wrapper">
             <table className="data-table bulk-table">
               <thead>

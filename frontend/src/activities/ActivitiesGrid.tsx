@@ -4,6 +4,7 @@ import { AlertCircle, CheckCircle2, ChevronDown, ChevronUp, Clock, FileUp, Lock,
 import { ApiError, call } from "../api";
 import type { Api } from "../api";
 import { QuickFill } from "./QuickFill";
+import { useCardCheck } from "./useCardCheck";
 import { ABILITY_KEYS, ABILITY_LABEL, LEVEL_VALUES, REPLACE_KEY, actKey, gradeOf, levelKey } from "./gridTypes";
 import type { GridData, GridStudent } from "./gridTypes";
 
@@ -58,6 +59,13 @@ export function ActivitiesGrid({ api, stage, uploadedFile, focusStudent, library
     alive.current = true;
     load();
   }, [load]);
+
+  const checking = useCardCheck(api, stage, !!data, (ids) => {
+    const waiting = Object.keys(pending.current).length > 0;
+    const text = `${ids.length} student${ids.length === 1 ? "'s card was" : "s' cards were"} changed on PARAKH since your copy.`;
+    if (waiting) setMessage({ type: "error", text: `${text} Your changes are still being saved; press "Read again from PARAKH" afterwards to see them.` });
+    else load().then(() => setMessage({ type: "success", text: `Updated from PARAKH: ${text}` }));
+  });
 
   const flush = useCallback(async (sid: string) => {
     const values = pending.current[sid];
@@ -183,6 +191,7 @@ export function ActivitiesGrid({ api, stage, uploadedFile, focusStudent, library
           </button>
         </div>
       </div>
+      {checking && <p className="lib-muted" aria-live="polite">Checking PARAKH for changes… ({checking.done} of {checking.total})</p>}
       <p className="lib-muted">Choose an activity and the three levels for each subject. Changes are saved automatically and go into your Excel download. They reach PARAKH when you submit the card or upload the Excel file.
         {libraryHref && <> To change an activity's texts and questions, or add your own, open the <Link to={libraryHref}>Activity Library</Link>.</>}</p>
 

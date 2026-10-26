@@ -28,8 +28,9 @@ def _portal_parts(client: Portal, teacher_id: str, stage: str, students: List[Di
                   refresh: bool) -> Dict[str, Dict[str, Any]]:
     """student_id -> {"part_b": formdata, "part_c": formdata}: the app's stored copy (card_store), read from
     PARAKH only for students not kept yet, or all again with refresh."""
-    raw, _ = card_store.class_parts(client, f"teacher_{teacher_id}", client.ay, stage,
-                                    [s["student_id"] for s in students], ("part_b", "part_c"), refresh)
+    ids = [s["student_id"] for s in students]
+    raw, _ = card_store.class_parts(client, f"teacher_{teacher_id}", client.ay, stage, ids, ("part_b", "part_c"), refresh)
+    card_store.start_check(client, f"teacher_{teacher_id}", client.ay, stage, ids, ("part_b", "part_c"))
     return raw
 
 

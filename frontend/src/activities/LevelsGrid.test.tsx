@@ -10,11 +10,15 @@ const api = { base: "http://test/api/v1", onUnauthorized: vi.fn() };
 const json = (status: number, body: unknown) => Promise.resolve(new Response(JSON.stringify(body), { status }));
 const FIELDS = (code: string) => ["Awareness", "Sensitivity", "Creativity"].map((a) => ({ key: `c_${code}_${a.toLowerCase()}`, ability: a }));
 
-function setup() {
+const check = (status: string, changed: string[] = []) => ({ check: { id: "c1", status, done: status === "RUNNING" ? 1 : 2, total: 2,
+  changed, error: null, finished_at: status === "RUNNING" ? null : new Date().toISOString() } });
+
+function setup(checks: unknown[] = [{ check: null }]) {
   const puts: any[] = [];
   const gets: string[] = [];
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const method = init?.method || "GET";
+    if (String(input).endsWith("/teacher/hpc-cards/Preparatory/check")) return json(200, checks.length > 1 ? checks.shift() : checks[0]);
     if (!String(input).includes("/teacher/hpc-cards/Preparatory/levels")) return json(404, { detail: "no fake" });
     gets.push(String(input));
     if (method === "PUT") {
@@ -67,6 +71,22 @@ describe("Part C levels grid", () => {
     await user.click(screen.getByRole("button", { name: /Read again from PARAKH/ }));
     await waitFor(() => expect(gets).toHaveLength(2));
     expect(gets[1]).toContain("refresh=true");
+  });
+
+  it("shows the background check, then refreshes by itself when PARAKH changed and nothing is unsaved", async () => {
+    const { gets } = setup([check("RUNNING"), check("COMPLETED", ["2"])]);
+    expect(await screen.findByText("Checking PARAKH for changes… (1 of 2)")).toBeInTheDocument();
+    expect(await screen.findByText(/Updated from PARAKH: 1 student's card was changed there/, {}, { timeout: 4000 })).toBeInTheDocument();
+    expect(gets.filter((g) => !g.includes("refresh"))).toHaveLength(2);        // loaded again from the app's copy
+  });
+
+  it("with unsaved edits it names who changed on PARAKH and asks before showing the new values", async () => {
+    const { gets, user } = setup([check("RUNNING"), check("COMPLETED", ["2"])]);
+    await user.selectOptions(await screen.findByRole("combobox", { name: "STUDENT ONE, Mathematics, Awareness" }), "Beginner");
+    expect(await screen.findByText(/Changed on PARAKH since your copy: STUDENT TWO/, {}, { timeout: 4000 })).toBeInTheDocument();
+    expect(gets).toHaveLength(1);                                               // nothing reloaded under the edits
+    await user.click(screen.getByRole("button", { name: "Show the new values" }));
+    await waitFor(() => expect(gets).toHaveLength(2));
   });
 
   it("has no axe violations", async () => {

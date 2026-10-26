@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertCircle, CheckCircle2, RefreshCw, Save } from "lucide-react";
 import { call } from "../api";
 import type { Api } from "../api";
+import { useCardCheck } from "./useCardCheck";
 
 // Part C levels for the whole class on one screen (Bulk Entry). Saved into each student's draft; they are
 // pre-filled in the Excel download and reach PARAKH with the card or the uploaded file.
@@ -37,6 +38,14 @@ export function LevelsGrid({ api, stage }: { api: Api; stage: string }) {
     }
   }, [api, stage]);
   useEffect(() => { load(); }, [load]);
+
+  const [changedOnParakh, setChangedOnParakh] = useState<string[]>([]);   // shown when there are unsaved edits
+  const editsRef = useRef(edits);
+  useEffect(() => { editsRef.current = edits; });
+  const checking = useCardCheck(api, stage, !!data, (ids) => {
+    if (Object.keys(editsRef.current).length) setChangedOnParakh(ids);
+    else load().then(() => setMessage({ type: "success", text: `Updated from PARAKH: ${ids.length} student${ids.length === 1 ? "'s card was" : "s' cards were"} changed there.` }));
+  });
 
   const keys = useMemo(() => (data?.subjects || []).flatMap((s) => s.fields.map((f) => f.key)), [data]);
   const valueOf = (sid: string, key: string, saved: string) => edits[sid]?.[key] ?? saved;
@@ -103,6 +112,15 @@ export function LevelsGrid({ api, stage }: { api: Api; stage: string }) {
         {data?.read_at && <> Loaded from the app's copy, read from PARAKH on {new Date(data.read_at).toLocaleString()}.</>}</p>
 
       <div aria-live="polite">
+        {checking && <p className="lib-muted">Checking PARAKH for changes… ({checking.done} of {checking.total})</p>}
+        {changedOnParakh.length > 0 && data && (
+          <div className="alert-box alert-warning lib-inline-alert">
+            <AlertCircle size={18} aria-hidden="true" />
+            <div>Changed on PARAKH since your copy: {changedOnParakh.map((id) => data.rows.find((r) => r.student_id === id)?.student_name || id).join(", ")}.{" "}
+              <button type="button" className="portal-link-btn" onClick={() => { setChangedOnParakh([]); load(); }}>
+                Show the new values</button> (your unsaved changes here will be lost; save them first to keep them).</div>
+          </div>
+        )}
         {message && (
           <div className={`alert-box alert-${message.type} lib-inline-alert`} role={message.type === "error" ? "alert" : "status"}>
             {message.type === "success" ? <CheckCircle2 size={18} aria-hidden="true" /> : <AlertCircle size={18} aria-hidden="true" />}<div>{message.text}</div>

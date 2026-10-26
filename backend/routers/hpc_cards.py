@@ -8,6 +8,7 @@ Teacher endpoints for working on HPC cards in the web app (instead of, or next t
   DELETE /teacher/hpc-cards/{stage}/{student_id}/draft       discard the draft
   POST   /teacher/hpc-cards/{stage}/{student_id}/submit      save to the portal and mark complete
   GET    /teacher/hpc-cards/{stage}/{student_id}/preview     read-only card for print
+  GET    /teacher/hpc-cards/{stage}/check                    is the app's copy still what PARAKH holds? (background)
   GET    /teacher/hpc-cards/{stage}/levels                   Part C levels for the whole class
   PUT    /teacher/hpc-cards/{stage}/levels                   save them (drafts)
   GET    /teacher/hpc-cards/{stage}/bulk?field=<key>         one field for the whole class
@@ -22,7 +23,7 @@ from pydantic import BaseModel, Field
 from backend.hpc.portal import PortalError
 from backend.models.entities import Teacher
 from backend.routers.teachers import _portal, _stage, teacher_stages
-from backend.services import hpc_cards
+from backend.services import card_store, hpc_cards
 from backend.services.auth_service import require_teacher
 
 router = APIRouter(prefix="/teacher", tags=["HPC cards"])
@@ -75,6 +76,13 @@ def fields(stage: str, common: bool = False, teacher: Teacher = Depends(require_
     client, stage = _portal(teacher), _stage(teacher, stage)
     return {"stage": stage, "parts": _portal_call(lambda: hpc_cards.stage_fields(
         stage, hpc_cards.lookups_for(f"teacher_{teacher.id}", client, stage), common))}
+
+
+@router.get("/hpc-cards/{stage}/check")
+def card_check(stage: str, session: Optional[str] = None, teacher: Teacher = Depends(require_teacher)):
+    """The background check of the app's copy against PARAKH: progress and which students changed (IDs)."""
+    _, stage, session = _ctx(teacher, stage, session)
+    return {"check": card_store.check_view(f"teacher_{teacher.id}", session, stage)}
 
 
 @router.get("/hpc-cards/{stage}/levels")
