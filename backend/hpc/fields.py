@@ -68,7 +68,7 @@ class Field:
         if self.kind in ("choice", "onehot", "inlist"):
             match = _lookup(self.options, text)
             if match is None:
-                return self.blank, f"{self.label}: '{text}' is not one of {list(self.options)}"
+                return self.blank, _no_match(self.label, self.options, text)
             return match, None
         if self.kind in ("multi", "flags"):
             values, bad = [], []
@@ -135,11 +135,21 @@ def _cell_text(value: Any) -> str:
 
 
 def _lookup(options: Dict[str, Any], text: str):
+    """The option a cell means: an exact label or stored value (any case), or else the only label that starts
+    with what was typed - so "n" is No and "prof" is Proficient, as long as nothing else starts the same way."""
     low = text.lower()
     for label, value in options.items():
         if label.lower() == low or str(value).lower() == low:
             return value
-    return None
+    starts = [value for label, value in options.items() if label.lower().startswith(low)]
+    return starts[0] if len(starts) == 1 else None
+
+
+def _no_match(label: str, options: Dict[str, Any], text: str) -> str:
+    starts = [o for o in options if o.lower().startswith(text.lower())]
+    if len(starts) > 1:
+        return f"{label}: '{text}' could be {' or '.join(starts)} - type a few more letters"
+    return f"{label}: '{text}' is not one of {list(options)}"
 
 
 def get_path(data: Any, path: Path) -> Any:

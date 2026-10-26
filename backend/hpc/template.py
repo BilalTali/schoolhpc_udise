@@ -142,8 +142,7 @@ def build(path, stage: str, students: List[Dict[str, Any]], rows: Dict[str, Dict
     for r, s in enumerate(students, start=FIRST_DATA_ROW):
         sid = str(s[ID_KEY])
         values = rows.get(sid, {})
-        stripe = STRIPE_FILL if (r - FIRST_DATA_ROW) % 2 else None
-        ws.row_dimensions[r].height = 22
+        stripe = STRIPE_FILL if (r - FIRST_DATA_ROW) % 2 else None   # no fixed height: rows grow with wrapped text
         for c, value, bold in ((1, sid, False), (2, s.get(NAME_KEY, ""), True)):
             cell = ws.cell(row=r, column=c, value=value)
             cell.fill, cell.border = LOCKED_FILL, CELL_BORDER
@@ -153,7 +152,8 @@ def build(path, stage: str, students: List[Dict[str, Any]], rows: Dict[str, Dict
         _input(sync, stripe, center=True)
         for c, f in columns:
             _input(ws.cell(row=r, column=c, value=values.get(f.key, "")), stripe,
-                   center=f.kind in ("int", "choice", "inlist", "onehot") or f.key.endswith(("_obtained", "_max")))
+                   center=f.kind in ("int", "choice", "inlist", "onehot") or f.key.endswith(("_obtained", "_max")),
+                   wrap=f.kind in ("text", "multi", "flags"))
         not_ready = problems.get(sid) or []
         if not_ready:                                  # "all students" file: Part B is set on the web app, not here
             name = ws.cell(row=r, column=2)
@@ -170,7 +170,9 @@ def build(path, stage: str, students: List[Dict[str, Any]], rows: Dict[str, Dict
         hint = dict(showInputMessage=True, promptTitle=_short_label(None, f)[:32])
         if f.kind in ("choice", "onehot", "inlist") and f.options:
             v = DataValidation(type="list", formula1=f"={list_range(list(f.options))}", allow_blank=True,
-                               prompt="Pick from the list.", **hint)
+                               showErrorMessage=False,           # short forms are allowed (read back in full)
+                               prompt="Pick from the list, or type the first letters (for example n = No, "
+                                      "prof = Proficient).", **hint)
         elif f.key.endswith("_obtained"):
             n = f.key.split("_")[1]
             v = DataValidation(type="decimal", operator="between", formula1="0", formula2=max_cells.get(n, "0"),
@@ -226,12 +228,12 @@ def _band(ws, col, text, strong, soft):
     return cell
 
 
-def _input(cell, stripe=None, center=False):
-    """A cell the teacher fills: unlocked, white (or a faint stripe), light border."""
+def _input(cell, stripe=None, center=False, wrap=False):
+    """A cell the teacher fills: unlocked, white (or a faint stripe), light border; text wraps onto more lines."""
     cell.protection = Protection(locked=False)
     cell.border = CELL_BORDER
     cell.font = Font(name=FONT, color=INK)
-    cell.alignment = Alignment(horizontal="center" if center else "left", vertical="center")
+    cell.alignment = Alignment(horizontal="center" if center else "left", vertical="center", wrap_text=wrap)
     if stripe is not None:
         cell.fill = stripe
 
@@ -260,9 +262,11 @@ def _width(f) -> int:
 
 
 def _protect(ws):
-    """Locked cells cannot be changed; the teacher's cells were unlocked above. No password: a guide, not a secret."""
+    """Locked cells (IDs, names, the hidden key row) cannot be changed; the teacher's cells were unlocked above.
+    Formatting stays allowed - wrap text, row heights, column widths, colours. No password: a guide, not a secret."""
     ws.protection.sheet = True
-    ws.protection.formatColumns = False          # widths may still be changed
+    ws.protection.formatCells = False
+    ws.protection.formatColumns = False
     ws.protection.formatRows = False
     ws.protection.autoFilter = False
 
@@ -287,7 +291,8 @@ def _how_to(ws, stage):
     steps = [
         f"Open the '{stage}' sheet. One row per student. Fill the white cells: parts {parts}"
         + (" and the marks obtained." if stage != "Foundational" else "."),
-        "Click a cell to see a short hint. Dropdowns show the allowed answers.",
+        "Click a cell to see a short hint. For a list, pick from the dropdown or just type the first letters "
+        "(n = No, y = Yes, prof = Proficient, adv = Advanced); the upload turns them into the full answer.",
         "Grey cells and the grey sheets (Part B, Settings, Class summary) come from the web app and are not read back.",
         "A student who is different from the class settings (working days, medium, rural/urban, max marks)? "
         "Add a row on the 'Exceptions' sheet.",
@@ -472,8 +477,9 @@ def _highlights(ws, columns, first: int, last: int, max_cells: Dict[str, str], m
             bad.append(f"AND(ISNUMBER({cell}),OR({cell}<0,{cell}>{top}))")
         if f.max_len:
             bad.append(f"LEN({cell})>{f.max_len}")
-        if f.kind in ("choice", "inlist") and f.options:
-            bad.append(f"AND(LEN({cell})>0,COUNTIF({list_range(list(f.options))},{cell})=0)")
+        if f.kind in ("choice", "inlist", "onehot") and f.options:
+            options = list_range(list(f.options))       # wrong unless an option or the start of exactly one
+            bad.append(f'AND(LEN({cell})>0,COUNTIF({options},{cell})=0,COUNTIF({options},{cell}&"*")<>1)')
         for rule in bad:
             ws.conditional_formatting.add(area, FormulaRule(formula=[rule], fill=BAD_FILL, font=BAD_FONT, stopIfTrue=True))
         if f.required:

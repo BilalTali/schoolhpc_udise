@@ -310,3 +310,33 @@ def test_a_blank_mark_is_reported_once():
     _, errors = sync.build_payloads("PREPARATORY", blank_student("PREPARATORY"), row, make_lookups("PREPARATORY"))
     maths = [e for e in errors if "Mathematics" in e and e.startswith("HPC Credit")]
     assert len(maths) == 1 and maths[0].endswith("summative marks obtained: required")
+
+
+def test_short_forms_are_read_as_the_full_answer():
+    from backend.hpc.fields import Field
+    yes_no = Field("x", "Declaration", ("d",), "choice", {"Yes": True, "No": False})
+    four = Field("y", "How I feel", ("f",), "choice", {"Yes": "1", "Sometimes": "2", "No": "3", "Not sure": "4"})
+    level = Field("z", "Maths: Awareness", ("c",), "choice", {"Beginner": "beginner", "Proficient": "proficient", "Advanced": "advance"})
+    assert yes_no.parse("n") == (False, None) and yes_no.parse("Y") == (True, None)
+    assert four.parse("no") == ("3", None) and four.parse("not") == ("4", None) and four.parse("SOME") == ("2", None)
+    assert four.parse("n")[1] == "How I feel: 'n' could be No or Not sure - type a few more letters"
+    assert level.parse("prof") == ("proficient", None) and level.parse("adv") == ("advance", None)
+    assert level.parse("Excellent")[1].startswith("Maths: Awareness: 'Excellent' is not one of")
+
+
+def test_excel_functions_stay_usable_and_long_text_wraps(world):
+    client, portal, lookups, teacher, tmp_path = world
+    client.put(f"{API}/teacher/settings/Preparatory", json={"values": SETTINGS})
+    hpc_cards.save_draft(teacher.id, portal.ay, "Preparatory", "3001", {**grid(), **ANSWERS})
+    run_check(client)
+    path = tmp_path / "dl.xlsx"
+    path.write_bytes(client.get(f"{API}/teacher/template/Preparatory/download").content)
+    ws = load_workbook(path)["Preparatory"]
+    assert ws.protection.sheet and not ws.protection.formatCells and not ws.protection.formatRows
+    keys = [c.value for c in ws[3]]
+    remark = ws.cell(row=4, column=keys.index("c_PSLS1_remark") + 1)
+    assert remark.alignment.wrap_text and ws.row_dimensions[4].height is None      # the row grows to fit
+    level = get_column_letter(keys.index("c_PSLS1_awareness") + 1)
+    rules = [r.formula[0] for area, items in ws.conditional_formatting._cf_rules.items()
+             if str(area.sqref).startswith(level + "4") for r in items]
+    assert any('&"*")<>1' in f for f in rules)                                    # a short form is not red
