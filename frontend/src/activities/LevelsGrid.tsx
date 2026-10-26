@@ -3,6 +3,8 @@ import { AlertCircle, CheckCircle2, RefreshCw, Save } from "lucide-react";
 import { call } from "../api";
 import type { Api } from "../api";
 import { useCardCheck } from "./useCardCheck";
+import { ConnectPrompt } from "./ConnectPrompt";
+import { needsParakh } from "./parakhConnect";
 
 // Part C levels for the whole class on one screen (Bulk Entry). Saved into each student's draft; they are
 // pre-filled in the Excel download and reach PARAKH with the card or the uploaded file.
@@ -21,6 +23,7 @@ export function LevelsGrid({ api, stage }: { api: Api; stage: string }) {
   const [problems, setProblems] = useState<Record<string, string>>({});
   const [fill, setFill] = useState("");
   const [loading, setLoading] = useState(false);
+  const [offline, setOffline] = useState(false);              // PARAKH not connected
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error" | "warning"; text: string } | null>(null);
 
@@ -32,7 +35,8 @@ export function LevelsGrid({ api, stage }: { api: Api; stage: string }) {
       setEdits({});
       setProblems({});
     } catch (e: any) {
-      setMessage({ type: "error", text: e.message });
+      if (needsParakh(e)) setOffline(true);
+      else setMessage({ type: "error", text: e.message });
     } finally {
       setLoading(false);
     }
@@ -98,6 +102,10 @@ export function LevelsGrid({ api, stage }: { api: Api; stage: string }) {
       setSaving(false);
     }
   };
+
+  if (offline && !data) {
+    return <div className="ui-panel"><ConnectPrompt what="the Part C levels" /></div>;
+  }
 
   return (
     <div className="ui-panel">

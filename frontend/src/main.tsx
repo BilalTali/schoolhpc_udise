@@ -4,6 +4,7 @@ import { RouterProvider, createBrowserRouter } from 'react-router-dom'
 import './index.css'
 import './activities/library.css'
 import './activities/grid.css'
+import './theme.css'
 import App from './App.tsx'
 
 // A data router so pages can warn before leaving with unsaved changes (useBlocker).

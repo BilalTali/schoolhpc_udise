@@ -5,6 +5,8 @@ import { ApiError, call } from "../api";
 import type { Api } from "../api";
 import { QuickFill } from "./QuickFill";
 import { useCardCheck } from "./useCardCheck";
+import { ConnectPrompt } from "./ConnectPrompt";
+import { needsParakh } from "./parakhConnect";
 import { ABILITY_KEYS, ABILITY_LABEL, LEVEL_VALUES, REPLACE_KEY, actKey, gradeOf, levelKey } from "./gridTypes";
 import type { GridData, GridStudent } from "./gridTypes";
 
@@ -22,6 +24,7 @@ export function ActivitiesGrid({ api, stage, uploadedFile, focusStudent, library
 }) {
   const [data, setData] = useState<GridData | null>(null);
   const [rows, setRows] = useState<Record<string, GridStudent>>({});
+  const [offline, setOffline] = useState(false);              // PARAKH not connected
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saveState, setSaveState] = useState<Record<string, SaveState>>({});
@@ -49,7 +52,7 @@ export function ActivitiesGrid({ api, stage, uploadedFile, focusStudent, library
       setRows(Object.fromEntries(d.students.map((s) => [s.student_id, s])));
       versions.current = Object.fromEntries(d.students.map((s) => [s.student_id, s.draft_version]));
     } catch (e: any) {
-      if (alive.current) setError(e.message);
+      if (alive.current) { setError(e.message); setOffline(needsParakh(e)); }
     } finally {
       if (alive.current) setLoading(false);
     }
@@ -161,6 +164,9 @@ export function ActivitiesGrid({ api, stage, uploadedFile, focusStudent, library
     return n;
   }), []);
 
+  if (error && !data && offline) {
+    return <div className="ui-panel"><ConnectPrompt what="your class's activities" /></div>;
+  }
   if (error && !data) {
     return (
       <div className="ui-panel">

@@ -23,8 +23,6 @@ import {
   Save,
   PlayCircle,
   StopCircle,
-  ChevronDown,
-  ChevronUp,
   Edit,
   Copy,
   Search,
@@ -32,9 +30,12 @@ import {
   Layers,
   FilePenLine,
   BookOpen,
+  SlidersHorizontal,
+  Menu,
+  X,
 } from "lucide-react";
 import { HpcCardEditor, HpcBulkEntry } from "./HpcCards";
-import { NavLink, Route, Routes } from "react-router-dom";
+import { NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { API_BASE, apiFetch } from "./api";
 import { ActivityLibraryPage } from "./activities/ActivityLibraryPage";
 import { ActivitiesGrid } from "./activities/ActivitiesGrid";
@@ -43,6 +44,7 @@ import { TemplatePanel } from "./activities/TemplatePanel";
 import { LevelsGrid } from "./activities/LevelsGrid";
 import { UploadLive } from "./activities/UploadLive";
 import type { LiveJob } from "./activities/UploadLive";
+import { OPEN_PARAKH_EVENT } from "./activities/parakhConnect";
 import { CaptchaStep } from "./CaptchaStep";
 import type { CaptchaResult } from "./CaptchaStep";
 
@@ -203,7 +205,7 @@ function userFromProfile(p: any): UserInfo {
 
 export default function App() {
   const [user, setUser] = useState<UserInfo | null>(null);
-  const [authTab, setAuthTab] = useState<AuthTab>("admin_login");
+  const [authTab, setAuthTab] = useState<AuthTab>("teacher_login");
 
   // Auth form
   const [adminIdentifier, setAdminIdentifier] = useState("");
@@ -283,6 +285,18 @@ export default function App() {
   const [uploadedFileName, setUploadedFileName] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);   // the upload shown live on tab 5
+  const [navOpen, setNavOpen] = useState(false);                          // the sidebar on small screens
+  const location = useLocation();
+  const navigate = useNavigate();
+  const userRole = user?.role;
+  useEffect(() => {                                      // "Connect to PARAKH" on any screen opens the panel
+    const open = () => {
+      if (userRole === "TEACHER") setShowTeacherHpcPanel(true); else setShowSchoolHpcPanel(true);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    };
+    window.addEventListener(OPEN_PARAKH_EVENT, open);
+    return () => window.removeEventListener(OPEN_PARAKH_EVENT, open);
+  }, [userRole]);
 
   // Student roster states (Teacher)
   const [students, setStudents] = useState<StudentItem[]>([]);
@@ -1187,224 +1201,99 @@ export default function App() {
   }) => {
     const isActive = hpcStatus?.logged_in;
 
+    const whose = role === "school" ? "the school's" : "your own";
     return (
-      <div
-        className="ui-panel"
-        style={{
-          borderLeft: `4px solid ${isActive ? "var(--green-500)" : "var(--kesari-500)"}`,
-          padding: 0,
-          overflow: "hidden",
-        }}
-      >
-        {/* Header */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            padding: "1rem 1.4rem",
-            background: isActive ? "var(--green-50)" : "var(--kesari-50)",
-            cursor: "pointer",
-          }}
-          onClick={() => setShowPanel(!showPanel)}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
-            <div
-              style={{
-                width: 12,
-                height: 12,
-                borderRadius: "50%",
-                backgroundColor: isActive ? "var(--green-500)" : "#F59E0B",
-                boxShadow: isActive ? "0 0 8px #10B981" : "0 0 8px #F59E0B",
-              }}
-            />
+      <section className="ui-panel conn-panel" aria-label="PARAKH connection">
+        <div className="conn-head">
+          <div className={`conn-status ${isActive ? "on" : "off"}`}>
+            <span className="dot" aria-hidden="true" />
             <div>
-              <div style={{ fontWeight: 700, fontSize: "0.95rem", color: isActive ? "#065F46" : "#9A3412" }}>
-                {isActive
-                  ? `🟢 ${role === "school" ? "School" : "Teacher"} HPC Session Active`
-                  : `🟠 ${role === "school" ? "School" : "Teacher"} HPC Session Inactive`}
-              </div>
-              <div style={{ fontSize: "0.80rem", color: isActive ? "#047857" : "#B45309" }}>
-                {isActive
-                  ? `Connected as ${hpcStatus?.user || "HPC User"} · ${hpcStatus?.school || ""}`
-                  : `Save your ${role === "school" ? "School" : "Teacher"} HPC credentials, then start the session`}
-              </div>
+              <b>{isActive ? "Connected to PARAKH" : "Not connected to PARAKH"}</b>
+              <small>{isActive
+                ? `Signed in as ${hpcStatus?.user || "PARAKH user"}${hpcStatus?.school ? ` · ${hpcStatus.school}` : ""}`
+                : `Connect with ${whose} PARAKH login. You type the captcha once; the connection then stays open.`}</small>
             </div>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-            <button
-              onClick={(e) => { e.stopPropagation(); onRefreshStatus(); }}
-              className="btn btn-outline"
-              style={{ padding: "0.3rem 0.6rem", fontSize: "0.78rem" }}
-              title="Refresh status"
-            >
-              <RefreshCw size={13} />
+          <div className="conn-actions">
+            <button type="button" className="btn btn-outline btn-sm" onClick={onRefreshStatus} title="Check the connection again">
+              <RefreshCw size={14} aria-hidden="true" /> Check
             </button>
             {isActive && (
-              <button
-                onClick={(e) => { e.stopPropagation(); onEndSession(); }}
-                className="btn btn-outline"
-                disabled={hpcLoad}
-                style={{ padding: "0.3rem 0.7rem", fontSize: "0.78rem", color: "var(--danger-500)", borderColor: "#FCA5A5" }}
-                title="End HPC session"
-              >
-                <StopCircle size={13} /> End Session
+              <button type="button" className="btn btn-outline btn-sm btn-danger-outline" onClick={onEndSession} disabled={hpcLoad}>
+                <StopCircle size={14} aria-hidden="true" /> Disconnect
               </button>
             )}
-            {showPanel ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+            <button type="button" className="icon-close" onClick={() => setShowPanel(false)} aria-label="Close"><X size={18} /></button>
           </div>
         </div>
 
-        {/* Expandable Body */}
         {showPanel && (
-          <div style={{ padding: "1.4rem" }}>
-            {/* OTP Step */}
+          <div className="conn-body">
             {otpStep ? (
-              <form onSubmit={onVerifyOtp} style={{ maxWidth: 420 }}>
-                <div className="alert-box alert-info" style={{ marginBottom: "1.2rem" }}>
-                  <Smartphone size={18} color="#003399" />
-                  <div><b>OTP Verification:</b> Enter the 6-digit code sent to your registered mobile.</div>
+              <form onSubmit={onVerifyOtp} className="conn-otp">
+                <div className="alert-box alert-info">
+                  <Smartphone size={18} aria-hidden="true" />
+                  <div><b>One more step.</b> Enter the code PARAKH sent to your registered mobile.</div>
                 </div>
-                <div className="form-group" style={{ marginBottom: "1rem" }}>
-                  <label className="form-label">6-Digit OTP</label>
-                  <input
-                    type="text"
-                    maxLength={8}
-                    className="form-input text-center"
-                    style={{ fontSize: "1.4rem", letterSpacing: "0.35rem", fontWeight: 700 }}
-                    placeholder="••••••"
-                    value={otp}
-                    onChange={(e) => setOtp(e.target.value.replace(/\D/g, ""))}
-                    required
-                    autoFocus
-                  />
+                <div className="form-group">
+                  <label className="form-label" htmlFor={`otp_${role}`}>Code from SMS</label>
+                  <input id={`otp_${role}`} type="text" inputMode="numeric" maxLength={8} className="form-input conn-otp-input" placeholder="••••••"
+                         value={otp} onChange={(e) => setOtp(e.target.value.replace(/\D/g, ""))} required autoFocus />
                 </div>
-                <div style={{ display: "flex", gap: "0.75rem" }}>
-                  <button type="submit" className="btn btn-green" style={{ flex: 1 }} disabled={hpcLoad || otp.length < 4}>
-                    <Check size={16} /> {hpcLoad ? "Verifying..." : "Confirm OTP"}
+                <div className="conn-row">
+                  <button type="submit" className="btn btn-primary" disabled={hpcLoad || otp.length < 4}>
+                    <Check size={16} aria-hidden="true" /> {hpcLoad ? "Checking…" : "Confirm"}
                   </button>
-                  <button type="button" className="btn btn-outline" onClick={() => setOtp("")} disabled={hpcLoad}>
-                    Clear
-                  </button>
+                  <button type="button" className="btn btn-outline" onClick={() => setOtp("")} disabled={hpcLoad}>Clear</button>
                 </div>
               </form>
             ) : isActive ? (
-              /* Already connected */
               <div className="alert-box alert-success" style={{ margin: 0 }}>
-                <CheckCircle2 size={20} color="#046A38" />
-                <div>
-                  <b>Session Active.</b> HPC portal operations (roster sync, uploads) are unlocked.
-                  Click <b>End Session</b> in the header bar to log out from PARAKH HPC.
-                </div>
+                <CheckCircle2 size={18} aria-hidden="true" />
+                <div>Everything that needs PARAKH works now: reading your class, the Activities, and sending cards. Use <b>Disconnect</b> when you are done for the day.</div>
               </div>
             ) : (
-              /* Credentials + Start */
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1.5rem" }}>
-                {/* Left: Save Credentials */}
-                <div>
-                  <div style={{ fontWeight: 700, fontSize: "0.88rem", color: "var(--chakra-navy)", marginBottom: "0.8rem", display: "flex", alignItems: "center", gap: "0.4rem" }}>
-                    <Save size={15} /> Save HPC Credentials
-                  </div>
-
+              <div className="conn-grid">
+                <div className="conn-card">
+                  <h3><Save size={15} aria-hidden="true" /> {role === "school" ? "The school's PARAKH login" : "Your PARAKH login"}</h3>
                   {hpcStatus?.has_credentials && (
-                    <div style={{ marginBottom: "0.85rem", padding: "0.55rem 0.8rem", background: "#F0FDF4", border: "1px solid #BBF7D0", borderRadius: "6px" }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.80rem", color: "#166534", fontWeight: 600 }}>
-                          <CheckCircle2 size={15} color="#16A34A" />
-                          <span>Saved HPC ID: <code style={{ background: "#DCFCE7", padding: "0.15rem 0.35rem", borderRadius: "3px", fontWeight: 700 }}>{hpcStatus.saved_hpc_login_id}</code></span>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (hpcStatus.saved_hpc_login_id) setLoginId(hpcStatus.saved_hpc_login_id);
-                          }}
-                          className="btn btn-outline"
-                          style={{ padding: "0.15rem 0.45rem", fontSize: "0.72rem", borderColor: "#86EFAC", color: "#166534" }}
-                          title="Put the saved HPC ID back into the field (the saved password is used automatically)"
-                        >
-                          <RefreshCw size={11} /> Restore Saved
-                        </button>
-                      </div>
+                    <div className="conn-saved">
+                      <CheckCircle2 size={15} aria-hidden="true" />
+                      <span>Saved: <code>{hpcStatus.saved_hpc_login_id}</code></span>
+                      <button type="button" className="portal-link-btn" onClick={() => { if (hpcStatus.saved_hpc_login_id) setLoginId(hpcStatus.saved_hpc_login_id); }}>
+                        Use it
+                      </button>
                     </div>
                   )}
-
-                  <form onSubmit={onSaveCredentials} autoComplete="off">
-                    <div className="form-group" style={{ marginBottom: "0.8rem" }}>
-                      <label className="form-label" style={{ fontSize: "0.82rem" }}>
-                        {role === "school" ? "School HPC Login ID / Mobile" : "Teacher HPC Staff Code / ID"}
-                      </label>
-                      <input
-                        type="text"
-                        name={`parakh_hpc_login_${role}`}
-                        id={`parakh_hpc_login_${role}`}
-                        autoComplete="new-password"
-                        data-lpignore="true"
-                        className="form-input"
-                        placeholder="e.g. BAA890 or 9876543210"
-                        value={loginId}
-                        onChange={(e) => setLoginId(e.target.value)}
-                        required
-                      />
+                  <form onSubmit={onSaveCredentials} autoComplete="off" className="conn-form">
+                    <div className="form-group">
+                      <label className="form-label" htmlFor={`parakh_hpc_login_${role}`}>{role === "school" ? "School login ID or mobile" : "Staff code or login ID"}</label>
+                      <input type="text" name={`parakh_hpc_login_${role}`} id={`parakh_hpc_login_${role}`} autoComplete="new-password" data-lpignore="true"
+                             className="form-input" placeholder="e.g. BAA890 or 9876543210" value={loginId} onChange={(e) => setLoginId(e.target.value)} required />
                     </div>
-                    <div className="form-group" style={{ marginBottom: "0.8rem" }}>
-                      <label className="form-label" style={{ fontSize: "0.82rem" }}>HPC Portal Password</label>
-                      <div style={{ position: "relative" }}>
-                        <input
-                          type="password"
-                          name={`parakh_hpc_password_${role}`}
-                          id={`parakh_hpc_password_${role}`}
-                          autoComplete="new-password"
-                          data-lpignore="true"
-                          className="form-input"
-                          placeholder={hpcStatus?.has_credentials ? "Saved – type a new one only to change it" : "PARAKH password"}
-                          value={pwd}
-                          onChange={(e) => setPassword(e.target.value)}
-                          required
-                        />
-                      </div>
+                    <div className="form-group">
+                      <label className="form-label" htmlFor={`parakh_hpc_password_${role}`}>PARAKH password</label>
+                      <input type="password" name={`parakh_hpc_password_${role}`} id={`parakh_hpc_password_${role}`} autoComplete="new-password" data-lpignore="true"
+                             className="form-input" placeholder={hpcStatus?.has_credentials ? "Saved - type a new one only to change it" : "Your PARAKH password"}
+                             value={pwd} onChange={(e) => setPassword(e.target.value)} required />
                     </div>
-                    <button type="submit" className="btn btn-outline" style={{ width: "100%", fontSize: "0.85rem" }} disabled={hpcLoad}>
-                      <Save size={14} /> Save Credentials
-                    </button>
+                    <button type="submit" className="btn btn-outline" disabled={hpcLoad}><Save size={14} aria-hidden="true" /> Save login</button>
                   </form>
                 </div>
-
-                {/* Right: Start Session */}
-                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", borderLeft: "1px solid var(--border-light)", paddingLeft: "1.5rem" }}>
-                  <div style={{ textAlign: "center", marginBottom: "1rem" }}>
-                    <Lock size={32} color="#003399" style={{ margin: "0 auto 0.5rem" }} />
-                    <div style={{ fontWeight: 700, fontSize: "0.92rem", color: "var(--chakra-navy)" }}>
-                      Connect to PARAKH HPC ({role === "school" ? "School Account" : "Teacher Account"})
-                    </div>
-                    <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginTop: "0.3rem", lineHeight: 1.5 }}>
-                      You type the captcha shown when you connect.<br />The session then stays connected.
-                    </div>
-                    {hpcStatus?.has_credentials && (
-                      <div style={{ fontSize: "0.76rem", color: "#065F46", background: "#ECFDF5", padding: "0.25rem 0.5rem", borderRadius: "4px", marginTop: "0.5rem", fontWeight: 600 }}>
-                        Saved HPC ID: {hpcStatus.saved_hpc_login_id}
-                      </div>
-                    )}
-                  </div>
-                  <button
-                    onClick={onStartSession}
-                    className="btn btn-saffron"
-                    disabled={hpcLoad}
-                    style={{ padding: "0.75rem 1.8rem", fontSize: "0.95rem", fontWeight: 700, width: "100%" }}
-                  >
-                    <PlayCircle size={18} />
-                    {hpcLoad ? "Connecting..." : "Start HPC Session"}
+                <div className="conn-card conn-go">
+                  <span className="conn-lock"><Lock size={22} aria-hidden="true" /></span>
+                  <h3>Connect to PARAKH</h3>
+                  <p>PARAKH shows a small picture with a code. Type it in, and the app stays connected while you work.</p>
+                  <button type="button" onClick={onStartSession} className="btn btn-primary btn-lg" disabled={hpcLoad}>
+                    <PlayCircle size={18} aria-hidden="true" /> {hpcLoad ? "Opening PARAKH…" : "Connect"}
                   </button>
-                  {hpcLoad && (
-                    <div style={{ marginTop: "0.75rem", fontSize: "0.78rem", color: "var(--text-muted)", textAlign: "center" }}>
-                      Getting the captcha picture from PARAKH…
-                    </div>
-                  )}
+                  {hpcLoad && <small>Getting the captcha picture from PARAKH…</small>}
                 </div>
               </div>
             )}
           </div>
         )}
-      </div>
+      </section>
     );
   };
 
@@ -1459,101 +1348,54 @@ export default function App() {
   // ─── Render ───────────────────────────────────────────────────────────────
 
 
-  return (
-    <div>
-      {/* Header */}
-      <header className="app-header">
-        <div className="header-inner">
-          <div className="brand-badge">
-            <div className="brand-logo" aria-hidden="true">
-              <svg viewBox="0 0 40 40" width="36" height="36">
-                <rect x="2" y="2" width="36" height="36" rx="9" fill="#1E3A8A" />
-                <path d="M11 20.5l6 6 12-13" fill="none" stroke="#FFFFFF" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
+  const statusAlert = statusMsg && (
+    <div className={`alert-box alert-${statusMsg.type} app-alert`} role={statusMsg.type === "error" ? "alert" : "status"}>
+      {statusMsg.type === "success" && <CheckCircle2 size={18} aria-hidden="true" />}
+      {statusMsg.type === "error" && <AlertCircle size={18} aria-hidden="true" />}
+      {statusMsg.type === "info" && <ShieldCheck size={18} aria-hidden="true" />}
+      {statusMsg.type === "warning" && <AlertCircle size={18} aria-hidden="true" />}
+      <div style={{ flex: 1 }}>{statusMsg.text}</div>
+      <button type="button" className="alert-close" onClick={() => setStatusMsg(null)} aria-label="Close message"><X size={16} /></button>
+    </div>
+  );
+
+  const logo = (
+    <svg viewBox="0 0 40 40" width="34" height="34" aria-hidden="true">
+      <rect x="2" y="2" width="36" height="36" rx="10" fill="var(--brand-600)" />
+      <path d="M11 20.5l6 6 12-13" fill="none" stroke="#FFFFFF" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+
+  // ─── Signed out: a calm split page ──────────────────────────────────────
+  if (!user) {
+    return (
+      <div className="auth-page">
+        <section className="auth-brand" aria-label="About Teacher Assist">
+          <div className="auth-logo">{logo}<span>Teacher Assist</span></div>
+          <div className="auth-pitch">
+            <h1>Holistic Progress Cards, without the late nights.</h1>
+            <p>Set up your class once, fill what is different for each student, and send every card to PARAKH in one go.</p>
+            <ul className="auth-points">
+              <li><CheckCircle2 size={18} aria-hidden="true" /> Activities and levels for the whole class in minutes</li>
+              <li><CheckCircle2 size={18} aria-hidden="true" /> One clean Excel file per class, checked as you type</li>
+              <li><CheckCircle2 size={18} aria-hidden="true" /> Every save to PARAKH backed up first</li>
+            </ul>
+          </div>
+          <p className="auth-note">Independent tool. Not an official government service and not made by NCERT, PARAKH or the Ministry of Education.</p>
+        </section>
+        <section className="auth-panel">
+          <div className="auth-card">
+            <h2>{authTab === "register" ? "Register your school" : "Sign in"}</h2>
+            <p className="auth-sub">{authTab === "register" ? "One account per school, with its 11-digit UDISE+ code." : "Welcome back. Choose who is signing in."}</p>
+            {statusAlert}
+            <div className="segmented" role="tablist" aria-label="Who is signing in">
+              <button type="button" role="tab" aria-selected={authTab === "teacher_login"} className={authTab === "teacher_login" ? "active" : ""}
+                      onClick={() => { setAuthTab("teacher_login"); setStatusMsg(null); }}><GraduationCap size={15} aria-hidden="true" /> Teacher</button>
+              <button type="button" role="tab" aria-selected={authTab === "admin_login"} className={authTab === "admin_login" ? "active" : ""}
+                      onClick={() => { setAuthTab("admin_login"); setStatusMsg(null); }}><Building2 size={15} aria-hidden="true" /> School admin</button>
+              <button type="button" role="tab" aria-selected={authTab === "register"} className={authTab === "register" ? "active" : ""}
+                      onClick={() => { setAuthTab("register"); setStatusMsg(null); }}><School size={15} aria-hidden="true" /> New school</button>
             </div>
-            <div className="brand-titles">
-              <h1>Teacher Assist</h1>
-              <div className="brand-sub">Helps teachers fill the Holistic Progress Card (HPC) faster</div>
-            </div>
-          </div>
-          <div className="user-menu">
-            {user ? (
-              <>
-                <div className="role-chip">
-                  <span className="role-badge">{user.role === "SCHOOL_ADMIN" ? "Principal / Admin" : "Teacher"}</span>
-                  <span>{user.name}</span>
-                  {user.school_name && <span style={{ color: "var(--text-light)" }}>({user.school_name})</span>}
-                </div>
-                <button onClick={handleLogout} className="btn btn-outline" style={{ padding: "0.4rem 0.85rem", fontSize: "0.82rem" }}>
-                  <LogOut size={15} /> Logout
-                </button>
-              </>
-            ) : (
-              <span className="gov-pill" style={{ color: "var(--chakra-navy)", background: "var(--chakra-100)" }}>
-                Independent tool · not a government service
-              </span>
-            )}
-          </div>
-        </div>
-      </header>
-
-      {user && (
-        <nav className="app-nav" aria-label="Main">
-          <div className="app-nav-inner">
-            <NavLink to="/" end className={({ isActive }) => `app-nav-link ${isActive ? "active" : ""}`}>
-              <Building2 size={15} aria-hidden="true" /> Dashboard
-            </NavLink>
-            <NavLink to="/activities/preparatory" className={({ isActive }) => `app-nav-link ${isActive ? "active" : ""}`}>
-              <BookOpen size={15} aria-hidden="true" /> Activity Library
-            </NavLink>
-          </div>
-        </nav>
-      )}
-
-      <main className="main-wrapper">
-        {/* Status Alert */}
-        {statusMsg && (
-          <div className={`alert-box alert-${statusMsg.type}`}>
-            {statusMsg.type === "success" && <CheckCircle2 size={18} />}
-            {statusMsg.type === "error" && <AlertCircle size={18} />}
-            {statusMsg.type === "info" && <ShieldCheck size={18} />}
-            {statusMsg.type === "warning" && <AlertCircle size={18} />}
-            <div style={{ flex: 1 }}>{statusMsg.text}</div>
-            <button onClick={() => setStatusMsg(null)} style={{ background: "transparent", border: "none", cursor: "pointer", fontWeight: 700, color: "inherit" }}>✕</button>
-          </div>
-        )}
-
-        {/* ── AUTH ──────────────────────────────────────────────────────── */}
-        {!user && (
-          <div>
-            <div className="hero-card">
-              <div className="hero-tag"><Sparkles size={14} /> For schools and teachers filling the HPC</div>
-              <h2 className="hero-title">Empowering Schools &amp; Educators Nationwide</h2>
-              <p className="hero-desc">
-                One registration per school, using its 11-digit UDISE code. School Principals and Teachers each manage
-                their own PARAKH connection with their own PARAKH login.
-              </p>
-              <div className="hero-badges-row">
-                <span className="gov-pill">🏛️ One School = One UDISE Account</span>
-                <span className="gov-pill">🧸 Foundational (Balvatika–Grade 2)</span>
-                <span className="gov-pill">📚 Preparatory (Grades 3–5)</span>
-                <span className="gov-pill">🔬 Middle (Grades 6–8)</span>
-              </div>
-            </div>
-
-            <div className="ui-panel" style={{ maxWidth: 750, margin: "0 auto" }}>
-              <div className="tab-list">
-                <button className={`tab-btn ${authTab === "admin_login" ? "active" : ""}`} onClick={() => { setAuthTab("admin_login"); setStatusMsg(null); }}>
-                  <Building2 size={16} /> School Principal Login
-                </button>
-                <button className={`tab-btn ${authTab === "teacher_login" ? "active" : ""}`} onClick={() => { setAuthTab("teacher_login"); setStatusMsg(null); }}>
-                  <GraduationCap size={16} /> Class Teacher Login
-                </button>
-                <button className={`tab-btn ${authTab === "register" ? "active" : ""}`} onClick={() => { setAuthTab("register"); setStatusMsg(null); }}>
-                  <School size={16} /> Register School (UDISE+)
-                </button>
-              </div>
-
               {authTab === "admin_login" && (
                 <form onSubmit={(e) => handleLogin(e, "SCHOOL_ADMIN")}>
                   <div className="form-group" style={{ marginBottom: "1.2rem" }}>
@@ -1631,28 +1473,110 @@ export default function App() {
                   </button>
                 </form>
               )}
-            </div>
           </div>
-        )}
+        </section>
+      </div>
+    );
+  }
 
+  // ─── Signed in: sidebar + top bar ───────────────────────────────────────
+  const isTeacher = user.role === "TEACHER";
+  const onLibrary = location.pathname.startsWith("/activities");
+  const parakh = isTeacher ? teacherHpcStatus : schoolHpcStatus;
+  const initials = (user.name || "?").split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
+  const page = onLibrary ? PAGES.library : isTeacher ? PAGES[teacherTab] : PAGES[schoolTab === "teachers" ? "school_teachers" : "school_students"];
+  const goTeacher = (tab: TeacherTab) => {
+    if (tab === "roster") loadTeacherRoster(activeTeacherStage);
+    if (tab === "activities") setGridFocus(undefined);
+    setTeacherTab(tab);
+    setNavOpen(false);
+    if (onLibrary) navigate("/");
+  };
+  const goSchool = (tab: "teachers" | "students") => {
+    if (tab === "students") loadSchoolRoster(schoolActiveStage);
+    setSchoolTab(tab);
+    setNavOpen(false);
+    if (onLibrary) navigate("/");
+  };
+  const openParakh = () => {
+    if (onLibrary) navigate("/");
+    if (isTeacher) setShowTeacherHpcPanel(true); else setShowSchoolHpcPanel(true);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  return (
+    <div className={`shell ${navOpen ? "nav-open" : ""}`}>
+      <aside className="sidebar" aria-label="Main">
+        <div className="sb-brand">{logo}<div><b>Teacher Assist</b><span>HPC helper</span></div></div>
+        <div className="sb-school">
+          <span className="sb-school-name">{user.school_name || "Your school"}</span>
+          <span className="sb-school-meta">{isTeacher ? `Class teacher${user.assigned_grade ? ` · ${user.assigned_grade}${user.assigned_section ? ` ${user.assigned_section}` : ""}` : ""}` : "School admin"}</span>
+        </div>
+        <nav className="sb-nav">
+          {isTeacher ? (
+            <>
+              <div className="sb-section">Your HPC steps</div>
+              {TEACHER_STEPS.map((step, i) => {
+                const Icon = step.icon;
+                const active = !onLibrary && teacherTab === step.id;
+                return (
+                  <button key={step.id} type="button" className={`sb-item ${active ? "active" : ""}`} aria-current={active ? "page" : undefined}
+                          onClick={() => goTeacher(step.id)}>
+                    <span className="sb-step">{i + 1}</span>
+                    <span className="sb-text"><b>{step.label}</b><small>{step.hint}</small></span>
+                    <Icon size={16} className="sb-icon" aria-hidden="true" />
+                  </button>
+                );
+              })}
+            </>
+          ) : (
+            <>
+              <div className="sb-section">School</div>
+              <button type="button" className={`sb-item ${!onLibrary && schoolTab === "teachers" ? "active" : ""}`} onClick={() => goSchool("teachers")}>
+                <Users size={17} className="sb-lead" aria-hidden="true" /><span className="sb-text"><b>Teachers</b><small>Accounts and classes</small></span>
+              </button>
+              <button type="button" className={`sb-item ${!onLibrary && schoolTab === "students" ? "active" : ""}`} onClick={() => goSchool("students")}>
+                <GraduationCap size={17} className="sb-lead" aria-hidden="true" /><span className="sb-text"><b>Students</b><small>Every class at a glance</small></span>
+              </button>
+            </>
+          )}
+          <div className="sb-section">Resources</div>
+          <NavLink to="/activities/preparatory" onClick={() => setNavOpen(false)} className={({ isActive }) => `sb-item ${isActive ? "active" : ""}`}>
+            <BookOpen size={17} className="sb-lead" aria-hidden="true" /><span className="sb-text"><b>Activity Library</b><small>{isTeacher ? "Edit or add activities" : "Activities from PARAKH"}</small></span>
+          </NavLink>
+        </nav>
+        <div className="sb-foot">
+          <div className="sb-user"><span className="sb-avatar" aria-hidden="true">{initials}</span><div><b>{user.name}</b><small>{isTeacher ? "Teacher" : "School admin"}</small></div></div>
+          <button type="button" className="sb-logout" onClick={handleLogout}><LogOut size={15} aria-hidden="true" /> Sign out</button>
+        </div>
+      </aside>
+      {navOpen && <button type="button" className="sb-scrim" aria-label="Close menu" onClick={() => setNavOpen(false)} />}
+
+      <div className="shell-main">
+        <header className="topbar">
+          <button type="button" className="tb-menu" aria-label="Open menu" onClick={() => setNavOpen(true)}><Menu size={20} /></button>
+          <div className="tb-titles">
+            <h1>{page.title}</h1>
+            <p>{page.desc}</p>
+          </div>
+          <button type="button" className={`parakh-pill ${parakh?.logged_in ? "on" : "off"}`} onClick={openParakh}
+                  aria-label={parakh?.logged_in ? "PARAKH connected - show connection" : "Not connected to PARAKH - connect"}>
+            <span className="dot" aria-hidden="true" />
+            <span>{parakh?.logged_in ? "PARAKH connected" : "PARAKH not connected"}</span>
+            {!parakh?.logged_in && <span className="pill-cta">Connect</span>}
+          </button>
+        </header>
+
+        <main className="content">
+          {statusAlert}
         {/* ── SCHOOL ADMIN DASHBOARD ────────────────────────────────────── */}
         <Routes>
           <Route path="/activities/:stage?" element={user ? <ActivityLibraryPage api={cardsApi} isAdmin={user.role === "SCHOOL_ADMIN"} /> : null} />
           <Route path="*" element={<>
         {user?.role === "SCHOOL_ADMIN" && (
           <div>
-            <div className="hero-card" style={{ background: "linear-gradient(135deg, #041E42 0%, #163B70 100%)" }}>
-              <div className="hero-tag"><Building2 size={14} /> School Administration Console</div>
-              <h2 className="hero-title">{user.school_name || "School Command Center"}</h2>
-              <div className="hero-badges-row" style={{ marginTop: "0.8rem" }}>
-                <span className="gov-pill">🏷️ UDISE+: <b>{schoolStats?.udise_code || "Registered"}</b></span>
-                <span className="gov-pill">👤 Admin: <b>{user.name}</b></span>
-                <span className="gov-pill">🟢 MySQL Multi-Tenant Active</span>
-              </div>
-            </div>
-
             {/* School HPC Session Panel */}
-            <HpcSessionPanel
+            {showSchoolHpcPanel && <HpcSessionPanel
               role="school"
               hpcStatus={schoolHpcStatus}
               loading={schoolHpcLoading}
@@ -1667,7 +1591,7 @@ export default function App() {
               onRefreshStatus={fetchSchoolHpcStatus}
               showPanel={showSchoolHpcPanel}
               setShowPanel={setShowSchoolHpcPanel}
-            />
+            />}
             {schoolCaptcha && (
               <CaptchaStep who="school" image={schoolCaptcha} onDone={(r) => afterCaptcha("school", r)} onCancel={() => setSchoolCaptcha(null)} />
             )}
@@ -1698,30 +1622,11 @@ export default function App() {
               </div>
             )}
 
-            {/* School Admin Navigation Tabs */}
-            <div className="tab-list" style={{ marginBottom: "1.25rem" }}>
-              <button
-                className={`tab-btn ${schoolTab === "teachers" ? "active" : ""}`}
-                onClick={() => setSchoolTab("teachers")}
-              >
-                <Users size={16} /> 1. Class Teachers ({teachers.length})
-              </button>
-              <button
-                className={`tab-btn ${schoolTab === "students" ? "active" : ""}`}
-                onClick={() => {
-                  setSchoolTab("students");
-                  loadSchoolRoster(schoolActiveStage);
-                }}
-              >
-                <GraduationCap size={16} /> 2. Synced Students Directory {schoolStudents.length > 0 ? `(${schoolStudents.length})` : ""}
-              </button>
-            </div>
-
             {/* Tab 1: Teachers Table */}
             {schoolTab === "teachers" && (
             <div className="ui-panel">
               <div className="panel-header">
-                <div className="panel-title"><Users size={20} color="#003399" /><span>Assigned Class Teachers Roster</span></div>
+                <div className="panel-title"><Users size={20} color="#003399" /><span>Teachers</span></div>
                 <div style={{ display: "flex", gap: "0.75rem" }}>
                   <button onClick={fetchSchoolData} className="btn btn-outline" style={{ padding: "0.5rem 0.85rem" }}>
                     <RefreshCw size={15} /> Refresh
@@ -2342,23 +2247,8 @@ export default function App() {
         {/* ── TEACHER WORKSPACE ─────────────────────────────────────────── */}
         {user?.role === "TEACHER" && (
           <div>
-            <div className="hero-card" style={{ background: "linear-gradient(135deg, #046A38 0%, #064E3B 100%)" }}>
-              <div className="hero-tag" style={{ background: "rgba(255,255,255,0.2)", color: "#FFF", borderColor: "rgba(255,255,255,0.4)" }}>
-                <GraduationCap size={14} /> Teacher Assessment Hub
-              </div>
-              <h2 className="hero-title">Welcome, {user.name}</h2>
-              <p className="hero-desc">
-                Classroom evaluation workspace for <b>{user.assigned_grade} · Section {user.assigned_section}</b> ({user.assigned_stage} Stage) at <b>{user.school_name}</b>.
-              </p>
-              <div className="hero-badges-row" style={{ marginTop: "0.8rem" }}>
-                <span className="gov-pill">🏫 {user.school_name}</span>
-                {renderStageChips(user.assigned_stage, user.assigned_stages)}
-                <span className="gov-pill">📌 {user.assigned_grade} · Sec {user.assigned_section}</span>
-              </div>
-            </div>
-
             {/* Teacher HPC Session Panel */}
-            <HpcSessionPanel
+            {showTeacherHpcPanel && <HpcSessionPanel
               role="teacher"
               hpcStatus={teacherHpcStatus}
               loading={teacherHpcLoading}
@@ -2373,47 +2263,10 @@ export default function App() {
               onRefreshStatus={fetchTeacherHpcStatus}
               showPanel={showTeacherHpcPanel}
               setShowPanel={setShowTeacherHpcPanel}
-            />
+            />}
             {teacherCaptcha && (
               <CaptchaStep who="teacher" image={teacherCaptcha} onDone={(r) => afterCaptcha("teacher", r)} onCancel={() => setTeacherCaptcha(null)} />
             )}
-
-            {/* Tabs */}
-            <div className="tab-list">
-              <button
-                className={`tab-btn ${teacherTab === "roster" ? "active" : ""}`}
-                onClick={() => {
-                  setTeacherTab("roster");
-                  loadTeacherRoster(activeTeacherStage);
-                }}
-              >
-                <FileSpreadsheet size={16} /> 1. Class Students Roster {students.length > 0 ? `(${students.length})` : ""}
-              </button>
-              <button
-                className={`tab-btn ${teacherTab === "activities" ? "active" : ""}`}
-                onClick={() => { setGridFocus(undefined); setTeacherTab("activities"); }}
-              >
-                <CheckCircle2 size={16} /> 2. Activities
-              </button>
-              <button
-                className={`tab-btn ${teacherTab === "bulk" ? "active" : ""}`}
-                onClick={() => setTeacherTab("bulk")}
-              >
-                <Layers size={16} /> 3. Bulk Entry
-              </button>
-              <button
-                className={`tab-btn ${teacherTab === "settings" ? "active" : ""}`}
-                onClick={() => setTeacherTab("settings")}
-              >
-                <Layers size={16} /> 4. Class settings
-              </button>
-              <button
-                className={`tab-btn ${teacherTab === "upload" ? "active" : ""}`}
-                onClick={() => setTeacherTab("upload")}
-              >
-                <Upload size={16} /> 5. Download &amp; Upload
-              </button>
-            </div>
 
             {/* Tab 4: class settings for the Excel template (medium, working days, max marks, declaration) */}
             {teacherTab === "settings" && (
@@ -2460,17 +2313,17 @@ export default function App() {
               <div className="ui-panel">
                 {activeJobId && <UploadLive api={cardsApi} jobId={activeJobId} onFinished={afterUpload} />}
                 <div className="panel-header">
-                  <div className="panel-title"><Upload size={20} color="#FF671F" /><span>Upload Completed Class Grading Sheet</span></div>
+                  <div className="panel-title"><Upload size={20} color="#FF671F" /><span>Upload the filled Excel file</span></div>
                 </div>
 
                 <label className="dropzone" style={{ display: "block", marginBottom: "1.5rem" }}>
                   <input type="file" accept=".xlsx" onChange={handleFileUpload} style={{ display: "none" }} />
                   <FileSpreadsheet size={42} color="#003399" style={{ margin: "0 auto 0.8rem" }} />
                   <div style={{ fontWeight: 700, fontSize: "1.05rem", color: "var(--chakra-navy)" }}>
-                    {uploadedFileName ? `Selected: ${uploadedFileName}` : "Click or Drag & Drop Graded Excel (.xlsx)"}
+                    {uploadedFileName ? `Selected: ${uploadedFileName}` : "Choose the filled Excel file (.xlsx)"}
                   </div>
                   <div style={{ fontSize: "0.82rem", color: "var(--text-light)", marginTop: "0.25rem" }}>
-                    Validates student rows against PARAKH portal rules, attendance, and character limits.
+                    Every student is checked first. Nothing is sent to PARAKH until you press Sync.
                   </div>
                 </label>
 
@@ -2557,7 +2410,7 @@ export default function App() {
                 <div className="panel-header">
                   <div className="panel-title">
                     <FileSpreadsheet size={20} color="#046A38" />
-                    <span>Class Student List</span>
+                    <span>Your class</span>
                   </div>
                   <div style={{ display: "flex", gap: "0.6rem" }}>
                     <button
@@ -2608,7 +2461,7 @@ export default function App() {
                           title="Reconnect to PARAKH (you will type a captcha)"
                         >
                           <RefreshCw size={13} style={{ animation: teacherHpcRefreshing ? "spin 1s linear infinite" : "none" }} />
-                          {teacherHpcRefreshing ? "Refreshing..." : "Refresh Session"}
+                          {teacherHpcRefreshing ? "Reconnecting…" : "Reconnect"}
                         </button>
                         <button onClick={() => setShowTeacherHpcPanel(!showTeacherHpcPanel)} className="portal-link-btn">
                           {showTeacherHpcPanel ? "Hide Details" : "Session Details"}
@@ -2645,8 +2498,8 @@ export default function App() {
                       <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
                         <AlertCircle size={18} color="#D97706" />
                         <div style={{ fontSize: "0.86rem" }}>
-                          <b style={{ color: "#92400E" }}>PARAKH Session Not Connected:</b>{" "}
-                          <span style={{ color: "#B45309" }}>Connect your HPC session to read your students from the PARAKH portal.</span>
+                          <b style={{ color: "#92400E" }}>Not connected to PARAKH.</b>{" "}
+                          <span style={{ color: "#B45309" }}>Connect to read your class from PARAKH. The list below is from your last fetch.</span>
                         </div>
                       </div>
                       <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap" }}>
@@ -2665,10 +2518,10 @@ export default function App() {
                           title="Reconnect to PARAKH (you will type a captcha)"
                         >
                           <RefreshCw size={13} style={{ animation: teacherHpcRefreshing ? "spin 1s linear infinite" : "none" }} />
-                          {teacherHpcRefreshing ? "Refreshing..." : "Refresh Session"}
+                          {teacherHpcRefreshing ? "Reconnecting…" : "Reconnect"}
                         </button>
-                        <button onClick={() => setShowTeacherHpcPanel(true)} className="btn btn-primary" style={{ padding: "0.35rem 0.8rem", fontSize: "0.8rem" }}>
-                          <KeyRound size={13} /> Connect HPC Session
+                        <button onClick={() => { setShowTeacherHpcPanel(true); window.scrollTo({ top: 0, behavior: "smooth" }); }} className="btn btn-primary btn-sm">
+                          <KeyRound size={13} /> Connect to PARAKH
                         </button>
                       </div>
                     </div>
@@ -2970,11 +2823,33 @@ export default function App() {
         )}
           </>} />
         </Routes>
-      </main>
+        </main>
 
-      <footer className="app-footer" role="contentinfo">
-        <p>Teacher Assist is an independent tool that helps teachers fill the PARAKH Holistic Progress Card with their own PARAKH login. It is not an official government service and is not made by, or connected with, NCERT, PARAKH or the Ministry of Education.</p>
-      </footer>
+        <footer className="shell-footer" role="contentinfo">
+          Teacher Assist is an independent tool. It is not an official government service and is not made by, or connected with,
+          NCERT, PARAKH or the Ministry of Education.
+        </footer>
+      </div>
     </div>
   );
 }
+
+type PageInfo = { title: string; desc: string };
+const PAGES: Record<string, PageInfo> = {
+  roster: { title: "Students", desc: "Your class as on PARAKH. Open any student's card from here." },
+  activities: { title: "Activities", desc: "Choose an activity and the three levels for each subject (Part B)." },
+  bulk: { title: "Common answers", desc: "Answers most of the class shares - fill them once, change the few who differ." },
+  settings: { title: "Class settings", desc: "Working days, max marks, medium and declaration for the whole class." },
+  upload: { title: "Excel & upload", desc: "Download the class file, fill it, and send everything to PARAKH." },
+  school_teachers: { title: "Teachers", desc: "Teacher accounts, their classes and their PARAKH connection." },
+  school_students: { title: "Students", desc: "Every class's students and how far their cards are." },
+  library: { title: "Activity Library", desc: "Activities from PARAKH, your school's versions and your own." },
+};
+
+const TEACHER_STEPS: { id: "roster" | "activities" | "bulk" | "settings" | "upload"; label: string; hint: string; icon: typeof Users }[] = [
+  { id: "roster", label: "Students", hint: "Your class from PARAKH", icon: Users },
+  { id: "activities", label: "Activities", hint: "Part B for every subject", icon: CheckCircle2 },
+  { id: "bulk", label: "Common answers", hint: "Same answer for many", icon: Layers },
+  { id: "settings", label: "Class settings", hint: "Days, marks, medium", icon: SlidersHorizontal },
+  { id: "upload", label: "Excel & upload", hint: "Download, fill, send", icon: Upload },
+];

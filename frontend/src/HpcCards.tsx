@@ -15,6 +15,8 @@ import {
 import { ApiError, call } from "./api";
 import type { Api } from "./api";
 import { useCardCheck } from "./activities/useCardCheck";
+import { ConnectPrompt } from "./activities/ConnectPrompt";
+import { needsParakh } from "./activities/parakhConnect";
 
 // Editor for one student's HPC card and bulk entry of one field across the class.
 // Talks to backend/routers/hpc_cards.py. Edits are autosaved as a server-side draft;
@@ -572,6 +574,7 @@ export function HpcBulkEntry({ api, stage }: { api: CardsApi; stage: string }) {
   const [field, setField] = useState<(FieldMeta & { part_title: string }) | null>(null);
   const [rows, setRows] = useState<BulkRow[]>([]);
   const [readAt, setReadAt] = useState<string | null>(null);   // when the app's copy was read from PARAKH
+  const [offline, setOffline] = useState(false);               // PARAKH not connected
   const [changedOnParakh, setChangedOnParakh] = useState<string[]>([]);
   const editsRef = useRef<Record<string, FieldValue>>({});
   const fieldRef = useRef("");
@@ -593,7 +596,7 @@ export function HpcBulkEntry({ api, stage }: { api: CardsApi; stage: string }) {
     setMessage(null);
     call<{ parts: { code: string; title: string; fields: FieldMeta[] }[] }>(api, "GET", `/teacher/hpc-cards/${encodeURIComponent(stage)}/fields?common=true`)
       .then((d) => { if (live) setParts(d.parts.filter((p) => p.code !== "C")); })   // Part C levels: the grid above
-      .catch((e) => { if (live) setMessage({ type: "error", text: e.message }); })
+      .catch((e) => { if (live) { if (needsParakh(e)) setOffline(true); else setMessage({ type: "error", text: e.message }); } })
       .finally(() => { if (live) setLoadingFields(false); });
     return () => { live = false; };
   }, [api, stage]);
@@ -666,6 +669,8 @@ export function HpcBulkEntry({ api, stage }: { api: CardsApi; stage: string }) {
   };
 
   const dirty = rows.filter((r) => r.student_id in edits && !sameValue(edits[r.student_id], r.value)).length;
+
+  if (offline) return <div className="ui-panel"><ConnectPrompt what="your class's answers" /></div>;
 
   return (
     <div className="ui-panel">
