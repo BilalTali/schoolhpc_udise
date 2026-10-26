@@ -113,13 +113,20 @@ def test_bulk_entry(teacher_client):
     again = client.get(f"{API}/teacher/hpc-cards/Preparatory/bulk", params={"field": "a1_mother_tongue"}).json()
     assert again["rows"][0]["value"] == "Urdu" and again["rows"][0]["in_draft"] is True
     assert client.get(f"{API}/teacher/hpc-cards/Preparatory/bulk", params={"field": "zzz"}).status_code == 404
-    # Bulk entry is only for class-wide answers; per-student fields go through the Excel file.
-    assert client.get(f"{API}/teacher/hpc-cards/Preparatory/bulk", params={"field": "a1_guardian_name"}).status_code == 404
+    # Bulk entry is only for class-wide answers; names, relations and Part B are not offered.
+    for key in ("a1_guardian_relation", "a1_guardian_name", "a2_name", "b_self_1", "d_declaration", "a1_medium"):
+        assert client.get(f"{API}/teacher/hpc-cards/Preparatory/bulk", params={"field": key}).status_code == 404, key
     assert client.put(f"{API}/teacher/hpc-cards/Preparatory/bulk",
                       json={"field": "a2_name", "values": {"1001": "x"}}).status_code == 404
     common = client.get(f"{API}/teacher/hpc-cards/Preparatory/fields", params={"common": True}).json()["parts"]
-    assert {f["key"] for p in common for f in p["fields"]} == {"a1_mother_tongue", "a1_guardian_relation",
-                                                                "a3_resources", "a3_support"}
+    assert [p["code"] for p in common] == ["A1", "A3", "C"]
+    keys = {f["key"] for p in common for f in p["fields"]}
+    assert {"a1_mother_tongue", "a3_feel_1", "a3_peer2_6", "a3_parent_11", "a3_resources", "a3_support",
+            "c_PSLS1_awareness", "c_PSLS7_creativity"} <= keys
+    assert not keys & {"a1_guardian_relation", "a1_interests", "a3_peer1_name", "a3_resources_other", "c_PSLS1_remark"}
+    assert len(keys) == 1 + 7 + 12 + 1 + 11 + 1 + 21
+    level = client.get(f"{API}/teacher/hpc-cards/Preparatory/bulk", params={"field": "c_PSLS3_awareness"}).json()
+    assert level["field"]["part"] == "C" and level["field"]["options"] == ["Beginner", "Proficient", "Advanced"]
 
 
 def test_unknown_session_and_stage(teacher_client):

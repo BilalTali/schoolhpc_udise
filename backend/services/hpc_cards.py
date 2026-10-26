@@ -161,30 +161,41 @@ def to_cell_value(f: Field, value: Any) -> Any:
     return value
 
 
-# Bulk entry covers only answers that are usually the same for much of the class. Medium and rural/urban
-# are class settings; everything else is typed per student in the Excel file.
-COMMON_KEYS = ("a1_mother_tongue", "a1_guardian_relation", "b_resources", "a3_resources", "a3_support",
-               "a4_resources", "a4_support")
+# Bulk entry covers answers where most of the class picks the same option and only a few differ:
+# mother tongue, plus every pick-from-a-list question in A3/A4 (feelings, peer and parent answers,
+# resources, support) and the Part C levels. Not Part B (set on the Activities tab), not names or
+# relations (they differ per student), not class settings (medium, rural/urban, declaration).
+COMMON_TEXT = ("a1_mother_tongue",)
+COMMON_PARTS = ("A3", "A4", "C")
+COMMON_KINDS = ("choice", "inlist", "multi", "flags")
+
+
+def is_common(part_code: str, f: Field) -> bool:
+    return f.key in COMMON_TEXT or (part_code in COMMON_PARTS and f.kind in COMMON_KINDS)
+
+
+def _common_fields(stage: str, lookups: Lookups) -> Dict[str, Field]:
+    return {f.key: f for p in get_stage(stage).PARTS for f in p.fields(lookups) if is_common(p.code, f)}
 
 
 def stage_fields(stage: str, lookups: Lookups, common: bool = False) -> List[Dict[str, Any]]:
     out = []
     for p in get_stage(stage).PARTS:
-        fields = [field_meta(f) for f in p.fields(lookups) if not common or f.key in COMMON_KEYS]
+        fields = [field_meta(f) for f in p.fields(lookups) if not common or is_common(p.code, f)]
         if fields:
             out.append({"code": p.code, "title": p.title, "fields": fields})
     return out
 
 
-def _common_only(key: str) -> None:
-    if key not in COMMON_KEYS:
+def _common_only(stage: str, lookups: Lookups, key: str) -> None:
+    if key not in _common_fields(stage, lookups):
         from fastapi import HTTPException, status
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"'{key}' is not one of the class-wide fields bulk entry covers.")
 
 
 def common_values(teacher_id: str, session: str, stage: str, student_id: str, lookups) -> Dict[str, Any]:
     """Bulk-entry answers in a student's draft, as cell values (they prefill the Excel template)."""
-    index = {f.key: f for f in (f for p in get_stage(stage).PARTS for f in p.fields(lookups)) if f.key in COMMON_KEYS}
+    index = _common_fields(stage, lookups)
     draft = (load_draft(teacher_id, session, stage, student_id) or {}).get("values") or {}
     return {k: to_cell_value(index[k], v) for k, v in draft.items() if k in index}
 
@@ -326,14 +337,34 @@ def _part_of(stage: str, lookups: Lookups, key: str):
     raise HTTPException(status.HTTP_404_NOT_FOUND, f"Unknown field '{key}'.")
 
 
+# Bulk entry shows one field at a time, and Part C alone has 21-33 of them. What PARAKH holds is kept for a
+# few minutes, so moving to the next field does not re-read the whole class (display only; saving goes to drafts).
+BULK_CACHE_SECONDS = 300
+_bulk_cache: Dict[tuple, Tuple[float, Any]] = {}
+_bulk_lock = threading.Lock()
+
+
+def _cached(key: tuple, read):
+    now = time.time()
+    with _bulk_lock:
+        hit = _bulk_cache.get(key)
+    if hit and now - hit[0] < BULK_CACHE_SECONDS:
+        return hit[1]
+    value = read()
+    with _bulk_lock:
+        _bulk_cache[key] = (now, value)
+    return value
+
+
 def bulk_read(client: Portal, owner: str, teacher_id: str, session: str, stage: str, key: str) -> Dict[str, Any]:
-    _common_only(key)
     lookups = lookups_for(owner, client, stage)
+    _common_only(stage, lookups, key)
     part, f = _part_of(stage, lookups, key)
-    students = sync.roster(client, stage, lookups)
+    students = _cached((owner, session, stage, "roster"), lambda: sync.roster(client, stage, lookups))
 
     def value_for(s):
-        raw = client.student(stage, s["student_id"], part.col).get("formdata")
+        raw = _cached((owner, session, stage, s["student_id"], part.col),
+                      lambda: client.student(stage, s["student_id"], part.col).get("formdata"))
         portal_value = f.read(part.load(raw))
         draft = load_draft(teacher_id, session, stage, s["student_id"])
         in_draft = bool(draft and key in draft["values"])
@@ -350,8 +381,8 @@ def bulk_read(client: Portal, owner: str, teacher_id: str, session: str, stage: 
 def bulk_write(client: Portal, owner: str, teacher_id: str, session: str, stage: str, key: str,
                values: Dict[str, Any]) -> Dict[str, Any]:
     """Puts one field's value into each listed student's draft. Invalid values are reported, not saved."""
-    _common_only(key)
     lookups = lookups_for(owner, client, stage)
+    _common_only(stage, lookups, key)
     _, f = _part_of(stage, lookups, key)
     saved, problems = [], {}
     for student_id, value in values.items():

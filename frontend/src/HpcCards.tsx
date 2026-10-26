@@ -660,9 +660,10 @@ export function HpcBulkEntry({ api, stage }: { api: CardsApi; stage: string }) {
         <div className="panel-title"><Layers size={20} color="#003399" /><span>Class-wide answers</span></div>
       </div>
       <p className="form-hint" style={{ fontSize: "0.85rem", marginBottom: "1rem" }}>
-        Answers that are usually the same for much of the class, such as mother tongue. Fill them here once; they are pre-filled
-        in the Excel file you download on tab 5, where you can still change them for any student. Medium of instruction and
-        rural/urban are set once on tab 4 (Class settings).
+        Answers where most of the class has the same choice and only a few differ: mother tongue, the Yes/Sometimes/No
+        questions, resources and support, and the Part C levels (Beginner/Proficient/Advanced). Use "Fill empty with" for the
+        usual answer, change the few who differ, and save. They are pre-filled in the Excel file you download on tab 5, where
+        you can still change any student. Medium of instruction and rural/urban are on tab 4 (Class settings); Part B is on tab 2.
       </p>
 
       <div className="bulk-toolbar">

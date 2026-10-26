@@ -152,6 +152,13 @@ def snapshots_in_tmp(monkeypatch, tmp_path):
     monkeypatch.setattr(snapshots, "SNAPSHOT_DIR", tmp_path / "snapshots")
 
 
+@pytest.fixture(autouse=True)
+def fresh_bulk_cache():
+    """Each test starts with nothing cached from PARAKH reads by bulk entry."""
+    from backend.services import hpc_cards
+    hpc_cards._bulk_cache.clear()
+
+
 @pytest.fixture
 def credit_cases():
     return json.loads((FIXTURES / "credit_cases.json").read_text(encoding="utf-8"))
