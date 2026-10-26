@@ -297,3 +297,69 @@ def test_an_activity_made_here_goes_on_the_card_typed_and_is_recognised_again():
     assert now.values["b_act_PSLS1"] == "Lstory" and now.values["b_lvl_PSLS1_awareness"] == "Advanced"
     again, errors = part_b("PREPARATORY", data, row, lk, resolve)
     assert errors == [] and again["formdata"][0]["id"] == act["id"]
+
+
+
+# ---------------------------------------------------------------------------
+# A teacher removes their version: only the app's own manual copies go back to the bank activity
+# ---------------------------------------------------------------------------
+
+def manual_copy(act_id="1001_85_1", nm="Bank 85"):
+    """A manual copy on the card, as this app writes it for an edited bank activity."""
+    b, _ = part_b("PREPARATORY", blank_student("PREPARATORY"), grid_row(), make_lookups("PREPARATORY"), edited_resolver())
+    act = copy.deepcopy(b["formdata"][0])
+    act["id"], act["nm"] = act_id, nm
+    return act
+
+
+def unedited_resolver(owned):
+    resolve = edited_resolver(modified=False)
+    base = resolve
+
+    def with_key(key):
+        entry = base(key)
+        return {**entry, "key": key} if entry else None
+    with_key.typed, with_key.owned = {}, owned
+    return with_key
+
+
+def test_after_the_teachers_version_is_removed_the_apps_manual_copy_goes_back_to_the_bank():
+    data = student_with(manual_copy())
+    resolve = unedited_resolver({"1001_85_1": "P85"})
+    names = grid.typed_keys(resolve)
+    now = grid.current(SUBJ, data.raw_parts["part_b"], names)
+    assert now.values["b_act_PSLS1"] == "P85"                          # recognised by its recorded id
+    assert grid.stale_texts(data.raw_parts["part_b"], now, resolve)    # so a save updates the card
+    b, errors = part_b("PREPARATORY", data, grid_row(), make_lookups("PREPARATORY"), resolve)
+    assert errors == []
+    act = b["formdata"][0]
+    assert act["id"] == "1001_85_1" and act["nm"] == "Bank 85"
+    assert act["dt"]["act_bank_id"] == 85 and act["dt"]["is_global"] is True and act["is_modified"] is False
+    assert act["dt"]["desc"] == BANK_CONTENT["desc"] and act["dt"]["awr"] == BANK_CONTENT["awr"][:3] + ["proficient"]
+    assert act["dt"]["tfob"] == "kept notes" or act["dt"]["tfob"] == data.raw_parts["part_b"][0]["dt"]["tfob"]
+    assert b["act_bank_map"] == [{"id": "1001_85_1", "bank_id": "85", "is_modified": False, "is_global": True}]
+    plan = grid.plan(SUBJ, dict(zip(SUBJ, PREP.SUBJECTS)), PREP.ACTIVITY_GRID, copy.deepcopy(data.raw_parts["part_b"]), grid_row(), resolve)
+    assert [c["action"] for c in plan.changes] == ["update"]           # shown before saving
+
+
+def test_a_manual_activity_the_app_did_not_write_is_never_turned_into_a_bank_one():
+    data = student_with(manual_copy(act_id="1001_0_1"))                  # same name, but not in the record
+    resolve = unedited_resolver({"9999_85_1": "P85"})
+    now = grid.current(SUBJ, data.raw_parts["part_b"], grid.typed_keys(resolve))
+    assert now.values.get("b_act_PSLS1", "") == ""                      # not taken for the bank activity
+    assert not grid.stale_texts(data.raw_parts["part_b"], now, resolve)
+    b, errors = part_b("PREPARATORY", data, grid_row(), make_lookups("PREPARATORY"), resolve)
+    assert any("Saving would remove activity 'Bank 85'" in e for e in errors)   # the teacher decides (Replace)
+    assert data.raw_parts["part_b"][0]["dt"]["act_bank_id"] is None
+
+
+def test_the_record_keeps_manual_copies_and_forgets_bank_linked_ones():
+    from backend.services import own_activities
+    manual = manual_copy()
+    own_activities.remember("teacher_x", [manual, {"id": "1001_0_9", "nm": "Typed on PARAKH", "dt": {"act_bank_id": None}}],
+                            {"Bank 85": "P85"})
+    assert own_activities.load("teacher_x") == {"1001_85_1": "P85"}
+    back = copy.deepcopy(manual)
+    back["dt"]["act_bank_id"] = 85
+    own_activities.remember("teacher_x", [back], {})
+    assert own_activities.load("teacher_x") == {}

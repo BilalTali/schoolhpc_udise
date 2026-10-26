@@ -93,3 +93,26 @@ def test_snapshot_is_written_before_the_first_save_and_holds_parakh_values(tmp_p
     restored = snapshots.load("teacher_test", "Preparatory", "1001", entry["file"])
     assert _json.loads(restored.raw_parts["part_a2"])["gen"][:2] == ["Asha", "9"]   # the old value, not the new one
     assert restored.record["stu_info"]["student_name"] == "TEST STUDENT"
+
+
+
+def test_a_successful_save_records_which_manual_activities_are_the_apps_own():
+    from backend.hpc.stages import activity_grid
+    portal = _portal_with_student()
+    seen = []
+    lk = make_lookups("PREPARATORY", portal)
+    base = activity_grid.resolver_from_lookups(lk)
+
+    def resolve(key):
+        return base(key)
+    resolve.remember = seen.append
+    result = sync.sync_student(portal, "Preparatory", "1001", filled_row("PREPARATORY"), lk,
+                               resolve=resolve, before_save=lambda data: None)
+    assert result.status == "COMPLETED" and len(seen) == 1
+    saved_b = next(p for _, _, p in portal.saved if p["hpc_col"] == "part_b")
+    assert seen[0] == saved_b["formdata"]
+    # nothing is recorded when nothing is saved (a dry run)
+    seen.clear()
+    sync.sync_student(portal, "Preparatory", "1001", filled_row("PREPARATORY"), lk, dry_run=True, resolve=resolve,
+                      before_save=lambda data: None)
+    assert seen == []

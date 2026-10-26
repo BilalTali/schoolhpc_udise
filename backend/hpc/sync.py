@@ -302,6 +302,10 @@ def sync_student(portal: Portal, stage: str, student_id: str, row: Dict[str, Any
             portal.save_part(stage, student_id, payload)
             saved.append(payload["hpc_col"])
 
+        remember = getattr(resolve, "remember", None)
+        part_b = next((p for p in payloads if p["hpc_col"] == "part_b"), None)
+        if remember and part_b is not None:
+            remember(part_b["formdata"])             # which manual activities on this card are the app's own
         after = portal.student(stage, student_id)
         if after.get("current_part") != "mc":
             return SyncResult(student_id, name, "FAILED",

@@ -153,6 +153,13 @@ def snapshots_in_tmp(monkeypatch, tmp_path):
 
 
 @pytest.fixture(autouse=True)
+def own_activities_in_tmp(monkeypatch, tmp_path):
+    """Tests never write the record of the app's own manual activities into the real data folder."""
+    from backend.services import own_activities
+    monkeypatch.setattr(own_activities, "OWN_DIR", tmp_path / "own_activities")
+
+
+@pytest.fixture(autouse=True)
 def fresh_bulk_cache():
     """Each test starts with nothing cached from PARAKH reads by bulk entry."""
     from backend.services import hpc_cards

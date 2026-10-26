@@ -89,12 +89,31 @@ class Current:
     locked: bool = False                             # a subject is covered by more than one activity
 
 
-def typed_keys(resolve: Optional["Resolver"]) -> Dict[str, str]:
-    """Activity name -> grid key for the teacher's own activities, which a card holds as manual ones (no bank id)."""
-    return dict(getattr(resolve, "typed", None) or {})
+class OwnNames(dict):
+    """Activity name -> grid key for the teacher's own activities (a card holds them as manual ones, without a
+    bank id), plus `owned`: card activity id -> key for the manual copies this app wrote itself."""
+    owned: Dict[str, str]
+
+    def key_of(self, act: Dict[str, Any]) -> str:
+        return self.owned.get(str(act.get("id") or "")) or self.get(act.get("nm") or "", "")
+
+
+def typed_keys(resolve: Optional["Resolver"]) -> OwnNames:
+    names = OwnNames(getattr(resolve, "typed", None) or {})
+    names.owned = dict(getattr(resolve, "owned", None) or {})
+    return names
+
+
+def _names(typed: Optional[Dict[str, str]]) -> OwnNames:
+    if isinstance(typed, OwnNames):
+        return typed
+    names = OwnNames(typed or {})
+    names.owned = {}
+    return names
 
 
 def current(subjects: List[str], fd: List[Dict[str, Any]], typed: Optional[Dict[str, str]] = None) -> Current:
+    typed = _names(typed)
     acts = [a for a in fd or [] if _real(a)]
     values: Dict[str, str] = {}
     cover: Dict[str, int] = {}
@@ -102,7 +121,7 @@ def current(subjects: List[str], fd: List[Dict[str, Any]], typed: Optional[Dict[
     for i, act in enumerate(acts):
         dt = act["dt"]
         bank = dt.get("act_bank_id")
-        key = key_for(bank, dt.get("is_global")) if str(bank or "").isdigit() else (typed or {}).get(act.get("nm") or "", "")
+        key = key_for(bank, dt.get("is_global")) if str(bank or "").isdigit() else typed.key_of(act)
         domains = [s for s in subjects if s in (dt.get("domain") or [])]
         existing.append({"key": key, "name": act.get("nm") or "Activity", "subjects": domains,
                          "complete": bool(act.get("is_complete")), "from_bank": bool(key)})
@@ -187,13 +206,29 @@ def new_card_activity(spec: "GridSpec", entry: Dict[str, Any], portal_levels: Li
     return {"nm": entry["caption"], "dt": dt, "is_modified": False}
 
 
-def copy_outdated(act: Dict[str, Any], entry: Optional[Dict[str, Any]]) -> bool:
-    """True when a card's copy of a teacher's own activity is not yet the manual copy with the current texts."""
-    if not entry or not wants_manual(entry):
-        return False                                 # bank activities on the card are left as they are
+def copy_outdated(act: Dict[str, Any], entry: Optional[Dict[str, Any]], typed: Optional[Dict[str, str]] = None) -> bool:
+    """True when a card's copy needs updating: a teacher's own activity that is not yet the manual copy with
+    the current texts, or a manual copy this app wrote whose teacher's version was removed since (it goes
+    back to the bank activity). Any other bank or manual activity on the card is left as it is."""
+    if not entry:
+        return False
     dt = act.get("dt") or {}
+    if not wants_manual(entry):
+        own = _names(typed).owned.get(str(act.get("id") or ""))
+        return not dt.get("act_bank_id") and own is not None and own == entry.get("key")
     return bool(dt.get("act_bank_id")) or "is_global" in dt or act.get("is_modified") is not True \
         or texts_differ(dt, entry["content"])
+
+
+def make_bank_copy(act: Dict[str, Any], entry: Dict[str, Any], spec: "GridSpec") -> None:
+    """Turns a manual copy this app wrote back into the bank activity (as "Pick from Activity Bank" makes it);
+    levels and the student's answers stay."""
+    dt = act["dt"]
+    set_texts(dt, entry["content"], spec.from_bank)
+    dt["act_bank_id"] = int(entry["portal_id"])
+    dt["is_global"] = bool(entry.get("is_global", True))
+    act["nm"] = entry["caption"]
+    act["is_modified"] = False
 
 
 def make_manual(act: Dict[str, Any], entry: Dict[str, Any], spec: "GridSpec") -> None:
@@ -260,7 +295,8 @@ def plan(subjects: List[str], names: Dict[str, str], spec: GridSpec, fd: List[Di
                     continue
                 pid, name = portal_id(gk[0]), typed_name.get(gk[0])
                 from_bank = pid is not None and str(dt.get("act_bank_id") or "") == str(pid)
-                manual = name is not None and not dt.get("act_bank_id") and (act.get("nm") or "") == name
+                manual = not dt.get("act_bank_id") and (typed.owned.get(str(act.get("id") or "")) == gk[0]
+                                                        or (name is not None and (act.get("nm") or "") == name))
                 if not (from_bank or manual):        # the teacher's own: a manual copy, found by its name
                     continue
                 if exact and set(dt.get("domain") or []) != set(subs):
@@ -282,8 +318,11 @@ def plan(subjects: List[str], names: Dict[str, str], spec: GridSpec, fd: List[Di
             before = (sorted(dt.get("domain") or []), [str((dt.get(k) or ["", "", "", ""])[3]) for _, k in ABILITIES])
             changed = before != (sorted(subs), portal_levels)
             entry = resolve(key)
-            if copy_outdated(act, entry):
-                make_manual(act, entry, spec)        # the teacher's own texts, as a manual activity
+            if copy_outdated(act, entry, typed):
+                if wants_manual(entry):
+                    make_manual(act, entry, spec)    # the teacher's own texts, as a manual activity
+                else:
+                    make_bank_copy(act, entry, spec)  # their version was removed: back to the bank activity
                 changed = True
             take_shared = changed or i == first
             changes.append({"action": "update" if changed else "keep", "name": act.get("nm") or key,
@@ -341,7 +380,7 @@ def stale_texts(fd: List[Dict[str, Any]], now: Current, resolve: Optional["Resol
     if resolve is None:
         return False
     for act, info in zip([a for a in fd or [] if _real(a)], now.existing):
-        if copy_outdated(act, resolve(info["key"]) if info["key"] else None):
+        if copy_outdated(act, resolve(info["key"]) if info["key"] else None, typed_keys(resolve)):
             return True
     return False
 

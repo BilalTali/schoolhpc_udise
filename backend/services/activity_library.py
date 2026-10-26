@@ -461,6 +461,10 @@ def resolver_for_teacher(teacher_id: str, stage: str, fallback=None):
     resolve.typed = {}
     for k, e in own:                                 # made here first, then edited bank activities
         resolve.typed.setdefault(e["caption"], k)
+    from backend.services import own_activities
+    owner = f"teacher_{teacher_id}"
+    resolve.owned = own_activities.load(owner)
+    resolve.remember = lambda part_b: own_activities.remember(owner, part_b, resolve.typed)
     return resolve
 
 
