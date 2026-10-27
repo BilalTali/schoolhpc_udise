@@ -20,6 +20,7 @@ import hashlib
 import html
 import json
 import re
+import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -850,18 +851,23 @@ def _normalise(rec: Dict[str, Any], subject_codes: Dict[int, str]) -> Dict[str, 
     }
 
 
+_start_lock = threading.Lock()          # the "already running?" check and the new job happen together (L-1)
+
+
 def start_sync(db: Session, actor: Actor, stages: List[str], started_by: Optional[str] = None) -> Tuple[ActivitySyncJob, bool]:
     """Returns (job, already_running). One sync per school at a time."""
-    running = (db.query(ActivitySyncJob).filter(ActivitySyncJob.school_id == actor.school_id,
-                                                ActivitySyncJob.status.in_(("QUEUED", "RUNNING")))
-               .order_by(ActivitySyncJob.created_at.desc()).first())
-    if running:
-        return running, True
-    job = ActivitySyncJob(school_id=actor.school_id, stages=",".join(stages), started_by=started_by or actor.key,
-                          step="Waiting to start", progress=0)
-    db.add(job)
-    db.commit()
-    return job, False
+    with _start_lock:
+        db.expire_all()                     # see a job another request has just committed
+        running = (db.query(ActivitySyncJob).filter(ActivitySyncJob.school_id == actor.school_id,
+                                                    ActivitySyncJob.status.in_(("QUEUED", "RUNNING")))
+                   .order_by(ActivitySyncJob.created_at.desc()).first())
+        if running:
+            return running, True
+        job = ActivitySyncJob(school_id=actor.school_id, stages=",".join(stages), started_by=started_by or actor.key,
+                              step="Waiting to start", progress=0)
+        db.add(job)
+        db.commit()
+        return job, False
 
 
 def run_sync(job_id: str, client: Portal, actor: Actor, with_my_activities: bool) -> None:
