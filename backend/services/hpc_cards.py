@@ -9,7 +9,6 @@ until the teacher submits, which runs the same sync as a workbook upload.
 import json
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple

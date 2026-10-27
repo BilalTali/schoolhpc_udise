@@ -1,6 +1,5 @@
 """Part B from the Activities grid: grouping, keeping what PARAKH has, and the checks before a save."""
 import copy
-import json
 
 from backend.hpc import sync
 from backend.hpc.stages import activity_grid as grid

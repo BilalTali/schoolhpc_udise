@@ -127,7 +127,6 @@ def test_status_change_stops_shows_the_plan_and_the_restore_puts_everything_back
 # Live test steps 2-4: one Part B request built by the real save code
 # ---------------------------------------------------------------------------
 
-from backend.hpc.stages import activity_grid  # noqa: E402
 from backend.services import own_activities  # noqa: E402
 from backend.tests.conftest import BANK_CONTENT  # noqa: E402
 

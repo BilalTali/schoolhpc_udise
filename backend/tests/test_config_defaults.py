@@ -1,5 +1,4 @@
 """Safe defaults when .env leaves a setting out (M-3, M-4, M-6)."""
-import json
 from pathlib import Path
 
 

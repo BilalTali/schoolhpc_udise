@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional
 from backend.database import SessionLocal
 from backend.hpc import sync, workbook
 from backend.hpc.portal import Portal
-from backend.models.entities import StudentRecord, UploadJob
+from backend.models.entities import UploadJob
 
 
 def _grid_hooks(client: Portal, teacher_id: Optional[str]) -> Dict[str, Any]:
