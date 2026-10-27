@@ -165,7 +165,7 @@ def update_teacher(
         teacher.employee_code = payload.employee_code.strip() if payload.employee_code else None
     if payload.mobile_number is not None:
         teacher.mobile_number = payload.mobile_number.strip() if payload.mobile_number else None
-    if payload.password and len(payload.password) >= 6:
+    if payload.password:                                   # 8+ characters, checked by the schema (H-8)
         teacher.hashed_password = hash_password(payload.password)
 
     if payload.assigned_stages and len(payload.assigned_stages) > 0:

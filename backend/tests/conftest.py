@@ -159,6 +159,15 @@ def filled_row(stage_code: str) -> dict:
 
 
 @pytest.fixture(autouse=True)
+def fresh_login_limits():
+    """Wrong passwords in one test never slow down the logins of the next."""
+    from backend.services import login_limits
+    login_limits.reset()
+    yield
+    login_limits.reset()
+
+
+@pytest.fixture(autouse=True)
 def snapshots_in_tmp(monkeypatch, tmp_path):
     """Tests never write snapshots into the real data folder."""
     from backend.services import snapshots

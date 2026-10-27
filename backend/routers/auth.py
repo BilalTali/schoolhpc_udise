@@ -10,6 +10,7 @@ from backend.models.entities import School, Teacher
 from backend.schemas.schemas import (
     SchoolRegisterRequest, SchoolResponse, LoginRequest, TokenResponse
 )
+from backend.services import login_limits
 from backend.services.auth_service import (
     create_access_token, end_session, get_current_user, hash_password, issue_session, rotate_session, verify_password,
 )
@@ -59,16 +60,32 @@ def register_school(payload: SchoolRegisterRequest, db: Session = Depends(get_db
     return new_school
 
 
+def _address(request: Request) -> str:
+    """The browser's network address. Behind the web app's own dev server (on this computer) it is the one
+    that server passes on in X-Forwarded-For."""
+    host = request.client.host if request.client else ""
+    forwarded = request.headers.get("x-forwarded-for", "")
+    if forwarded and host in ("127.0.0.1", "::1", "localhost"):
+        return forwarded.split(",")[0].strip()
+    return host
+
+
 @router.post("/login", response_model=TokenResponse)
-def login(payload: LoginRequest, response: Response, db: Session = Depends(get_db)):
+def login(payload: LoginRequest, request: Request, response: Response, db: Session = Depends(get_db)):
     """
     Unified Login endpoint.
     Supports:
       1. School Admin: using 11-digit UDISE code or Admin Email
       2. Teacher: using Username
+    Repeated wrong passwords make the next attempt wait, longer each time (H-8).
     """
     identifier = payload.identifier.strip()
     clean_id_lower = identifier.lower()
+    address = _address(request)
+    wait = login_limits.check(identifier, address)
+    if wait:
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, headers={"Retry-After": str(wait)},
+                            detail=f"Too many wrong passwords. Please try again in {wait} second{'s' if wait != 1 else ''}.")
 
     # Case 1: Try School Admin match (by UDISE or Email)
     school = db.query(School).filter(
@@ -78,7 +95,7 @@ def login(payload: LoginRequest, response: Response, db: Session = Depends(get_d
     if school and verify_password(payload.password, school.hashed_password):
         if not school.is_active:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="School account is disabled.")
-
+        login_limits.succeeded(identifier)
         issue_session(response, db, school.id, "SCHOOL_ADMIN", payload.remember_me)
         token = create_access_token({
             "sub": school.id,
@@ -106,6 +123,7 @@ def login(payload: LoginRequest, response: Response, db: Session = Depends(get_d
     if teacher and verify_password(payload.password, teacher.hashed_password):
         if not teacher.is_active:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Teacher account is disabled.")
+        login_limits.succeeded(identifier)
 
         teacher.last_login = datetime.utcnow()
         db.commit()
@@ -135,6 +153,7 @@ def login(payload: LoginRequest, response: Response, db: Session = Depends(get_d
             assigned_section=teacher.assigned_section
         )
 
+    login_limits.failed(identifier, address)
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Invalid credentials. Please verify your UDISE/Username and Password."

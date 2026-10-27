@@ -1505,7 +1505,7 @@ export default function App() {
                     </div>
                     <div className="form-group">
                       <label className="form-label">Create Admin Password *</label>
-                      <input type="password" className="form-input" placeholder="Min 6 characters" value={regPassword} onChange={(e) => setRegPassword(e.target.value)} required />
+                      <input type="password" className="form-input" placeholder="Min 8 characters" minLength={8} value={regPassword} onChange={(e) => setRegPassword(e.target.value)} required />
                     </div>
                   </div>
                   <button type="submit" className="btn btn-saffron" style={{ width: "100%" }} disabled={loading}>
@@ -1980,7 +1980,7 @@ export default function App() {
                       </div>
                       <div className="form-group" style={{ marginBottom: "1.2rem" }}>
                         <label className="form-label">Initial Password *</label>
-                        <input type="password" className="form-input" placeholder="Min 6 characters" value={newTeacherPassword} onChange={(e) => setNewTeacherPassword(e.target.value)} required />
+                        <input type="password" className="form-input" placeholder="Min 8 characters" minLength={8} value={newTeacherPassword} onChange={(e) => setNewTeacherPassword(e.target.value)} required />
                       </div>
 
                       {/* Multi-Selective HPC Stages */}
@@ -2138,7 +2138,7 @@ export default function App() {
                         <input
                           type="text"
                           className="form-input"
-                          placeholder="Enter new password (min 6 chars) or leave unchanged"
+                          placeholder="Enter new password (min 8 characters) or leave unchanged"
                           value={editTeacherPassword}
                           onChange={(e) => setEditTeacherPassword(e.target.value)}
                         />

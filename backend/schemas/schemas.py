@@ -16,7 +16,7 @@ class SchoolRegisterRequest(BaseModel):
     admin_name: str = Field(..., min_length=2, max_length=150)
     admin_email: str = Field(..., description="Official admin email address")
     admin_phone: Optional[str] = None
-    password: str = Field(..., min_length=6, description="Admin password (min 6 characters)")
+    password: str = Field(..., min_length=8, description="Admin password (min 8 characters)")
 
     @field_validator("udise_code")
     @classmethod
@@ -55,7 +55,7 @@ class TeacherCreateRequest(BaseModel):
     employee_code: Optional[str] = None
     username: str = Field(..., min_length=3, max_length=100, description="Login username for teacher")
     mobile_number: Optional[str] = None
-    password: str = Field(..., min_length=6, description="Initial teacher password")
+    password: str = Field(..., min_length=8, description="Initial teacher password (min 8 characters)")
     assigned_stage: Optional[str] = Field("Preparatory", description="Preparatory or Middle or comma-separated")
     assigned_stages: Optional[List[str]] = Field(default=None, description="Multi-selected stages, e.g. ['Preparatory', 'Middle']")
     assigned_grade: Optional[str] = Field("Grade 3", description="Assigned class, e.g., Grade 3 or Grade 6")
@@ -77,7 +77,7 @@ class TeacherUpdateRequest(BaseModel):
     employee_code: Optional[str] = None
     username: Optional[str] = None
     mobile_number: Optional[str] = None
-    password: Optional[str] = None
+    password: Optional[str] = Field(None, min_length=8, description="New password (min 8 characters), or leave out")
     assigned_stage: Optional[str] = None
     assigned_stages: Optional[List[str]] = None
     assigned_grade: Optional[str] = None

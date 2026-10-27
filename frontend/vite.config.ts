@@ -10,7 +10,8 @@ export default defineConfig(({ mode }) => {
       host: '0.0.0.0',
       port: 5173,
       // The web app calls /api on its own address, so the login cookie is same-origin.
-      proxy: { '/api': { target: env.VITE_API_PROXY_TARGET || 'http://127.0.0.1:8000', changeOrigin: false } },
+      // xfwd passes the browser's address on, so the login limit counts per browser, not per dev server
+      proxy: { '/api': { target: env.VITE_API_PROXY_TARGET || 'http://127.0.0.1:8000', changeOrigin: false, xfwd: true } },
     },
   }
 })
