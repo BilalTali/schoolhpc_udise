@@ -285,7 +285,7 @@ def view(act: LibraryActivity, setting: Optional[SchoolActivitySetting], actor: 
         **texts,
         "subjects": subjects, "subject_names": [names[c] for c in subjects],
         "covers_all": not missing, "missing_subjects": missing,
-        "portal_subjects": list(act.portal_subjects or []),
+        "portal_subjects": list(act.portal_subjects or []), "grade_id": act.grade_id,
         "portal_subject_names": [names.get(c, c) for c in (act.portal_subjects or [])],
         "has_pictures": bool(act.has_pictures), "status": status_, "is_default": act.id == default,
         "edited": bool(edited), "edited_fields": sorted(edited),
@@ -505,7 +505,7 @@ def dropdown_entries(db: Session, actor: Actor, stage: str) -> List[Dict[str, st
         if v["usable_in_excel"]:
             key = _key(v)
             out.append({"key": key, "label": f"{v['label']} (#{key})", "activity_id": v["id"],
-                        "subjects": v["subjects"]})
+                        "subjects": v["subjects"], "grade_id": v.get("grade_id")})
     return out
 
 

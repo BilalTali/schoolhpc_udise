@@ -78,6 +78,15 @@ def student_row(stage: str, student: Dict[str, Any], raw: Dict[str, Any], draft:
     }
 
 
+def _grade_names(client: Portal, teacher, stage: str) -> Dict[Any, str]:
+    """PARAKH grade id -> name (e.g. 7 -> "Grade 4"), as the class list names grades. Empty if not available."""
+    try:
+        lookups = hpc_cards.lookups_for(f"teacher_{teacher.id}", client, stage)
+        return {g["id"]: g["grade_caption"] for g in lookups.grades}
+    except Exception:                                  # the grade filter is a help, never a reason to fail
+        return {}
+
+
 def _context(client: Portal, teacher, stage: str):
     """Dropdown entries, labels and the activity resolver for this teacher and stage. Until the
     Activity Library has been synced, PARAKH's own activity list is used instead."""
@@ -97,13 +106,15 @@ def load(client: Portal, teacher, stage: str, students: List[Dict[str, Any]], re
     session = hpc_cards.check_session(client, None, writing=False)
     st, subjects, names = _stage_info(stage)
     entries, labels, resolve = _context(client, teacher, stage)
+    grade_names = _grade_names(client, teacher, stage)
     raw = _portal_parts(client, teacher.id, stage, students, refresh)
     rows = [student_row(stage, s, raw[s["student_id"]],
                         hpc_cards.load_draft(teacher.id, session, stage, s["student_id"]), resolve, labels)
             for s in students]
     return {"stage": stage, "session": session,
             "subjects": [{"code": c, "name": names[c]} for c in subjects],
-            "options": [{"key": e["key"], "label": e["label"], "subjects": e.get("subjects")} for e in entries],
+            "options": [{"key": e["key"], "label": e["label"], "subjects": e.get("subjects"),
+                         "grade": grade_names.get(e.get("grade_id"), "")} for e in entries],
             "labels": labels, "students": rows,
             "grades": sorted({f"{r['grade']} - {r['section']}".strip(" -") for r in rows}),
             "summary": {"ready": sum(r["ready"] for r in rows), "total": len(rows),

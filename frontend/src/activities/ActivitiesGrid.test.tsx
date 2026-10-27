@@ -93,6 +93,20 @@ const puts = (fake: ReturnType<typeof fakeGrid>) => fake.state.calls.filter((c) 
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 describe("Activities grid", () => {
+  it("offers the student's grade's activities first, and says so when PARAKH has none for the grade or subject", async () => {
+    const fake = fakeGrid([{ key: "P85", label: "85: Pairs", subjects: ["PSLS1"], grade: "Grade 4" },
+                           { key: "P86", label: "86: Rhymes", subjects: ["PSLS1"], grade: "Grade 5" },
+                           { key: "P91", label: "91: Story", subjects: ["PSLS3"], grade: "Grade 4" }]);
+    vi.stubGlobal("fetch", vi.fn(fake.fetch));
+    render(<ActivitiesGrid api={api} stage="Preparatory" />);
+    const one = (await screen.findByRole("rowheader", { name: /STUDENT ONE/ })).closest("tr")!;       // a Grade 5 student
+    const names = (box: HTMLElement) => within(box).getAllByRole("option").map((o) => o.textContent);
+    expect(names(within(one).getByRole("combobox", { name: "STUDENT ONE, Language 1 (R1), activity" }))).toEqual(["— Choose —", "86: Rhymes"]);
+    // Mathematics has nothing for Grade 5 on PARAKH: the other grades' Mathematics activities, with a remark
+    expect(names(within(one).getByRole("combobox", { name: "STUDENT ONE, Mathematics, activity" }))).toEqual(["— Choose —", "91: Story (Grade 4)"]);
+    expect(within(one).getByTitle("No Mathematics activity for Grade 5 on PARAKH - showing other grades")).toHaveTextContent("Other grades");
+  });
+
   it("offers under each subject only that subject's activities, and marks an older choice from elsewhere", async () => {
     const fake = fakeGrid([{ key: "P85", label: "85: Pairs", subjects: ["PSLS1"] }, { key: "P91", label: "91: Story", subjects: ["PSLS3"] }]);
     vi.stubGlobal("fetch", vi.fn(fake.fetch));

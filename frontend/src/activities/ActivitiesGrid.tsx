@@ -396,14 +396,18 @@ const GridRow = memo(function GridRow({ row, subjects, options, labels, ticked, 
 
 function Cells({ sid, name, subject, value, row, options, unknownLabel, disabled, onChange }: {
   sid: string; name: string; subject: { code: string; name: string }; value: string; row: GridStudent;
-  options: { key: string; label: string; subjects?: string[] | null }[]; unknownLabel: string; disabled: boolean;
+  options: { key: string; label: string; subjects?: string[] | null; grade?: string }[]; unknownLabel: string; disabled: boolean;
   onChange: (sid: string, key: string, value: string) => void;
 }) {
   const ak = actKey(subject.code);
-  // only this subject's activities (R1 under R1, Mathematics under Mathematics); a choice made before that
-  // belongs elsewhere stays visible, marked, so nothing disappears silently
+  // only this subject's activities (R1 under R1, Mathematics under Mathematics), and of them the ones for the
+  // student's grade; when PARAKH has none for the grade or the subject, a wider list with a remark saying so.
+  // A choice made before that belongs elsewhere stays visible, marked, so nothing disappears silently.
   const own = options.filter((o) => !o.subjects || o.subjects.includes(subject.code));
-  const mine = own.length ? own : options;            // a subject with no activity of its own: every activity
+  const forGrade = row.grade ? own.filter((o) => !o.grade || o.grade === row.grade) : own;
+  const mine = forGrade.length ? forGrade : own.length ? own : options;
+  const remark = !own.length ? `No ${subject.name} activity on PARAKH - showing every activity`
+    : !forGrade.length ? `No ${subject.name} activity for ${row.grade} on PARAKH - showing other grades` : "";
   const elsewhere = value && !mine.some((o) => o.key === value) ? options.find((o) => o.key === value) : undefined;
   return (
     <>
@@ -414,8 +418,9 @@ function Cells({ sid, name, subject, value, row, options, unknownLabel, disabled
           <option value="">— Choose —</option>
           {unknownLabel && <option value={value}>{unknownLabel} (kept from PARAKH)</option>}
           {elsewhere && <option value={elsewhere.key}>{elsewhere.label} (not for this subject)</option>}
-          {mine.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
+          {mine.map((o) => <option key={o.key} value={o.key}>{o.label}{forGrade.length || !o.grade ? "" : ` (${o.grade})`}</option>)}
         </select>
+        {remark && <small className="grid-note" title={remark}>{!own.length ? "All activities" : "Other grades"}</small>}
       </td>
       {ABILITY_KEYS.map((a) => {
         const k = levelKey(subject.code, a);

@@ -151,3 +151,4 @@
 .lv-every th, .lv-every td { border-bottom: 1px dashed var(--brand-200); padding-bottom: 0.5rem; }
 .lv-ticked { display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.2rem 0.3rem 0.2rem 0.7rem; border-radius: 999px; background: var(--brand-50); border: 1px solid var(--brand-200); }
 .lv-who { margin: 0 0 0.6rem; color: var(--ink-2); font-size: 0.86rem; }
+.grid-note { display: block; font-size: 0.7rem; color: var(--muted); margin-top: 0.15rem; }

@@ -33,7 +33,7 @@ export interface GridData {
   stage: string;
   session: string;
   subjects: { code: string; name: string }[];
-  options: { key: string; label: string; subjects?: string[] | null }[];   // subjects: where the activity belongs
+  options: { key: string; label: string; subjects?: string[] | null; grade?: string }[];   // where the activity belongs
   labels: Record<string, string>;
   students: GridStudent[];
   grades: string[];
