@@ -9,6 +9,7 @@ PyJWT>=2.8
 requests>=2.31
 openpyxl>=3.1
 pillow>=10.0
+cryptography>=42          # stored passwords and encrypted backups
 
 # tests
 pytest>=8.0
