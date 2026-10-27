@@ -4,6 +4,7 @@ import { call } from "../api";
 import type { Api } from "../api";
 import { useCardCheck } from "./useCardCheck";
 import { ConnectPrompt } from "./ConnectPrompt";
+import { Modal } from "./Dialog";
 import { needsParakh } from "./parakhConnect";
 
 // Part C levels for the whole class on one screen (Bulk Entry). Saved into each student's draft; they are
@@ -28,6 +29,7 @@ export function LevelsGrid({ api, stage }: { api: Api; stage: string }) {
   const [message, setMessage] = useState<{ type: "success" | "error" | "warning"; text: string } | null>(null);
   const [ticked, setTicked] = useState<Set<string>>(new Set());            // students to set levels for together
   const [plan, setPlan] = useState<Record<string, string>>({});            // field key -> level to apply ("" = leave)
+  const [planOpen, setPlanOpen] = useState(false);                         // the "set their levels" pop-up
 
   const load = useCallback(async (refresh = false) => {
     setLoading(true);
@@ -105,6 +107,7 @@ export function LevelsGrid({ api, stage }: { api: Api; stage: string }) {
     setMessage({ type: "success", text: `Set ${planned} level${planned === 1 ? "" : "s"} for ${ticked.size} student${ticked.size === 1 ? "" : "s"}. Check them in the table, then press Save levels.` });
     setTicked(new Set());
     setPlan({});
+    setPlanOpen(false);
   };
 
   const save = async () => {
@@ -143,7 +146,7 @@ export function LevelsGrid({ api, stage }: { api: Api; stage: string }) {
         </button>
       </div>
       <p className="lib-muted">Most students are at the same level in most subjects. Fill the usual level for everyone, then tick the
-        students who are different (for example the Beginners), set their levels once, and save.
+        students who are different (for example all the Beginners), press "Set their levels…", and save.
         {data?.read_at && <> Loaded from the app's copy, read from PARAKH on {new Date(data.read_at).toLocaleString()}.</>}</p>
 
       <div aria-live="polite">
@@ -176,18 +179,30 @@ export function LevelsGrid({ api, stage }: { api: Api; stage: string }) {
             </label>
             <button type="button" className="btn btn-outline" onClick={fillEmpty} disabled={!fill || !empty}>Fill {empty} empty</button>
             <span className="lib-muted">{count ? `${count} unsaved change${count === 1 ? "" : "s"}` : "No unsaved changes"}</span>
+            {ticked.size > 0 && (
+              <span className="lv-ticked" role="status">
+                <b>{ticked.size} ticked</b>
+                <button type="button" className="btn btn-primary btn-sm" onClick={() => setPlanOpen(true)}>Set their levels…</button>
+                <button type="button" className="portal-link-btn" onClick={() => setTicked(new Set())}>Clear</button>
+              </span>
+            )}
             <button type="button" className="btn btn-outline" onClick={() => setEdits({})} disabled={!count || saving}>Undo changes</button>
             <button type="button" className="btn btn-green" onClick={save} disabled={!count || saving}>
               {saving ? <RefreshCw size={15} className="spin" aria-hidden="true" /> : <Save size={15} aria-hidden="true" />} Save levels
             </button>
           </div>
 
-          {ticked.size > 0 && (
-            <section className="lv-plan" aria-labelledby="lv-plan-title">
-              <div className="lv-plan-head">
-                <h3 id="lv-plan-title">Set levels for {ticked.size} ticked student{ticked.size === 1 ? "" : "s"}</h3>
-                <span className="lib-muted">Choose only what should change; "—" leaves a level as it is.</span>
-              </div>
+          {planOpen && ticked.size > 0 && (
+            <Modal wide title={`Set levels for ${ticked.size} ticked student${ticked.size === 1 ? "" : "s"}`}
+                   subtitle={<span className="lib-muted">Choose only what should change; "—" leaves a level as it is.</span>}
+                   onClose={() => setPlanOpen(false)}
+                   footer={<>
+                     <button type="button" className="btn btn-outline" onClick={() => setPlanOpen(false)}>Back to ticking</button>
+                     <button type="button" className="btn btn-primary" onClick={applyPlan} disabled={!planned}>
+                       Apply to {ticked.size} ticked student{ticked.size === 1 ? "" : "s"}
+                     </button>
+                   </>}>
+              <p className="lv-who">{data.rows.filter((r) => ticked.has(r.student_id)).map((r) => r.student_name).join(", ")}</p>
               <div className="lv-plan-scroll">
                 <table className="lv-plan-table">
                   <thead><tr><th scope="col">Subject</th>{abilities.map((a) => <th key={a} scope="col">{a}</th>)}</tr></thead>
@@ -226,13 +241,7 @@ export function LevelsGrid({ api, stage }: { api: Api; stage: string }) {
                   </tbody>
                 </table>
               </div>
-              <div className="tp-row">
-                <button type="button" className="btn btn-primary" onClick={applyPlan} disabled={!planned}>
-                  Apply to {ticked.size} ticked student{ticked.size === 1 ? "" : "s"}
-                </button>
-                <button type="button" className="btn btn-outline" onClick={() => { setTicked(new Set()); setPlan({}); }}>Clear ticks</button>
-              </div>
-            </section>
+            </Modal>
           )}
 
           <div className="grid-scroll" role="region" aria-label="Part C levels" tabIndex={0}>

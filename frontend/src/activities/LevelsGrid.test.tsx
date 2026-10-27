@@ -91,8 +91,13 @@ describe("Part C levels grid", () => {
 
   it("sets levels for the ticked students only: every subject at once, or one subject", async () => {
     const { puts, user } = setup();
-    await user.click(await screen.findByRole("checkbox", { name: "Tick STUDENT TWO" }));
-    expect(screen.getByRole("heading", { name: "Set levels for 1 ticked student" })).toBeInTheDocument();
+    await user.click(await screen.findByRole("checkbox", { name: "Tick STUDENT ONE" }));
+    await user.click(screen.getByRole("checkbox", { name: "Tick STUDENT TWO" }));            // tick as many as needed first
+    expect(screen.getByText("2 ticked")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("checkbox", { name: "Tick STUDENT ONE" }));            // and untick again
+    await user.click(screen.getByRole("button", { name: "Set their levels…" }));
+    expect(within(screen.getByRole("dialog")).getByText("STUDENT TWO")).toBeInTheDocument();
     await user.selectOptions(screen.getByRole("combobox", { name: "Every subject, Awareness" }), "Beginner");
     await user.selectOptions(screen.getByRole("combobox", { name: "Mathematics, Creativity, for the ticked students" }), "Advanced");
     await user.click(screen.getByRole("button", { name: "Apply to 1 ticked student" }));
@@ -101,7 +106,7 @@ describe("Part C levels grid", () => {
     expect(screen.getByRole("combobox", { name: "STUDENT TWO, Mathematics, Creativity" })).toHaveValue("Advanced");
     expect(screen.getByRole("combobox", { name: "STUDENT TWO, Mathematics, Sensitivity" })).toHaveValue("");     // left as it was
     expect(screen.getByRole("combobox", { name: "STUDENT ONE, Language 1 (R1), Awareness" })).toHaveValue("Advanced");  // not ticked
-    expect(screen.queryByRole("heading", { name: /Set levels for/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /Save levels/ }));
     await waitFor(() => expect(puts).toHaveLength(1));
     expect(puts[0].values).toEqual({ "2": { c_PSLS1_awareness: "Beginner", c_PSLS3_awareness: "Beginner", c_PSLS3_creativity: "Advanced" } });

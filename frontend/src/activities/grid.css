@@ -149,3 +149,5 @@
 .lv-plan-table tbody th { font-weight: 600; white-space: nowrap; }
 .lv-plan-table .form-select { min-width: 9.5rem; padding: 0.35rem 0.5rem; }
 .lv-every th, .lv-every td { border-bottom: 1px dashed var(--brand-200); padding-bottom: 0.5rem; }
+.lv-ticked { display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.2rem 0.3rem 0.2rem 0.7rem; border-radius: 999px; background: var(--brand-50); border: 1px solid var(--brand-200); }
+.lv-who { margin: 0 0 0.6rem; color: var(--ink-2); font-size: 0.86rem; }
