@@ -249,13 +249,25 @@ class Portal:
         if wait > 0:
             time.sleep(wait)
 
+    READ_TRIES = 3                      # a slow or dropped READ is asked again; a save never is
+    RETRY_WAIT = 5.0
+
     def _send(self, method: str, path: str, **kwargs) -> requests.Response:
-        """One request; a connection problem or timeout becomes a PortalError the callers handle (H-1)."""
-        self._pace()
-        try:
-            return self.http.request(method, f"{API}{path}", timeout=30, **kwargs)
-        except requests.RequestException as exc:
-            raise PortalError(f"PARAKH did not answer ({type(exc).__name__}). Please try again in a few minutes.") from exc
+        """One request; a connection problem or timeout becomes a PortalError the callers handle (H-1).
+        Reads (GET) change nothing on PARAKH, so a timeout or dropped connection is tried again a few seconds
+        later; saves (PATCH/POST) are sent once only."""
+        tries = self.READ_TRIES if method.upper() == "GET" else 1
+        for attempt in range(1, tries + 1):
+            self._pace()
+            try:
+                return self.http.request(method, f"{API}{path}", timeout=30, **kwargs)
+            except (requests.Timeout, requests.ConnectionError) as exc:
+                if attempt < tries:
+                    time.sleep(self.RETRY_WAIT * attempt)
+                    continue
+                raise PortalError(f"PARAKH did not answer ({type(exc).__name__}). Please try again in a few minutes.") from exc
+            except requests.RequestException as exc:
+                raise PortalError(f"PARAKH did not answer ({type(exc).__name__}). Please try again in a few minutes.") from exc
 
     def _request(self, method: str, path: str, **kwargs) -> Dict[str, Any]:
         token = self.session.access_token

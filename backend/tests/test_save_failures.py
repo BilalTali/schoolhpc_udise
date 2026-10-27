@@ -109,3 +109,28 @@ def test_an_upload_job_goes_on_after_one_student_fails(tmp_path, monkeypatch):
         assert recs["1001"].verification_result == "Saved: part_a1, part_a2; failed at: part_a3"
     saved = [(sid, p["hpc_col"]) for _, sid, p in portal.saved]
     assert ("1001", "part_a3") not in saved and [c for s, c in saved if s == "1002"][-1] == "hpc_credit"
+
+
+def test_a_slow_read_is_asked_again_but_a_save_is_sent_once(monkeypatch):
+    session = portal_mod.Session(access_token="t", staff={"staff_id": f"slow-{uuid.uuid4().hex}"})
+    client = portal_mod.Portal(session)
+    client.min_interval, client.RETRY_WAIT = 0, 0
+    calls = []
+
+    class Ok:
+        status_code, ok, text = 200, True, ""
+        def json(self):
+            return {"success": True, "data": {"formdata": None}}
+
+    def flaky(method, url, **kwargs):
+        calls.append(method)
+        if len(calls) < 3:
+            raise requests.ReadTimeout("read timed out")
+        return Ok()
+    monkeypatch.setattr(client.http, "request", flaky)
+    assert client.student("Preparatory", "1001") == {"formdata": None} and calls == ["GET", "GET", "GET"]
+    calls.clear()
+    monkeypatch.setattr(client.http, "request", lambda m, u, **k: (calls.append(m), (_ for _ in ()).throw(requests.ReadTimeout("x")))[1])
+    with pytest.raises(PortalError):
+        client.save_part("Preparatory", "1001", {"hpc_col": "part_a1"})
+    assert calls == ["PATCH"]                                       # never sent twice
