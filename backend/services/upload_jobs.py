@@ -157,6 +157,8 @@ def run_job(job_id: str, client: Portal, path: str, teacher_id: Optional[str] = 
             row.attempt_count = (row.attempt_count or 0) + 1
             row.error_message = "; ".join(result.errors)[:4000] or None
             row.verification_result = ("Portal confirms COMPLETED" if result.status == "COMPLETED"
+                                       else f"Saved: {', '.join(result.saved_parts) or 'nothing'}; failed at: {result.failed_part}"
+                                       if result.failed_part
                                        else f"Saved: {', '.join(result.saved_parts)}" if result.saved_parts else None)
             row.completed_at = datetime.utcnow()
             job.success_count = sum(1 for r in records.values() if r.status == "SUCCESS")

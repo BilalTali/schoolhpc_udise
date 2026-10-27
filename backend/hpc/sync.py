@@ -41,6 +41,7 @@ class SyncResult:
     saved_parts: List[str] = field(default_factory=list)
     stage: str = ""
     changes: List[str] = field(default_factory=list)   # dry run: what a save would change on PARAKH (field names)
+    failed_part: str = ""                  # the part whose save failed, after saved_parts reached PARAKH (H-1)
 
 
 def fetch_student(portal: Portal, stage: str, student_id: str) -> StudentData:
@@ -307,6 +308,9 @@ def sync_student(portal: Portal, stage: str, student_id: str, row: Dict[str, Any
     """before_save keeps a copy of what PARAKH holds; nothing is written without one. on_step is told each
     step in plain words, for a live view. data: the card just read from PARAKH by the caller (not read twice)."""
     name = str(row.get("student_name") or student_id)
+    names = {p.col: ("HPC Credit" if p.code == "D" else f"Part {p.code}") for p in get_stage(stage).PARTS}
+    saved: List[str] = []
+    current = ""                                     # the part being saved when something went wrong
     try:
         if data is None:
             on_step("Reading the card from PARAKH")
@@ -328,12 +332,12 @@ def sync_student(portal: Portal, stage: str, student_id: str, row: Dict[str, Any
             return SyncResult(student_id, name, "FAILED", [f"Not saved: could not keep a copy of the current PARAKH "
                                                            f"values first ({exc})."], stage=stage)
 
-        saved = []
-        names = {p.col: ("HPC Credit" if p.code == "D" else f"Part {p.code}") for p in get_stage(stage).PARTS}
         for i, payload in enumerate(payloads, start=1):
-            on_step(f"Saving {names.get(payload['hpc_col'], payload['hpc_col'])} ({i} of {len(payloads)})")
+            current = payload["hpc_col"]
+            on_step(f"Saving {names.get(current, current)} ({i} of {len(payloads)})")
             portal.save_part(stage, student_id, payload)
-            saved.append(payload["hpc_col"])
+            saved.append(current)
+        current = ""
         on_step("Checking that PARAKH shows the card completed")
 
         remember = getattr(resolve, "remember", None)
@@ -345,5 +349,9 @@ def sync_student(portal: Portal, stage: str, student_id: str, row: Dict[str, Any
             return SyncResult(student_id, name, "FAILED",
                               [f"Portal shows current part '{after.get('current_part')}' after saving, not 'mc'"], saved, stage)
         return SyncResult(student_id, name, "COMPLETED", [], saved, stage)
-    except PortalError as exc:
-        return SyncResult(student_id, name, "FAILED", [str(exc)], stage=stage)
+    except Exception as exc:                          # one student fails; the caller goes on with the next (H-1)
+        reason = str(exc) if isinstance(exc, PortalError) else f"Unexpected error: {exc}"
+        if current:
+            done = ", ".join(names.get(c, c) for c in saved) or "Nothing"
+            reason = f"{done} saved; {names.get(current, current)} failed: {reason}"
+        return SyncResult(student_id, name, "FAILED", [reason], saved, stage, failed_part=current)

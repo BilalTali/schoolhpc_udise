@@ -210,8 +210,11 @@ class Portal:
         with self._lock:
             if self.session.access_token != rejected_token:
                 return True                      # another thread already renewed it
-            resp = _http().post(f"{API}/auth/refresh-token", timeout=20,
-                                headers={"Authorization": f"Bearer {self.session.refresh_token}"})
+            try:
+                resp = _http().post(f"{API}/auth/refresh-token", timeout=20,
+                                    headers={"Authorization": f"Bearer {self.session.refresh_token}"})
+            except requests.RequestException as exc:
+                raise PortalError(f"PARAKH did not answer ({type(exc).__name__}). Please try again in a few minutes.") from exc
             data = (_json(resp).get("data") or {}) if resp.ok else {}
             if data.get("access_token"):
                 self.session.access_token = data["access_token"]
@@ -246,13 +249,19 @@ class Portal:
         if wait > 0:
             time.sleep(wait)
 
+    def _send(self, method: str, path: str, **kwargs) -> requests.Response:
+        """One request; a connection problem or timeout becomes a PortalError the callers handle (H-1)."""
+        self._pace()
+        try:
+            return self.http.request(method, f"{API}{path}", timeout=30, **kwargs)
+        except requests.RequestException as exc:
+            raise PortalError(f"PARAKH did not answer ({type(exc).__name__}). Please try again in a few minutes.") from exc
+
     def _request(self, method: str, path: str, **kwargs) -> Dict[str, Any]:
         token = self.session.access_token
-        self._pace()
-        resp = self.http.request(method, f"{API}{path}", timeout=30, **kwargs)
+        resp = self._send(method, path, **kwargs)
         if resp.status_code == 401 and self.refresh(token):
-            self._pace()
-            resp = self.http.request(method, f"{API}{path}", timeout=30, **kwargs)
+            resp = self._send(method, path, **kwargs)
         self.last_status = resp.status_code                 # for callers that report it (e.g. phase 3b)
         if resp.status_code == 401:
             raise PortalError("Portal session expired. Please start the HPC session again.")
