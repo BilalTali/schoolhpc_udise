@@ -107,6 +107,9 @@ class UploadJob(Base):
     file_hash = Column(String(64), nullable=True)
     detected_stage = Column(String(30), nullable=False)
     status = Column(String(30), default="PENDING")   # PENDING, IN_PROGRESS, COMPLETED, PARTIAL_SUCCESS, FAILED
+    # the teacher's id while the job is PENDING or IN_PROGRESS, empty after: unique, so the database itself
+    # refuses a second active job for the same teacher (H-3)
+    active_teacher_id = Column(String(36), nullable=True, unique=True)
     total_students = Column(Integer, default=0)
     success_count = Column(Integer, default=0)
     failed_count = Column(Integer, default=0)

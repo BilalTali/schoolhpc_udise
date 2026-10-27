@@ -201,6 +201,7 @@ def run_job(job_id: str, client: Portal, path: str, teacher_id: Optional[str] = 
                 r.status, r.error_message = "FAILED", f"Upload stopped: {exc}"
     finally:
         job.completed_at = datetime.utcnow()
+        job.active_teacher_id = None                  # the teacher may start the next upload (H-3)
         db.commit()
         db.close()
 
@@ -213,6 +214,7 @@ def recover_interrupted_jobs() -> int:
         for job in stuck:
             job.status = "FAILED"
             job.completed_at = datetime.utcnow()
+            job.active_teacher_id = None
             for r in job.records:
                 if r.status in ("PENDING", "IN_PROGRESS", "VALIDATED"):
                     r.status, r.error_message = "FAILED", "Server restarted during upload. Upload the file again."

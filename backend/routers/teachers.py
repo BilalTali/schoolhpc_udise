@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse, StreamingResponse
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backend.database import get_db
@@ -171,6 +172,7 @@ def end_session(teacher: Teacher = Depends(require_teacher)):
 # limit), so it runs in the background and the web app shows its progress.
 _fetch_jobs: Dict[str, Dict[str, Any]] = {}
 _fetch_lock = threading.Lock()
+_submit_lock = threading.Lock()           # one upload per teacher: checked and started under this lock (H-3)
 
 
 def _fetch_view(job: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -316,25 +318,31 @@ def submit_upload(file_name: str, background_tasks: BackgroundTasks, teacher: Te
     path = _upload_path(teacher, file_name)
     if not path.exists():
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Uploaded file not found. Upload and validate it first.")
-    active = db.query(UploadJob).filter(UploadJob.teacher_id == teacher.id,
-                                        UploadJob.status.in_(["PENDING", "IN_PROGRESS"])).first()
-    if active:
-        raise HTTPException(status.HTTP_409_CONFLICT, "An upload is already running. Wait for it to finish.")
-
+    busy = HTTPException(status.HTTP_409_CONFLICT, "An upload is already running. Wait for it to finish.")
     stages = _workbook_stages(teacher, path)
     rows = workbook.read(path)
     client = _portal(teacher)
     label = ", ".join(s[:4] for s in stages) if len(stages) > 1 else stages[0]       # fits the 30-char column
-    job = UploadJob(teacher_id=teacher.id, original_filename=file_name, detected_stage=label, status="PENDING",
-                    file_hash=hashlib.sha256(path.read_bytes()).hexdigest(), total_students=len(rows))
-    db.add(job)
-    db.flush()
-    for row_number, (sid, row) in enumerate(rows.items(), start=3):
-        db.add(StudentRecord(job_id=job.id, row_number=row_number, admission_number=sid,
-                             student_name=str(row.get(workbook.NAME_KEY) or sid), student_key=sid,
-                             grade=str(row.get("grade") or "")[:20], section=str(row.get("section") or "")[:10],
-                             status="PENDING" if row.get(workbook.SYNC_KEY) else "SKIPPED"))
-    db.commit()
+    with _submit_lock:
+        active = db.query(UploadJob).filter(UploadJob.teacher_id == teacher.id,
+                                            UploadJob.status.in_(["PENDING", "IN_PROGRESS"])).first()
+        if active:
+            raise busy
+        job = UploadJob(teacher_id=teacher.id, original_filename=file_name, detected_stage=label, status="PENDING",
+                        file_hash=hashlib.sha256(path.read_bytes()).hexdigest(), total_students=len(rows),
+                        active_teacher_id=teacher.id)
+        db.add(job)
+        try:
+            db.flush()                         # the database's own guard, should another server process race us
+        except IntegrityError:
+            db.rollback()
+            raise busy
+        for row_number, (sid, row) in enumerate(rows.items(), start=3):
+            db.add(StudentRecord(job_id=job.id, row_number=row_number, admission_number=sid,
+                                 student_name=str(row.get(workbook.NAME_KEY) or sid), student_key=sid,
+                                 grade=str(row.get("grade") or "")[:20], section=str(row.get("section") or "")[:10],
+                                 status="PENDING" if row.get(workbook.SYNC_KEY) else "SKIPPED"))
+        db.commit()
     db.refresh(job)
     background_tasks.add_task(upload_jobs.run_job, job.id, client, str(path), teacher.id)
     return _job_response(job)

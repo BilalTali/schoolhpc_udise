@@ -24,6 +24,15 @@ def init_db() -> None:
             f"Cannot open the database ({DATABASE_URL.split('@')[-1]}): {exc}\n"
             "Start MySQL in the XAMPP control panel, or set HPC_DATABASE_URL in .env."
         )
+    migrate(engine)
+
+
+def migrate(engine) -> None:
+    """Brings tables made by older versions up to date: missing columns, and the unique rule of a column
+    marked unique (create_all only adds those to new tables)."""
+    import backend.models.entities  # noqa: F401
+    import backend.models.library   # noqa: F401
+    import backend.models.settings  # noqa: F401
     inspector = inspect(engine)
     with engine.begin() as conn:
         for table in Base.metadata.sorted_tables:
@@ -34,6 +43,11 @@ def init_db() -> None:
                 if column.name not in existing:
                     col_type = column.type.compile(dialect=engine.dialect)
                     conn.execute(text(f"ALTER TABLE {table.name} ADD COLUMN {column.name} {col_type} NULL"))
+            unique = {tuple(i["column_names"]) for i in inspector.get_indexes(table.name) if i.get("unique")}
+            unique |= {tuple(u["column_names"]) for u in inspector.get_unique_constraints(table.name)}
+            for column in table.columns:
+                if column.unique and (column.name,) not in unique:
+                    conn.execute(text(f"CREATE UNIQUE INDEX uq_{table.name}_{column.name} ON {table.name} ({column.name})"))
 
 
 def get_db():
