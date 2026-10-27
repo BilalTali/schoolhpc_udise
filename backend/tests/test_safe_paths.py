@@ -157,7 +157,7 @@ def _values(world):
 def _routes():
     import importlib
     out = []
-    for m in ("auth", "schools", "teachers", "hpc_cards", "activity_library", "activities_grid", "class_template"):
+    for m in ("auth", "schools", "teachers", "hpc_cards", "activity_library", "activities_grid", "class_template", "platform"):
         for r in importlib.import_module(f"backend.routers.{m}").router.routes:
             for method in r.methods:
                 out.append((method, r.path, r))
@@ -220,5 +220,5 @@ def test_no_route_lets_a_traversal_value_leave_the_account_folder(world):
                     if SECRET in r.text:
                         problems.append(f"{method} {path} [{kind} {target}] {value!r} as {who}: answer has another account's data")
                     problems += [f"{method} {path} [{kind} {target}] {value!r} as {who}: {p}" for p in _escapes(world, before)]
-    assert sent > 3000 and len(swept) >= 60
+    assert sent > 3000 and len(swept) >= 70
     assert problems == [], "\n".join(problems[:20])

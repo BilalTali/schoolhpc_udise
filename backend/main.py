@@ -17,6 +17,7 @@ from backend.routers.activity_library import router as activity_library_router
 from backend.routers.auth import router as auth_router
 from backend.routers.class_template import router as class_template_router
 from backend.routers.hpc_cards import router as hpc_cards_router
+from backend.routers.platform import router as platform_router
 from backend.routers.schools import router as schools_router
 from backend.routers.teachers import router as teachers_router
 from backend.services.activity_library import recover_interrupted_syncs
@@ -66,7 +67,7 @@ async def unsafe_path(request: Request, exc: UnsafePath):
 
 
 for router in (auth_router, schools_router, teachers_router, hpc_cards_router, activity_library_router,
-               activities_grid_router, class_template_router):
+               activities_grid_router, class_template_router, platform_router):
     app.include_router(router, prefix="/api/v1")
 
 

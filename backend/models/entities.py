@@ -90,6 +90,19 @@ class Teacher(Base):
         return [s.strip() for s in (self.assigned_stage or "").split(",") if s.strip()] or ["Preparatory"]
 
 
+class PlatformAdmin(Base):
+    """The application admin: one account that sees and manages every school (its login ID comes from .env)."""
+    __tablename__ = "platform_admins"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    login = Column(String(191), unique=True, nullable=False)
+    hashed_password = Column(String(255), nullable=False)
+    is_active = Column(Boolean, default=True)
+    token_epoch = Column(Integer, nullable=True, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    last_login = Column(DateTime, nullable=True)
+
+
 class RefreshToken(Base):
     """A signed-in browser session; revoked on logout, rotation or suspected reuse."""
     __tablename__ = "refresh_tokens"

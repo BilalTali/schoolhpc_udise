@@ -18,7 +18,7 @@ ASYNC_ALLOWED = set()          # async routes that are known to do no blocking w
 
 def test_no_route_is_async_unless_known_to_be_safe():
     found = set()
-    for m in ("auth", "schools", "teachers", "hpc_cards", "activity_library", "activities_grid", "class_template"):
+    for m in ("auth", "schools", "teachers", "hpc_cards", "activity_library", "activities_grid", "class_template", "platform"):
         for r in importlib.import_module(f"backend.routers.{m}").router.routes:
             if asyncio.iscoroutinefunction(r.endpoint):
                 found.add(f"{m}.{r.endpoint.__name__}")

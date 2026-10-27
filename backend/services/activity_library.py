@@ -78,6 +78,11 @@ class Actor:
     def is_admin(self) -> bool:
         return self.role == "SCHOOL_ADMIN"
 
+    @property
+    def is_platform(self) -> bool:
+        """The application admin: reviews shared activities and makes activities for every school."""
+        return self.role == "APP_ADMIN"
+
 
 def actor_from(current_user: Dict[str, Any]) -> Actor:
     user = current_user["user"]
@@ -119,6 +124,8 @@ def _subject_names(stage: str) -> Dict[str, str]:
 def can_view(actor: Actor, act: LibraryActivity) -> bool:
     if act.source == "portal_global":
         return True
+    if actor.is_platform:                  # PARAKH's bank, activities offered to every school, and its own
+        return act.share_state in ("community", "community_ok") or (act.source == "local" and act.owner_school_id is None)
     same_school = act.owner_school_id == actor.school_id
     if act.source == "portal_teacher":
         return same_school and (actor.is_admin or act.owner_teacher_id == actor.id)
@@ -132,6 +139,8 @@ def can_view(actor: Actor, act: LibraryActivity) -> bool:
 def can_edit_text(actor: Actor, act: LibraryActivity) -> bool:
     """PARAKH activities: anyone who sees them - the school admin edits the school's copy, a teacher their own
     (used for their students only). Made in this app: the owner (or the admin)."""
+    if actor.is_platform:                  # its own activities only; schools edit their own copies of PARAKH's
+        return act.source == "local" and act.owner_school_id is None
     if act.source != "local":
         return can_view(actor, act)
     if act.owner_school_id != actor.school_id:
@@ -633,8 +642,8 @@ def create_local(db: Session, actor: Actor, stage: str, title: str, changes: Dic
     act = LibraryActivity(source="local", stage=stage, code=title, title=title,
                           content=_apply_texts({}, {k: v for k, v in clean.items() if k not in ("subjects", "grade_id")}),
                           subjects=clean["subjects"], grade_id=clean.get("grade_id"), owner_school_id=actor.school_id,
-                          owner_teacher_id=None if actor.is_admin else actor.id,
-                          share_state="school" if actor.is_admin else "private",
+                          owner_teacher_id=None if actor.is_admin or actor.is_platform else actor.id,
+                          share_state="school" if actor.is_admin else "private",   # the app admin publishes later
                           created_by=actor.key, updated_by=actor.key)
     db.add(act)
     db.flush()

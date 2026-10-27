@@ -84,6 +84,10 @@ AUTO_CAPTCHA = os.getenv("HPC_AUTO_CAPTCHA", "false").lower() == "true"
 # Uploaded workbooks (students' data) are deleted after this many days; 0 keeps them (L-12).
 UPLOAD_KEEP_DAYS = int(os.getenv("HPC_UPLOAD_KEEP_DAYS", "30"))
 
+# The application admin (one account above every school): its login ID. The password is set once, on first
+# sign-in, from a browser on the server PC itself; it is stored only as a hash.
+APP_ADMIN_LOGIN = os.getenv("HPC_APP_ADMIN_LOGIN", "").strip().lower()
+
 # Largest workbook a teacher may upload (M-6).
 MAX_UPLOAD_BYTES = int(float(os.getenv("HPC_MAX_UPLOAD_MB", "20")) * 1024 * 1024)
 

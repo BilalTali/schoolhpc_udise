@@ -4,9 +4,10 @@ Authentication Router: School Registration (One School = One UDISE) & Login
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from backend.database import get_db
-from backend.models.entities import School, Teacher
+from backend.models.entities import PlatformAdmin, School, Teacher
 from backend.schemas.schemas import (
     SchoolRegisterRequest, SchoolResponse, LoginRequest, TokenResponse
 )
@@ -89,6 +90,22 @@ def login(payload: LoginRequest, request: Request, response: Response, db: Sessi
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, headers={"Retry-After": str(wait)},
                             detail=f"Too many wrong passwords. Please try again in {wait} second{'s' if wait != 1 else ''}.")
 
+    # The application admin: its login ID comes from .env; the password is set once, on this PC
+    from backend import config
+    if config.APP_ADMIN_LOGIN and clean_id_lower == config.APP_ADMIN_LOGIN:
+        admin = db.query(PlatformAdmin).filter(PlatformAdmin.login == config.APP_ADMIN_LOGIN).first()
+        if admin is None:
+            raise HTTPException(status.HTTP_409_CONFLICT, {"setup_required": True, "message":
+                                "Set the application admin's password first (only from a browser on the server PC)."})
+        if verify_password(payload.password, admin.hashed_password) and admin.is_active:
+            login_limits.succeeded(identifier)
+            admin.last_login = datetime.utcnow()
+            db.commit()
+            issue_session(response, db, admin.id, "APP_ADMIN", payload.remember_me)
+            return TokenResponse(access_token="", role="APP_ADMIN", user_id=admin.id, name="Application admin")
+        login_limits.failed(identifier, address)
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid credentials. Please verify your UDISE/Username and Password.")
+
     # Case 1: Try School Admin match (by UDISE or Email)
     school = db.query(School).filter(
         (School.udise_code == identifier) | (School.admin_email == clean_id_lower)
@@ -162,11 +179,37 @@ def login(payload: LoginRequest, request: Request, response: Response, db: Sessi
     )
 
 
+class AppAdminSetup(BaseModel):
+    login: str
+    password: str = Field(..., min_length=12, description="At least 12 characters")
+
+
+@router.post("/app-admin/setup")
+def setup_app_admin(payload: AppAdminSetup, request: Request, db: Session = Depends(get_db)):
+    """Sets the application admin's password the first time. Only for the login ID in .env, only once, and only
+    from a browser on the server PC itself (so nobody who merely learns the login ID can claim the account)."""
+    from backend import config
+    from backend.services import audit
+    if not config.APP_ADMIN_LOGIN or payload.login.strip().lower() != config.APP_ADMIN_LOGIN:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "That is not the application admin's login ID.")
+    if _address(request) not in ("127.0.0.1", "::1", "localhost"):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Set this password from a browser on the server PC itself.")
+    if db.query(PlatformAdmin).filter(PlatformAdmin.login == config.APP_ADMIN_LOGIN).first():
+        raise HTTPException(status.HTTP_409_CONFLICT, "The application admin's password is already set.")
+    admin = PlatformAdmin(login=config.APP_ADMIN_LOGIN, hashed_password=hash_password(payload.password))
+    db.add(admin)
+    db.commit()
+    audit.record(f"app_admin:{admin.id}", "setup_app_admin", "platform_admin", admin.id)
+    return {"success": True, "message": "Password set. Sign in with the login ID and this password."}
+
+
 @router.get("/me")
 def get_my_profile(current=Depends(get_current_user)):
     """Inspects active authenticated session and claims."""
     u = current["user"]
     role = current["role"]
+    if role == "APP_ADMIN":
+        return {"role": role, "id": u.id, "name": "Application admin", "login": u.login}
     if role == "SCHOOL_ADMIN":
         return {
             "role": role,

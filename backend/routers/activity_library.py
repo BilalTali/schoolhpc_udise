@@ -167,6 +167,8 @@ def sync_job(job_id: str, actor: lib.Actor = Depends(_actor), db: Session = Depe
 def start_sync(payload: SyncRequest, background_tasks: BackgroundTasks, actor: lib.Actor = Depends(_actor),
                db: Session = Depends(get_db)):
     stages = [lib.check_stage(payload.stage)] if payload.stage else list(lib.STAGES)
+    if actor.is_platform:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Each school's admin updates the activities from PARAKH.")
     client = _client(db, actor)                       # fails here (401) when there is no PARAKH session
     if not actor.is_admin:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Your school admin updates the activities from PARAKH (it also "

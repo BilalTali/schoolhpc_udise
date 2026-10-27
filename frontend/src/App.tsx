@@ -38,6 +38,7 @@ import { HpcCardEditor, HpcBulkEntry } from "./HpcCards";
 import { NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { API_BASE, apiFetch } from "./api";
 import { ActivityLibraryPage } from "./activities/ActivityLibraryPage";
+import { PlatformAdmin } from "./activities/PlatformAdmin";
 import { ActivitiesGrid } from "./activities/ActivitiesGrid";
 import { ClassSettings } from "./activities/ClassSettings";
 import { TemplatePanel } from "./activities/TemplatePanel";
@@ -94,7 +95,7 @@ interface UploadJobStatus {
 }
 
 interface UserInfo {
-  role: "SCHOOL_ADMIN" | "TEACHER";
+  role: "SCHOOL_ADMIN" | "TEACHER" | "APP_ADMIN";
   name: string;
   user_id: string;
   school_id?: string;
@@ -211,6 +212,9 @@ export default function App() {
   // Auth form
   const [adminIdentifier, setAdminIdentifier] = useState("");
   const [adminPassword, setAdminPassword] = useState("");
+  const [appAdminSetup, setAppAdminSetup] = useState<string | null>(null);     // login ID whose first password is being set
+  const [setupPassword, setSetupPassword] = useState("");
+  const [setupAgain, setSetupAgain] = useState("");
   const [teacherUsername, setTeacherUsername] = useState("");
   const [teacherPassword, setTeacherPassword] = useState("");
 
@@ -518,7 +522,7 @@ export default function App() {
       fetchSchoolData();
       fetchSchoolHpcStatus();
       loadSchoolRoster(schoolActiveStageRef.current);
-    } else {
+    } else if (user.role === "TEACHER") {
       fetchTeacherHpcStatus();
       let initStage = "Preparatory";
       if (user.assigned_stages && user.assigned_stages.length > 0) {
@@ -1095,7 +1099,7 @@ export default function App() {
 
   // A fetch from PARAKH still running (for example after a page reload) is followed again.
   useEffect(() => {
-    if (!user || user.role === "SCHOOL_ADMIN") return;
+    if (!user || user.role !== "TEACHER") return;
     apiFetch("/teacher/roster/sync")
       .then(async (res) => {
         if (!res.ok) return;
@@ -1107,7 +1111,7 @@ export default function App() {
 
   // An upload still running (for example after a page reload) is shown live again.
   useEffect(() => {
-    if (!user || user.role === "SCHOOL_ADMIN") return;
+    if (!user || user.role !== "TEACHER") return;
     apiFetch("/teacher/upload/jobs")
       .then(async (res) => {
         if (!res.ok) return;
@@ -1159,8 +1163,38 @@ export default function App() {
         };
         setUser(userInfo);
         setStatusMsg({ type: "success", text: `Welcome back, ${data.name}!` });
+      } else if (res.status === 409 && data.detail?.setup_required) {
+        setAppAdminSetup(identifier);                  // the application admin's first sign-in: set the password
+        setStatusMsg({ type: "warning", text: data.detail.message });
       } else {
-        setStatusMsg({ type: "error", text: data.detail || "Invalid credentials." });
+        setStatusMsg({ type: "error", text: typeof data.detail === "string" ? data.detail : data.detail?.message || "Invalid credentials." });
+      }
+    } catch (err: any) {
+      setStatusMsg({ type: "error", text: err.message });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleAppAdminSetup = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setStatusMsg(null);
+    try {
+      const res = await apiFetch("/auth/app-admin/setup", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ login: appAdminSetup, password: setupPassword }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setAppAdminSetup(null);
+        setAdminPassword("");
+        setSetupPassword("");
+        setSetupAgain("");
+        setStatusMsg({ type: "success", text: "Password set. Sign in with the login ID and this password." });
+      } else {
+        const d = data.detail;
+        setStatusMsg({ type: "error", text: Array.isArray(d) ? "Use at least 12 characters." : (d || "The password could not be set.") });
       }
     } catch (err: any) {
       setStatusMsg({ type: "error", text: err.message });
@@ -1436,10 +1470,31 @@ export default function App() {
               <button type="button" role="tab" aria-selected={authTab === "register"} className={authTab === "register" ? "active" : ""}
                       onClick={() => { setAuthTab("register"); setStatusMsg(null); }}><School size={15} aria-hidden="true" /> New school</button>
             </div>
-              {authTab === "admin_login" && (
+              {authTab === "admin_login" && appAdminSetup && (
+                <form onSubmit={handleAppAdminSetup}>
+                  <p className="lib-muted">First sign-in of the application admin <b>{appAdminSetup}</b>. Choose its password (at least 12
+                    characters). This works only in a browser on the server PC.</p>
+                  <div className="form-group" style={{ marginBottom: "1.2rem" }}>
+                    <label className="form-label" htmlFor="app_admin_pw">New password</label>
+                    <input id="app_admin_pw" type="password" className="form-input" minLength={12} autoComplete="new-password"
+                           value={setupPassword} onChange={(e) => setSetupPassword(e.target.value)} required />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: "1.5rem" }}>
+                    <label className="form-label" htmlFor="app_admin_pw2">Type it again</label>
+                    <input id="app_admin_pw2" type="password" className="form-input" autoComplete="new-password"
+                           value={setupAgain} onChange={(e) => setSetupAgain(e.target.value)} required />
+                  </div>
+                  <button type="submit" className="btn btn-primary" style={{ width: "100%" }}
+                          disabled={loading || setupPassword.length < 12 || setupPassword !== setupAgain}>
+                    <KeyRound size={16} /> Set the password
+                  </button>
+                  <button type="button" className="portal-link-btn" onClick={() => setAppAdminSetup(null)}>Back to sign in</button>
+                </form>
+              )}
+              {authTab === "admin_login" && !appAdminSetup && (
                 <form onSubmit={(e) => handleLogin(e, "SCHOOL_ADMIN")}>
                   <div className="form-group" style={{ marginBottom: "1.2rem" }}>
-                    <label className="form-label"><span>UDISE+ Code or Admin Email</span><span className="form-hint">11-digit code</span></label>
+                    <label className="form-label"><span>UDISE+ Code or Admin Email</span><span className="form-hint">11-digit code (application admin: your login ID)</span></label>
                     <input type="text" className="form-input" placeholder="e.g. 27010100101 or principal@school.edu.in" value={adminIdentifier} onChange={(e) => setAdminIdentifier(e.target.value)} required />
                   </div>
                   <div className="form-group" style={{ marginBottom: "1.5rem" }}>
@@ -1517,6 +1572,11 @@ export default function App() {
         </section>
       </div>
     );
+  }
+
+  // ─── The application admin: its own pages, above every school ─────────────
+  if (user.role === "APP_ADMIN") {
+    return <main className="content">{statusAlert}<PlatformAdmin api={cardsApi} onLogout={handleLogout} /></main>;
   }
 
   // ─── Signed in: sidebar + top bar ───────────────────────────────────────

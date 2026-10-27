@@ -363,3 +363,18 @@ h1, h2, h3, h4 { font-family: var(--font-heading); letter-spacing: -0.02em; }
 .as-list li b { min-width: 7rem; }
 .as-list li span { color: var(--muted); flex: 1; }
 .section-label { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--faint); margin: 0.5rem 0 0.6rem; font-weight: 700; }
+
+/* Application admin */
+.pa-shell { max-width: 1200px; margin: 0 auto; display: flex; flex-direction: column; gap: 1rem; }
+.pa-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap; }
+.pa-head h1 { margin: 0; font-size: 1.35rem; }
+.pa-tabs { display: flex; gap: 0.4rem; flex-wrap: wrap; border-bottom: 1px solid var(--line, #e5e7eb); }
+.pa-tabs button { display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.55rem 0.9rem; border: 0; background: none;
+  border-bottom: 2px solid transparent; cursor: pointer; font: inherit; color: var(--muted); }
+.pa-tabs button.active { color: var(--brand-600); border-bottom-color: var(--brand-600); font-weight: 600; }
+.pa-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 0.8rem; }
+.pa-tile { background: var(--surface, #fff); border: 1px solid var(--line, #e5e7eb); border-radius: 12px; padding: 0.9rem 1rem;
+  display: flex; flex-direction: column; gap: 0.2rem; }
+.pa-tile b { font-size: 1.6rem; }
+.pa-actions { display: flex; flex-wrap: wrap; gap: 0.2rem 0.8rem; }
+.pa-sub > td { background: var(--brand-50, #fff7f2); }

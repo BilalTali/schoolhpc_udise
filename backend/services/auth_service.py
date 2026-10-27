@@ -24,7 +24,7 @@ from backend.config import (
     REFRESH_DAYS_DEFAULT, REFRESH_DAYS_REMEMBER,
 )
 from backend.database import get_db
-from backend.models.entities import RefreshToken, School, Teacher
+from backend.models.entities import PlatformAdmin, RefreshToken, School, Teacher
 
 security = HTTPBearer(auto_error=False)
 ACCESS_COOKIE, REFRESH_COOKIE = "ta_access", "ta_refresh"
@@ -176,7 +176,14 @@ def _load_user(db: Session, user_id: str, role: str) -> Dict[str, Any]:
         teacher = db.query(Teacher).filter(Teacher.id == user_id, Teacher.is_active == True).first()  # noqa: E712
         if not teacher:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Teacher account not found or inactive.")
+        if teacher.school is not None and not teacher.school.is_active:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Your school's account is switched off.")
         return {"user": teacher, "role": role, "school_id": teacher.school_id, "teacher_id": teacher.id}
+    if role == "APP_ADMIN":
+        admin = db.query(PlatformAdmin).filter(PlatformAdmin.id == user_id, PlatformAdmin.is_active == True).first()  # noqa: E712
+        if not admin:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Application admin account not found.")
+        return {"user": admin, "role": role, "school_id": None}
     raise HTTPException(status.HTTP_403_FORBIDDEN, "Unknown user role.")
 
 
@@ -203,6 +210,12 @@ def get_current_user(request: Request, credentials: Optional[HTTPAuthorizationCr
 def require_school_admin(current_user: Dict[str, Any] = Depends(get_current_user)) -> School:
     if current_user.get("role") != "SCHOOL_ADMIN":
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Access restricted to School Administrators.")
+    return current_user["user"]
+
+
+def require_app_admin(current_user: Dict[str, Any] = Depends(get_current_user)) -> PlatformAdmin:
+    if current_user.get("role") != "APP_ADMIN":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access restricted to the application admin.")
     return current_user["user"]
 
 
