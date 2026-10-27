@@ -189,6 +189,7 @@ def _stage_sheets(wb, sec: Dict[str, Any], names: Dict[str, str], list_range, su
         sync = ws.cell(row=r, column=3, value="Yes")
         _input(sync, stripe, center=True)
         for c, f in columns:
+            xl.as_text_answer(ws.cell(row=r, column=c), f)
             _input(ws.cell(row=r, column=c, value=values.get(f.key, "")), stripe,
                    center=f.kind in ("int", "choice", "inlist", "onehot") or f.key.endswith(("_obtained", "_max")),
                    wrap=f.kind in ("text", "multi", "flags"))

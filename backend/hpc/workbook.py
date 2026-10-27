@@ -125,7 +125,7 @@ def build(sections: List[Section], path: Path) -> Path:
                 ws.cell(row=r, column=2, value=s[NAME_KEY])
                 values = section.rows.get(str(s[ID_KEY]), {})
                 for c, f in enumerate(fields, start=first):
-                    ws.cell(row=r, column=c, value=values.get(f.key, ""))
+                    xl.as_text_answer(ws.cell(row=r, column=c, value=values.get(f.key, "")), f)
             last_row = max(len(section.students) + 2, 3)
             if part.code == "B":
                 _summary_column(ws, section, last_row)

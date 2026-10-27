@@ -31,5 +31,13 @@ def keep_text(wb) -> int:
     return changed
 
 
+def as_text_answer(cell, field) -> None:
+    """Text answers use Excel's Text format, so Excel keeps what is typed (007 stays 007) (M-13). Numbers -
+    attendance and marks (which are stored as text fields) - keep the normal format: they still add up and the
+    live checks still compare them as numbers."""
+    if field.kind == "text" and not field.key.endswith(("_max", "_obtained")):
+        cell.number_format = "@"
+
+
 def _intended(wb) -> Set[Tuple[str, str]]:
     return wb.__dict__.setdefault(_KEY, set())

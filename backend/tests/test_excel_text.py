@@ -122,3 +122,32 @@ def test_the_old_class_workbook_still_joins_a_student_across_its_part_sheets(tmp
                                             make_lookups("PREPARATORY"))], tmp_path / "class.xlsx")
     rows = workbook.read(path)
     assert not rows["1001"].get(workbook.PROBLEMS_KEY) and rows["1001"]["a1_mother_tongue"] == "Kashmiri"
+
+
+# M-13: text answers use Excel's Text format, so what a teacher types (e.g. 007) is kept as typed;
+# numbers (attendance, marks) keep the normal format so they still add up and the live checks still compare them
+def _formats(ws, key_row):
+    keys = {ws.cell(row=key_row, column=c).value: c for c in range(1, ws.max_column + 1)}
+    return {k: ws.cell(row=key_row + 1, column=c).number_format for k, c in keys.items() if k}
+
+
+def test_text_answers_are_text_cells_and_numbers_stay_numbers(tmp_path):
+    fmt = _formats(load_workbook(_template(tmp_path))["Preparatory"], 3)
+    for key in ("a1_mother_tongue", "a1_guardian_name", "a1_udid", "a2_name", "a2_age", "c_PSLS1_remark"):
+        if key in fmt:
+            assert fmt[key] == "@", (key, fmt[key])
+    for key in ("a1_working_1", "a1_present_1", "d_1_max", "d_1_obtained", "a1_medium", "sync"):
+        if key in fmt:
+            assert fmt[key] != "@", (key, fmt[key])
+
+
+def test_the_old_class_workbook_uses_text_cells_for_text_too(tmp_path):
+    students = [{"student_id": "1001", "student_name": "TEST STUDENT", "status": "IN_PROGRESS"}]
+    path = workbook.build([workbook.Section("Preparatory", students, {"1001": filled_row("PREPARATORY")},
+                                            make_lookups("PREPARATORY"))], tmp_path / "class.xlsx")
+    wb = load_workbook(path)
+    seen = {}
+    for ws in wb.worksheets:
+        if ws.max_row >= 3 and workbook.ID_KEY in [c.value for c in ws[2]]:
+            seen.update(_formats(ws, 2))
+    assert seen["a1_mother_tongue"] == "@" and seen["a1_working_1"] != "@"
