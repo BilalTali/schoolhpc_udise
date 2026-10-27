@@ -613,9 +613,9 @@ export default function App() {
     setEditTeacherStages(stages);
     const grades = t.assigned_grades && t.assigned_grades.length > 0
       ? t.assigned_grades
-      : (t.assigned_grade || "Grade 3").split(",").map((g) => g.trim()).filter(Boolean);
+      : (t.assigned_grade || "").split(",").map((g) => g.trim()).filter(Boolean);   // none set: none shown (L-5)
     setEditTeacherGrades(grades);
-    setEditTeacherSection(t.assigned_section || "A");
+    setEditTeacherSection(t.assigned_section || "");
     setEditTeacherActive(t.is_active);
   };
 
@@ -1142,7 +1142,7 @@ export default function App() {
           : (data.assigned_stage ? data.assigned_stage.split(",").map((s: string) => s.trim()).filter(Boolean) : ["Preparatory"]);
         const gradesList = data.assigned_grades && data.assigned_grades.length > 0
           ? data.assigned_grades
-          : (data.assigned_grade ? data.assigned_grade.split(",").map((g: string) => g.trim()).filter(Boolean) : ["Grade 3"]);
+          : (data.assigned_grade ? data.assigned_grade.split(",").map((g: string) => g.trim()).filter(Boolean) : []);
 
         const userInfo: UserInfo = {
           role: data.role,

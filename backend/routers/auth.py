@@ -150,7 +150,7 @@ def login(payload: LoginRequest, request: Request, response: Response, db: Sessi
             assigned_stage=teacher.assigned_stage,
             assigned_stages=stages_list if stages_list else ["Preparatory"],
             assigned_grade=teacher.assigned_grade,
-            assigned_grades=grades_list if grades_list else ["Grade 3"],
+            assigned_grades=grades_list,
             assigned_section=teacher.assigned_section
         )
 

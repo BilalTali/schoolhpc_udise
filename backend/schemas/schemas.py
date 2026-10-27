@@ -58,9 +58,9 @@ class TeacherCreateRequest(BaseModel):
     password: str = Field(..., min_length=8, description="Initial teacher password (min 8 characters)")
     assigned_stage: Optional[str] = Field("Preparatory", description="Preparatory or Middle or comma-separated")
     assigned_stages: Optional[List[str]] = Field(default=None, description="Multi-selected stages, e.g. ['Preparatory', 'Middle']")
-    assigned_grade: Optional[str] = Field("Grade 3", description="Assigned class, e.g., Grade 3 or Grade 6")
+    assigned_grade: Optional[str] = Field(None, description="Assigned class, e.g., Grade 3 or Grade 6")
     assigned_grades: Optional[List[str]] = Field(default=None, description="Multi-selected grades")
-    assigned_section: Optional[str] = Field("A", description="Assigned section, e.g., A, B, C")
+    assigned_section: Optional[str] = Field(None, description="Assigned section, e.g., A, B, C")
     assigned_sections: Optional[List[str]] = Field(default=None, description="Multi-selected sections")
 
     @field_validator("username")

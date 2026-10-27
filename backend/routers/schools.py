@@ -50,9 +50,9 @@ def list_school_teachers(
             "mobile_number": t.mobile_number,
             "assigned_stage": t.assigned_stage or "Preparatory",
             "assigned_stages": stages_list if stages_list else ["Preparatory"],
-            "assigned_grade": t.assigned_grade or "Grade 3",
-            "assigned_grades": grades_list if grades_list else ["Grade 3"],
-            "assigned_section": t.assigned_section or "A",
+            "assigned_grade": t.assigned_grade or "",            # never an invented grade or section (L-5)
+            "assigned_grades": grades_list,
+            "assigned_section": t.assigned_section or "",
             "is_active": t.is_active,
             "last_login": t.last_login,
             "parakh_connected": p_status.get("logged_in", False),
@@ -91,13 +91,13 @@ def create_teacher(
     if payload.assigned_grades and len(payload.assigned_grades) > 0:
         grade_str = ", ".join(dict.fromkeys(g.strip() for g in payload.assigned_grades if g.strip()))
     else:
-        grade_str = (payload.assigned_grade or "Grade 3").strip()
+        grade_str = (payload.assigned_grade or "").strip()
 
     # Resolve multi-selection for sections
     if payload.assigned_sections and len(payload.assigned_sections) > 0:
         sec_str = ", ".join(dict.fromkeys(sec.strip() for sec in payload.assigned_sections if sec.strip()))
     else:
-        sec_str = (payload.assigned_section or "A").strip()
+        sec_str = (payload.assigned_section or "").strip()
 
     new_teacher = Teacher(
         school_id=admin.id,
@@ -202,9 +202,9 @@ def update_teacher(
         mobile_number=teacher.mobile_number,
         assigned_stage=teacher.assigned_stage,
         assigned_stages=stages_list,
-        assigned_grade=teacher.assigned_grade,
+        assigned_grade=teacher.assigned_grade or "",
         assigned_grades=grades_list,
-        assigned_section=teacher.assigned_section,
+        assigned_section=teacher.assigned_section or "",
         is_active=teacher.is_active,
         last_login=teacher.last_login,
         parakh_connected=p_status.get("logged_in", False),
