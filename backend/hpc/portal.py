@@ -254,13 +254,18 @@ class Portal:
 
     def _send(self, method: str, path: str, **kwargs) -> requests.Response:
         """One request; a connection problem or timeout becomes a PortalError the callers handle (H-1).
-        Reads (GET) change nothing on PARAKH, so a timeout or dropped connection is tried again a few seconds
+        Reads (GET) change nothing on PARAKH, so a timeout, a dropped connection or a PARAKH server error
+        (500/502/503/504, e.g. "Proxy error: Failed to forward request to backend") is tried again a few seconds
         later; saves (PATCH/POST) are sent once only."""
         tries = self.READ_TRIES if method.upper() == "GET" else 1
         for attempt in range(1, tries + 1):
             self._pace()
             try:
-                return self.http.request(method, f"{API}{path}", timeout=30, **kwargs)
+                resp = self.http.request(method, f"{API}{path}", timeout=30, **kwargs)
+                if resp.status_code in (500, 502, 503, 504) and attempt < tries:
+                    time.sleep(self.RETRY_WAIT * attempt)       # PARAKH's own server hiccup: ask again
+                    continue
+                return resp
             except (requests.Timeout, requests.ConnectionError) as exc:
                 if attempt < tries:
                     time.sleep(self.RETRY_WAIT * attempt)

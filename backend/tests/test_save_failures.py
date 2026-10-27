@@ -134,3 +134,18 @@ def test_a_slow_read_is_asked_again_but_a_save_is_sent_once(monkeypatch):
     with pytest.raises(PortalError):
         client.save_part("Preparatory", "1001", {"hpc_col": "part_a1"})
     assert calls == ["PATCH"]                                       # never sent twice
+
+
+def test_a_parakh_server_error_on_a_read_is_asked_again(monkeypatch):
+    session = portal_mod.Session(access_token="t", staff={"staff_id": f"proxy-{uuid.uuid4().hex}"})
+    client = portal_mod.Portal(session)
+    client.min_interval, client.RETRY_WAIT = 0, 0
+
+    class Answer:
+        def __init__(self, code):
+            self.status_code, self.ok, self.text = code, code < 400, ""
+        def json(self):
+            return {"success": True, "data": {"formdata": None}} if self.ok else                 {"success": False, "message": "Proxy error: Failed to forward request to backend"}
+    codes = [502, 504]
+    monkeypatch.setattr(client.http, "request", lambda m, u, **k: Answer(codes.pop(0) if codes else 200))
+    assert client.student("Preparatory", "1001") == {"formdata": None}
