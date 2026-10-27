@@ -21,6 +21,7 @@ interface Form {
   goals: string[];
   competencies: string[];
   subjects: string[];
+  grade_id: number | null;
   approaches: number[];
   approach_other: string;
 }
@@ -34,7 +35,7 @@ const emptyRubric = (): Rubric => ({
 const toForm = (a: ActivityDetail): Form => ({
   title: a.title, display_name: a.source === "local" ? "" : a.title,
   activity_text: a.activity_text, assessment_text: a.assessment_text, rubric: a.rubric,
-  goals: a.goals, competencies: a.competencies, subjects: a.subjects,
+  goals: a.goals, competencies: a.competencies, subjects: a.subjects, grade_id: a.grade_id ?? null,
   approaches: a.approaches || [], approach_other: a.approach_other || "",
 });
 
@@ -58,9 +59,9 @@ export function ActivityEditor({ api, stage, subjects, activityId, consentText, 
   const [detail, setDetail] = useState<ActivityDetail | null>(null);
   const [form, setForm] = useState<Form | null>(creating ? {
     title: "", display_name: "", activity_text: "", assessment_text: "", rubric: emptyRubric(),
-    goals: [], competencies: [], subjects: [], approaches: [], approach_other: "",     // the teacher picks the subject first
+    goals: [], competencies: [], subjects: [], grade_id: null, approaches: [], approach_other: "",   // grade and subject come first
   } : null);
-  const [codes, setCodes] = useState<{ goals: CodeOption[]; competencies: CodeOption[] } | null>(null);
+  const [codes, setCodes] = useState<{ goals: CodeOption[]; competencies: CodeOption[]; grades?: { id: number; name: string }[] } | null>(null);
   const [baseline, setBaseline] = useState<string>(() => (creating ? JSON.stringify(form) : ""));   // what "no changes" means
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -69,7 +70,7 @@ export function ActivityEditor({ api, stage, subjects, activityId, consentText, 
   const [share, setShare] = useState<ShareLevel>(isAdmin ? "school" : "private");
   const [consent, setConsent] = useState(false);
   const [confirmUi, confirm] = useConfirm();
-  const ids = { title: useId(), name: useId(), desc: useId(), assess: useId(), goals: useId(), cpt: useId(), consent: useId(), other: useId() };
+  const ids = { title: useId(), name: useId(), grade: useId(), desc: useId(), assess: useId(), goals: useId(), cpt: useId(), consent: useId(), other: useId() };
 
   const load = async () => {
     if (!activityId) return;
@@ -90,7 +91,7 @@ export function ActivityEditor({ api, stage, subjects, activityId, consentText, 
   useEffect(() => { load(); }, [activityId]);   // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     let live = true;
-    call<{ goals: CodeOption[]; competencies: CodeOption[] }>(api, "GET", `/activity-library/codes/${stage}`)
+    call<{ goals: CodeOption[]; competencies: CodeOption[]; grades?: { id: number; name: string }[] }>(api, "GET", `/activity-library/codes/${stage}`)
       .then((c) => { if (live) setCodes(c); })
       .catch(() => { if (live) setCodes({ goals: [], competencies: [] }); });
     return () => { live = false; };
@@ -150,6 +151,7 @@ export function ActivityEditor({ api, stage, subjects, activityId, consentText, 
         if (creating && form.title !== was.title) out.title = form.title;
         if (JSON.stringify(form.goals) !== JSON.stringify(was.goals)) out.goals = form.goals;
         if (JSON.stringify(form.competencies) !== JSON.stringify(was.competencies)) out.competencies = form.competencies;
+        if (form.grade_id !== was.grade_id && form.grade_id !== null) out.grade_id = form.grade_id;
         if (JSON.stringify(form.approaches) !== JSON.stringify(was.approaches)) out.approaches = form.approaches;
         if (form.approach_other !== was.approach_other) out.approach_other = form.approach_other;
       }
@@ -160,6 +162,7 @@ export function ActivityEditor({ api, stage, subjects, activityId, consentText, 
 
   const problems: string[] = [];
   if (form && isLocal && !form.title.trim()) problems.push("Give the activity a name.");
+  if (form && creating && form.grade_id === null) problems.push("Choose the grade.");
   if (form && form.subjects.length === 0) problems.push("Choose at least one subject.");
   if (needsConsent && !consent && creating) problems.push("Tick the sharing agreement, or choose who can use it again.");
 
@@ -171,6 +174,7 @@ export function ActivityEditor({ api, stage, subjects, activityId, consentText, 
       if (creating) {
         const body = { stage, title: form.title, activity_text: form.activity_text, assessment_text: form.assessment_text,
                        rubric: form.rubric, goals: form.goals, competencies: form.competencies, subjects: form.subjects,
+                       grade_id: form.grade_id,
                        ...(stage === "Middle" ? { approaches: form.approaches, approach_other: form.approach_other } : {}),
                        ...(share !== "private" ? { share, consent } : {}) };
         const made = await call<ActivityDetail>(api, "POST", "/activity-library", body);
@@ -272,27 +276,24 @@ export function ActivityEditor({ api, stage, subjects, activityId, consentText, 
             <p className="lib-muted">Your own activity goes on students' cards as a manual activity (PARAKH's "Create Manually"). Fill every part below so PARAKH accepts it as finished. The name cannot be changed later.</p>
           )}
 
-          {isLocal ? (
+          <div className="lib-two">
             <div className="form-group">
-              <label className="form-label" htmlFor={ids.title}>Activity name <span className="req" aria-hidden="true">*</span></label>
-              <input id={ids.title} className="form-input" value={form.title} maxLength={200} disabled={!editable || !creating} required
-                     aria-required="true" aria-describedby={creating ? undefined : `${ids.title}-fixed`} data-autofocus
-                     onChange={(e) => set("title", e.target.value)} />
-              {!creating && <small id={`${ids.title}-fixed`} className="lib-muted">The name stays as it was made: students' cards find the activity by it. Everything else can be changed.</small>}
+              <span className="form-label">Stage</span>
+              <div className="mono-chip lib-code">{stage}</div>
             </div>
-          ) : (
-            <div className="lib-two">
-              <div className="form-group">
-                <span className="form-label">Code on PARAKH</span>
-                <div className="mono-chip lib-code">{detail?.code}</div>
-              </div>
-              <div className="form-group">
-                <label className="form-label" htmlFor={ids.name}>Name shown in Excel (optional)</label>
-                <input id={ids.name} className="form-input" value={form.display_name} maxLength={120} disabled={!canRename}
-                       placeholder="e.g. Asking politely" onChange={(e) => set("display_name", e.target.value)} />
-              </div>
+            <div className="form-group">
+              <label className="form-label" htmlFor={ids.grade}>Grade{isLocal && <span className="req" aria-hidden="true"> *</span>}</label>
+              {isLocal ? (
+                <select id={ids.grade} className="form-select" value={form.grade_id ?? ""} disabled={!editable}
+                        onChange={(e) => set("grade_id", e.target.value ? Number(e.target.value) : null)}>
+                  <option value="">— Choose the grade —</option>
+                  {(codes?.grades || []).map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
+                </select>
+              ) : (
+                <div id={ids.grade} className="mono-chip lib-code">{detail?.grade_name || "Not tagged on PARAKH"}</div>
+              )}
             </div>
-          )}
+          </div>
 
           <fieldset className="lib-fieldset" disabled={!editable}>
             <legend className="form-label">Subjects this activity can be used for</legend>
@@ -315,6 +316,30 @@ export function ActivityEditor({ api, stage, subjects, activityId, consentText, 
               ))}
             </div>
           </fieldset>
+
+          {isLocal ? (
+            <div className="form-group">
+              <label className="form-label" htmlFor={ids.title}>Activity name <span className="req" aria-hidden="true">*</span></label>
+              <input id={ids.title} className="form-input" value={form.title} maxLength={200} disabled={!editable || !creating} required
+                     aria-required="true" aria-describedby={creating ? undefined : `${ids.title}-fixed`} data-autofocus
+                     onChange={(e) => set("title", e.target.value)} />
+              {!creating && <small id={`${ids.title}-fixed`} className="lib-muted">The name stays as it was made: students' cards find the activity by it. Everything else can be changed.</small>}
+            </div>
+          ) : (
+            <div className="lib-two">
+              <div className="form-group">
+                <span className="form-label">Code on PARAKH</span>
+                <div className="mono-chip lib-code">{detail?.code}</div>
+              </div>
+              <div className="form-group">
+                <label className="form-label" htmlFor={ids.name}>Name shown in Excel (optional)</label>
+                <input id={ids.name} className="form-input" value={form.display_name} maxLength={120} disabled={!canRename}
+                       placeholder="e.g. Asking politely" onChange={(e) => set("display_name", e.target.value)} />
+              </div>
+            </div>
+          )}
+
+
 
           <div className="form-group">
             <label className="form-label" htmlFor={ids.desc}>How the activity is done</label>
@@ -344,8 +369,10 @@ export function ActivityEditor({ api, stage, subjects, activityId, consentText, 
 
           <div className="lib-two">
             <CodePicker id={ids.goals} label="Curricular goal code(s)" value={form.goals} options={forSubjects(codes?.goals, form.subjects)}
+                        typed={noParakhCodes(codes?.competencies, form.subjects)}
                         disabled={!editable || !isLocal} onChange={(v) => set("goals", v)} />
             <CodePicker id={ids.cpt} label="Competency code(s)" value={form.competencies} options={forSubjects(codes?.competencies, form.subjects)}
+                        typed={noParakhCodes(codes?.competencies, form.subjects)}
                         disabled={!editable || !isLocal} onChange={(v) => set("competencies", v)} />
           </div>
 
@@ -455,9 +482,40 @@ function forSubjects(options: CodeOption[] | undefined, chosen: string[]): CodeO
   return options.filter((o) => !o.subjects || o.subjects.length === 0 || o.subjects.some((s) => chosen.includes(s)));
 }
 
-function CodePicker({ id, label, value, options, disabled, onChange }: {
+/** True when PARAKH has no code for the chosen subjects: their NCF codes are typed in (e.g. L2C3.1). */
+function noParakhCodes(options: CodeOption[] | undefined, chosen: string[]): boolean {
+  const known = (options || []).filter((o) => (o.subjects || []).length > 0);      // codes whose subjects PARAKH tells us
+  return known.length > 0 && chosen.length > 0 && !known.some((o) => o.subjects!.some((s) => chosen.includes(s)));
+}
+
+function CodePicker({ id, label, value, options, disabled, onChange, typed = false }: {
   id: string; label: string; value: string[]; options?: CodeOption[]; disabled: boolean; onChange: (v: string[]) => void;
+  typed?: boolean;
 }) {
+  const [draft, setDraft] = useState("");
+  if (typed && !disabled) {
+    const add = () => { const c = draft.trim(); if (c && !value.includes(c)) onChange([...value, c]); setDraft(""); };
+    return (
+      <div className="form-group">
+        <label className="form-label" htmlFor={id}>{label}</label>
+        {value.length > 0 && (
+          <ul className="lib-chips" aria-label={`${label} chosen`}>
+            {value.map((c) => (
+              <li key={c} className="mono-chip">{c}
+                <button type="button" className="lib-chip-x" onClick={() => onChange(value.filter((x) => x !== c))} aria-label={`Remove ${c}`}>×</button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <div className="tp-row">
+          <input id={id} className="form-input" value={draft} maxLength={20} placeholder="e.g. L2C3.1"
+                 onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); add(); } }} />
+          <button type="button" className="btn btn-outline btn-sm" onClick={add} disabled={!draft.trim()}>Add</button>
+        </div>
+        <small className="lib-muted">PARAKH has no activity for this subject yet, so type the code from the NCF-SE syllabus.</small>
+      </div>
+    );
+  }
   const left = (options || []).filter((o) => !value.includes(o.code));
   return (
     <div className="form-group">

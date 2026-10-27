@@ -44,6 +44,11 @@ MAX_PAGES = 100
 MIN_INTERVAL = 0.5                 # at most two portal requests a second
 RETRIES = 3
 MAX_TEXT = 10000
+# PARAKH's grade ids per stage (its /states/<state>/grades list): what an activity made here can be tagged with
+STAGE_GRADES = {"Foundational": {1: "Balvatika 1", 2: "Balvatika 2", 3: "Balvatika 3", 4: "Grade 1", 5: "Grade 2"},
+                "Preparatory": {6: "Grade 3", 7: "Grade 4", 8: "Grade 5"},
+                "Middle": {9: "Grade 6", 10: "Grade 7", 11: "Grade 8"}}
+CODE_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.\- ]{0,19}$")   # e.g. L2C3.1, C-10.4, SSCG 10
 CONSENT_TEXT = ("I made this activity myself, it contains no student's personal information, and I agree "
                 "that other teachers using this app may use, copy and adapt it. I can stop sharing at any time; "
                 "copies already made stay with their users.")
@@ -286,6 +291,7 @@ def view(act: LibraryActivity, setting: Optional[SchoolActivitySetting], actor: 
         "subjects": subjects, "subject_names": [names[c] for c in subjects],
         "covers_all": not missing, "missing_subjects": missing,
         "portal_subjects": list(act.portal_subjects or []), "grade_id": act.grade_id,
+        "grade_name": STAGE_GRADES.get(act.stage, {}).get(act.grade_id, ""),
         "portal_subject_names": [names.get(c, c) for c in (act.portal_subjects or [])],
         "has_pictures": bool(act.has_pictures), "status": status_, "is_default": act.id == default,
         "edited": bool(edited), "edited_fields": sorted(edited),
@@ -545,6 +551,11 @@ def _clean_changes(stage: str, changes: Dict[str, Any]) -> Dict[str, Any]:
         out["approaches"] = approaches
     if changes.get("approach_other") is not None:
         out["approach_other"] = _clean_text(changes["approach_other"], "Approach (any other)", 500)
+    if "grade_id" in changes:
+        grade = changes["grade_id"]
+        if grade not in (None, "") and int(grade) not in STAGE_GRADES.get(stage, {}):
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"That grade is not part of the {stage} stage.")
+        out["grade_id"] = int(grade) if grade not in (None, "") else None
     if changes.get("subjects") is not None:
         known = [s["code"] for s in stage_subjects(stage)]
         chosen = [c for c in known if c in set(changes["subjects"])]
@@ -573,7 +584,8 @@ def known_codes(db: Session, actor: Actor, stage: str) -> Dict[str, List[Dict[st
     order = [s["code"] for s in stage_subjects(stage)]
     as_list = lambda d: [{"code": c, "used_by": n, "subjects": [s for s in order if s in used_for.get(c, ())]}
                          for c, n in sorted(d.items(), key=lambda kv: _code_key(kv[0]))]
-    return {"goals": as_list(goals), "competencies": as_list(competencies)}
+    return {"goals": as_list(goals), "competencies": as_list(competencies),
+            "grades": [{"id": i, "name": n} for i, n in STAGE_GRADES.get(stage, {}).items()]}
 
 
 def _check_codes(db: Session, actor: Actor, stage: str, clean: Dict[str, Any],
@@ -589,6 +601,14 @@ def _check_codes(db: Session, actor: Actor, stage: str, clean: Dict[str, Any],
     for field, label in (("goals", "Curricular goal"), ("competencies", "Competency")):
         codes = clean[field] if field in clean else (content[field] if act is not None and act.source == "local" else [])
         allowed = {c["code"]: c["subjects"] for c in known[field]}
+        # a subject PARAKH has no activity for has no code to pick: its NCF codes are typed instead
+        uncovered = bool(subjects) and not any(set(subs) & set(subjects) for subs in allowed.values())
+        if uncovered:
+            bad = [c for c in codes if not CODE_PATTERN.match(c)]
+            if bad:
+                raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                    f"{label} code(s) {', '.join(bad)} do not look like NCF codes (e.g. L2C3.1, C-10.4).")
+            continue
         unknown = [c for c in codes if allowed and c not in allowed]
         if unknown:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -611,8 +631,8 @@ def create_local(db: Session, actor: Actor, stage: str, title: str, changes: Dic
     clean = _clean_changes(stage, {"subjects": [s["code"] for s in stage_subjects(stage)], **changes})
     _check_codes(db, actor, stage, clean)
     act = LibraryActivity(source="local", stage=stage, code=title, title=title,
-                          content=_apply_texts({}, {k: v for k, v in clean.items() if k != "subjects"}),
-                          subjects=clean["subjects"], owner_school_id=actor.school_id,
+                          content=_apply_texts({}, {k: v for k, v in clean.items() if k not in ("subjects", "grade_id")}),
+                          subjects=clean["subjects"], grade_id=clean.get("grade_id"), owner_school_id=actor.school_id,
                           owner_teacher_id=None if actor.is_admin else actor.id,
                           share_state="school" if actor.is_admin else "private",
                           created_by=actor.key, updated_by=actor.key)
@@ -644,14 +664,18 @@ def update(db: Session, actor: Actor, act: LibraryActivity, changes: Dict[str, A
                                 "The name cannot be changed once the activity is made: students' cards find it by its name. "
                                 "You can still change everything else, or make a copy under a new name.")
         if clean:
-            act.content = _apply_texts(act.content or {}, {k: v for k, v in clean.items() if k != "subjects"})
+            act.content = _apply_texts(act.content or {}, {k: v for k, v in clean.items() if k not in ("subjects", "grade_id")})
             if "subjects" in clean:
                 act.subjects = clean["subjects"]
+            if "grade_id" in clean:
+                act.grade_id = clean["grade_id"]
         if clean or title is not None:
             act.version += 1
             act.updated_by = actor.key
             audit(db, actor, "edit", "activity", act.id, before, {"title": act.title, **_texts(act.content),
                                                                   "subjects": act.subjects})
+    if act.source != "local" and "grade_id" in clean:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "PARAKH sets the grade of its own activities.")
     if act.source != "local" and not actor.is_admin:
         if clean:                                   # a teacher's own version, for their students only
             mine = _mine(db, actor, act.id, create=True)

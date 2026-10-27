@@ -106,3 +106,21 @@ def test_a_subject_without_activities_of_its_own_can_take_any_activity():
     assert activity_grid._check_values("Preparatory", {"b_act_PSLS7": "P1"}, allowed, set()) == {}    # Other Learning Activities
     assert "b_act_PSLS3" in activity_grid._check_values("Preparatory", {"b_act_PSLS3": "P1"}, allowed, set())
     assert activity_grid.subjects_for(["PSLS1", "PSLS3", "PSLS7"], ["PSLS1"], {"PSLS1", "PSLS3"}) == ["PSLS1", "PSLS7"]
+
+
+def test_a_new_activity_is_made_for_a_grade_and_a_subject_without_parakh_codes_takes_typed_ncf_codes(world):
+    users = _library(world)
+    codes = client.get(f"{API}/activity-library/codes/Preparatory", headers=users["t1"]).json()
+    assert codes["grades"] == [{"id": 6, "name": "Grade 3"}, {"id": 7, "name": "Grade 4"}, {"id": 8, "name": "Grade 5"}]
+    rubric = {a: {"beginner": f"{a} b", "proficient": f"{a} p", "advanced": f"{a} a"}
+              for a in ("awareness", "sensitivity", "creativity")}
+    body = {"stage": "Preparatory", "title": "R2 story circle", "activity_text": "Children retell a story.",
+            "assessment_text": "Can you tell it again?", "rubric": rubric, "grade_id": 8, "subjects": ["PSLS2"],
+            "goals": ["L2CG1"], "competencies": ["L2C1.1"]}                # R2 has no PARAKH code here: typed NCF codes
+    made = client.post(f"{API}/activity-library", headers=users["t1"], json=body)
+    assert made.status_code in (200, 201), made.text
+    assert made.json()["grade_id"] == 8 and made.json()["grade_name"] == "Grade 5" and made.json()["usable_in_excel"]
+    assert client.post(f"{API}/activity-library", headers=users["t1"],
+                       json={**body, "title": "Wrong grade", "grade_id": 9}).status_code == 422     # Grade 6 is Middle
+    assert client.post(f"{API}/activity-library", headers=users["t1"],
+                       json={**body, "title": "Bad code", "competencies": ["not a code!"]}).status_code == 422

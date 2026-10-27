@@ -49,6 +49,7 @@ class ActivityTexts(BaseModel):
     rubric: Optional[Dict[Literal["awareness", "sensitivity", "creativity"], Rubric]] = None
     goals: Optional[List[str]] = None
     competencies: Optional[List[str]] = None
+    grade_id: Optional[int] = Field(None, description="PARAKH grade id within the stage (activities made here)")
     subjects: Optional[List[str]] = Field(None, description="subject codes of the stage, e.g. PSLS1")
     approaches: Optional[List[int]] = Field(None, description="Middle: 1 Art, 2 Sports, 3 Toy, 4 Technology, 5 Any other")
     approach_other: Optional[str] = None

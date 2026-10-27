@@ -55,6 +55,8 @@ export interface Activity {
 }
 
 export interface ActivityDetail extends Activity {
+  grade_id?: number | null;     // PARAKH grade id; for activities made here, chosen by the teacher
+  grade_name?: string;
   original?: Pick<Activity, "activity_text" | "assessment_text" | "rubric" | "goals" | "competencies" | "subjects" | "subject_names">;
   diff?: { field: string; label: string; original: unknown; current: unknown }[];
   history: { at: string; who: string; action: string }[];

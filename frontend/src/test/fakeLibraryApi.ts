@@ -123,7 +123,8 @@ export function fakeLibraryApi({ isAdmin = true, activities }: { isAdmin?: boole
     }
     if (method === "GET" && path === "/activity-library/codes/Preparatory") {
       return json(200, { stage: "Preparatory", goals: [{ code: "CG1", used_by: 2 }, { code: "CG2", used_by: 1 }],
-                         competencies: [{ code: "C1.1", used_by: 2 }] });
+                         competencies: [{ code: "C1.1", used_by: 2 }],
+                         grades: [{ id: 6, name: "Grade 3" }, { id: 7, name: "Grade 4" }, { id: 8, name: "Grade 5" }] });
     }
     if (method === "POST" && path === "/activity-library") {
       state.created = body;

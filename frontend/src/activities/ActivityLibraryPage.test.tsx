@@ -166,7 +166,8 @@ describe("Adding activities", () => {
     expect(within(dialog).getAllByRole("checkbox").filter((c) => (c as HTMLInputElement).checked)).toHaveLength(0);
 
     await user.type(within(dialog).getByLabelText(/Activity name/), "Story circle");
-    expect(add).toBeDisabled();                                   // the subject comes first: none is ticked for you
+    expect(add).toBeDisabled();                                   // grade and subject come first: none is chosen for you
+    await user.selectOptions(await within(dialog).findByLabelText(/^Grade/), "Grade 4");
     await user.click(within(dialog).getByRole("checkbox", { name: "Language 1 (R1)" }));
     expect(add).toBeEnabled();
     await user.click(within(dialog).getByRole("radio", { name: /My school/ }));
@@ -178,6 +179,7 @@ describe("Adding activities", () => {
     const body = calls(fake, "POST", "/activity-library")[0].body;
     expect(body).toMatchObject({ stage: "Preparatory", title: "Story circle", share: "school", consent: true });
     expect(body.subjects).toEqual(["PSLS1"]);
+    expect(body.grade_id).toBe(7);
     expect(await screen.findByText(/"Story circle" was added\. Before it can be chosen for students it still needs: Curricular goal, Competency/)).toBeInTheDocument();
   });
 
@@ -186,6 +188,7 @@ describe("Adding activities", () => {
     await user.click((await screen.findAllByRole("button", { name: /Add your own activity/ }))[0]);
     const dialog = await screen.findByRole("dialog", { name: "New Preparatory activity" });
     await user.type(within(dialog).getByLabelText(/Activity name/), "Story circle");
+    await user.selectOptions(await within(dialog).findByLabelText(/^Grade/), "Grade 4");
     await user.click(within(dialog).getByRole("checkbox", { name: "Language 1 (R1)" }));
     await user.selectOptions(await within(dialog).findByLabelText("Curricular goal code(s)"), "CG1");
     expect(within(dialog).getByRole("list", { name: /Curricular goal code\(s\) chosen/ })).toHaveTextContent("CG1");
