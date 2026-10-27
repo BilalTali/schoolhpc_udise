@@ -15,13 +15,10 @@ from fastapi import HTTPException, status
 
 from backend.database import SessionLocal
 from backend.hpc import credit
-from backend.hpc.stages.common import MONTHS
+from backend.hpc.stages.common import MONTH_DAYS, MONTH_NAMES, MONTHS
 from backend.models.settings import ClassSetting
 from backend.services import audit
 
-MONTH_DAYS = dict(zip(MONTHS, (30, 31, 30, 31, 31, 30, 31, 30, 31, 31, 29, 31)))      # Feb: leap years allowed
-MONTH_NAMES = dict(zip(MONTHS, ("April", "May", "June", "July", "August", "September", "October", "November",
-                                "December", "January", "February", "March")))
 UNUSUAL_DAYS = 26
 
 

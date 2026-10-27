@@ -65,3 +65,24 @@ def test_class_settings_refuse_max_marks_that_are_not_numbers(raw):
     n = class_settings.marks_subjects("Preparatory")[0][0]
     clean, problems, _ = class_settings.validate("Preparatory", {"max_marks": {n: raw}})
     assert f"max_marks.{n}" in problems and clean["max_marks"][n] is None
+
+
+# M-1: attendance per month: 0-31, present <= working, working <= the days in that month
+@pytest.mark.parametrize("stage", ["Foundational", "Preparatory", "Middle"])
+@pytest.mark.parametrize("change,says", [
+    ({"a1_working_1": -5, "a1_present_1": 0}, "cannot be less than 0"),
+    ({"a1_working_1": 20, "a1_present_1": -1}, "cannot be less than 0"),
+    ({"a1_working_1": 40, "a1_present_1": 39}, "April has 30 days"),
+    ({"a1_working_11": 30, "a1_present_11": 20}, "February has 29 days"),
+    ({"a1_working_2": 20, "a1_present_2": 25}, "more than working days"),
+])
+def test_impossible_attendance_is_refused_with_a_plain_message(stage, change, says):
+    row = {**filled_row(stage.upper()), **change}
+    _, errors = sync.build_payloads(stage, blank_student(stage.upper()), row, make_lookups(stage.upper()))
+    assert any(says in e for e in errors), errors
+
+
+def test_full_months_are_fine():
+    row = {**filled_row("PREPARATORY"), "a1_working_2": 31, "a1_present_2": 31, "a1_working_11": 29, "a1_present_11": 0}
+    _, errors = sync.build_payloads("Preparatory", blank_student("PREPARATORY"), row, make_lookups("PREPARATORY"))
+    assert errors == []

@@ -18,6 +18,9 @@ from backend.hpc.fields import Field
 from backend.hpc.portal import Portal
 
 MONTHS = ["Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec", "Jan", "Feb", "Mar"]
+MONTH_DAYS = dict(zip(MONTHS, (30, 31, 30, 31, 31, 30, 31, 30, 31, 31, 29, 31)))      # Feb: leap years allowed
+MONTH_NAMES = dict(zip(MONTHS, ("April", "May", "June", "July", "August", "September", "October", "November",
+                                "December", "January", "February", "March")))
 GUARDIAN = {"Mother": "MOTHER", "Father": "FATHER", "Guardian": "GUARDIAN"}
 RATING_1_3 = {"Beginner": "1", "Proficient": "2", "Advanced": "3"}
 RUBRIC = {"Beginner": "beginner", "Proficient": "proficient", "Advanced": "advance"}

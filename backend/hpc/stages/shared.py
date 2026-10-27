@@ -11,7 +11,8 @@ from typing import Any, Dict, List
 from backend.hpc import credit
 from backend.hpc.credit import _round2, js_num
 from backend.hpc.fields import Field, series
-from backend.hpc.stages.common import GUARDIAN, MONTHS, RATING_1_3, Lookups, Part, StudentContext, clean, required
+from backend.hpc.stages.common import (GUARDIAN, MONTH_DAYS, MONTH_NAMES, MONTHS, RATING_1_3, Lookups, Part, StudentContext,
+                                       clean, required)
 
 LIMITS = json.loads((Path(__file__).parent.parent / "reference" / "field_limits.json").read_text())
 
@@ -71,8 +72,15 @@ def finish_a1(fd: Dict[str, Any], ctx: StudentContext, zero_blanks: bool = False
     worked = [_whole(v, zero_blanks) for v in att["1"][:12]]
     present = [_whole(v, zero_blanks) for v in att["2"][:12]]
     month_percent = _month_percent_foundational if zero_blanks else _month_percent
-    for month, w, p in zip(MONTHS, worked, present):
-        if w != "" and p != "" and p > w:
+    for month, w, p in zip(MONTHS, worked, present):           # what a month can hold (M-1)
+        name, most = MONTH_NAMES[month], MONTH_DAYS[month]
+        if (w != "" and w < 0) or (p != "" and p < 0):
+            errors.append(f"Attendance {name}: days cannot be less than 0")
+        elif w != "" and w > most:
+            errors.append(f"Attendance {name}: {w} working days, but {name} has {most} days")
+        elif p != "" and w == "" and p > most:
+            errors.append(f"Attendance {name}: {p} days present, but {name} has {most} days")
+        elif w != "" and p != "" and p > w:
             errors.append(f"Attendance {month}: days present ({p}) is more than working days ({w})")
     total_w = sum(v for v in worked if v != "")
     total_p = sum(v for v in present if v != "")
