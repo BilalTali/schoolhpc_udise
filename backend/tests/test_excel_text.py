@@ -1,0 +1,81 @@
+"""H-5: text is written as text cells and a leading '=' is never read as a formula. Made-up values only."""
+import pytest
+from openpyxl import load_workbook
+
+from backend.hpc import sync, template, workbook
+from backend.hpc.credit import summative_subjects
+from backend.services import class_settings
+from backend.tests.conftest import FakePortal, blank_student, filled_row, make_lookups
+
+TRICKY = {"a1_mother_tongue": "=Kashmiri", "a1_guardian_name": "+91 Raju", "a1_other_interest": "-dash", "a1_udid": "@home",
+          "a1_low_attendance": "=CMD|' /C calc'!A0"}
+NAMES = ["=HYPERLINK(\"http://x\")", "+PLUS NAME", "-MINUS NAME", "@AT NAME"]
+IDS = ["1001", "1002", "1003", "1004"]
+
+
+def _template(tmp_path):
+    settings = {"medium": "English", "rural_urban": "Rural", "working_days": [22] * 12,
+                "max_marks": {n: 50 for n, _ in summative_subjects("Preparatory")}, "declaration": "Yes"}
+    sec = {"stage": "Preparatory", "students": [{"student_id": i, "student_name": n} for i, n in zip(IDS, NAMES)],
+           "rows": {i: {**filled_row("PREPARATORY"), **TRICKY} for i in IDS}, "lookups": make_lookups("PREPARATORY"),
+           "settings": settings, "marks_subjects": summative_subjects("Preparatory"),
+           "is_setting_key": class_settings.is_setting_key, "part_b": {}, "problems": {}}
+    summary = {"generated_at": "x", "ready_as_of": "x", "classes": "", "included_count": 4, "excluded_count": 0, "rule": "t",
+               "settings_saved_at": "-", "students": [{"student_id": i, "in_file": True, "ready": True, "part_b_problems": [],
+                                                       "other_problems": [], "stage": "Preparatory"} for i in IDS]}
+    path = tmp_path / "template.xlsx"
+    template.build_many(path, [sec], summary)
+    return path
+
+
+def _formula_cells(path):
+    wb = load_workbook(path)
+    return {(ws.title, c.coordinate): c.value for ws in wb.worksheets for row in ws.iter_rows() for c in row if c.data_type == "f"}
+
+
+def test_the_template_writes_names_and_answers_as_text(tmp_path):
+    formulas = _formula_cells(_template(tmp_path))
+    assert formulas, "the template's own formulas (attendance %, settings totals) are still formulas"
+    assert all(v.startswith(("=IF(", "=SUM(")) for v in formulas.values()), formulas
+    texts = {c.value for ws in load_workbook(tmp_path / "template.xlsx").worksheets for row in ws.iter_rows() for c in row
+             if c.data_type == "s"}
+    assert set(NAMES) <= texts and set(TRICKY.values()) <= texts
+
+
+def test_text_starting_with_equals_plus_minus_or_at_comes_back_unchanged(tmp_path):
+    rows = workbook.read(_template(tmp_path))
+    for sid in IDS:
+        assert {k: rows[sid][k] for k in TRICKY} == TRICKY
+        assert rows[sid][workbook.NAME_KEY] in NAMES
+
+
+def test_the_old_class_workbook_writes_text_too(tmp_path):
+    students = [{"student_id": i, "student_name": n, "status": "IN_PROGRESS"} for i, n in zip(IDS, NAMES)]
+    path = workbook.build([workbook.Section("Preparatory", students, {i: {**filled_row("PREPARATORY"), **TRICKY} for i in IDS},
+                                            make_lookups("PREPARATORY"))], tmp_path / "class.xlsx")
+    assert _formula_cells(path) == {}
+    rows = workbook.read(path)
+    assert all({k: rows[sid][k] for k in TRICKY} == TRICKY for sid in IDS)
+
+
+@pytest.mark.parametrize("sheet_kind", ["students", "exceptions"])
+def test_a_formula_typed_into_an_answer_is_refused_not_calculated(tmp_path, sheet_kind, monkeypatch):
+    path = _template(tmp_path)
+    wb = load_workbook(path)
+    if sheet_kind == "students":
+        ws = wb["Preparatory"]
+        keys = {ws.cell(row=3, column=c).value: c for c in range(1, ws.max_column + 1)}
+        ws.cell(row=4, column=keys["a1_mother_tongue"], value="=C5")          # what Excel stores when a teacher types =C5
+        where = ws.cell(row=4, column=keys["a1_mother_tongue"]).coordinate
+    else:
+        ws = wb[template.sheet_names("Preparatory", combined=False)["exceptions"]]
+        ws["A2"], ws["B2"], ws["C2"] = "1001", "Working days - April", "=10+8"
+        where = "C2"
+    wb.save(path)
+    rows = workbook.read(path)
+    assert any("formula" in p and where in p for p in rows["1001"][workbook.PROBLEMS_KEY])
+    data = {("PREPARATORY", sid): {"record": blank_student("PREPARATORY", sid).record,
+                                   "parts": blank_student("PREPARATORY", sid).raw_parts} for sid in IDS}
+    monkeypatch.setattr(sync, "Lookups", lambda client, code: make_lookups(code, client))
+    results = {r.student_id: r for r in sync.sync_workbook(FakePortal(data), path, dry_run=True)}
+    assert results["1001"].status == "INVALID" and any("formula" in e and where in e for e in results["1001"].errors)

@@ -23,6 +23,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Protection, Si
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.datavalidation import DataValidation
 
+from backend.hpc import xl
 from backend.hpc.stages import activity_grid, get_stage
 
 ID_KEY, NAME_KEY, SYNC_KEY = "student_id", "student_name", "sync"
@@ -118,6 +119,7 @@ def build_many(path, sections: List[Dict[str, Any]], summary: Dict[str, Any]):
         _stage_sheets(wb, sec, sheet_names(sec["stage"], combined), list_range, summary, position=1 + i)
     _summary_sheet(wb, ", ".join(stages), summary)
     wb.move_sheet("Lists", offset=len(wb.sheetnames))
+    xl.keep_text(wb)                       # names and answers starting with = stay text (H-5)
     path.parent.mkdir(parents=True, exist_ok=True)
     wb.save(path)
     return path
@@ -165,7 +167,7 @@ def _stage_sheets(wb, sec: Dict[str, Any], names: Dict[str, str], list_range, su
                 ws.cell(row=3, column=col, value=None)
                 ws.column_dimensions[get_column_letter(col)].width = 12
                 for r in range(FIRST_DATA_ROW, FIRST_DATA_ROW + len(students)):
-                    pct = ws.cell(row=r, column=col, value=f"=IF({total_cell}>0,ROUND(SUM({first}{r}:{last}{r})/{total_cell}*100,1),\"\")")
+                    pct = xl.formula(ws, r, col, f"=IF({total_cell}>0,ROUND(SUM({first}{r}:{last}{r})/{total_cell}*100,1),\"\")")
                     pct.fill, pct.border, pct.number_format = LOCKED_FILL, CELL_BORDER, '0.0"%"'
                     pct.font, pct.alignment = Font(name=FONT, color=MUTED, bold=True), Alignment(horizontal="center", vertical="center")
                 col += 1
@@ -390,7 +392,7 @@ def _settings_sheet(wb, stage, settings, marks_subjects, summary, sheet_name=SET
         name = ws.cell(row=i, column=1, value=label)
         name.font = Font(name=FONT, bold=True, color=INK)
         if label == "Working days - total":
-            cell = ws.cell(row=i, column=2, value=f"=SUM(B{first + 2}:B{first + 13})")
+            cell = xl.formula(ws, i, 2, f"=SUM(B{first + 2}:B{first + 13})")
             total_cell = f"'{sheet_name}'!$B${i}"
             cell.font = Font(name=FONT, bold=True, color=PART_COLOURS["A1"][0])
         else:

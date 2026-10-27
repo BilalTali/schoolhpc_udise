@@ -286,6 +286,8 @@ def sync_workbook(portal: Portal, path, dry_run: bool = False, on_result=lambda 
         name = str(row.get(workbook.NAME_KEY) or sid)
         if not row.get(workbook.SYNC_KEY):
             result = SyncResult(sid, name, "SKIPPED", stage=stage)
+        elif row.get(workbook.PROBLEMS_KEY):                 # e.g. a formula typed into an answer (H-5)
+            result = SyncResult(sid, name, "INVALID", list(row[workbook.PROBLEMS_KEY]), stage=stage)
         elif stage.lower() not in STAGE_NAMES:
             result = SyncResult(sid, name, "INVALID", [f"Students: unknown stage '{stage}'"], stage=stage)
         else:

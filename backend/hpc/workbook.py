@@ -19,10 +19,12 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.datavalidation import DataValidation
 
+from backend.hpc import xl
 from backend.hpc.stages import get_stage
 from backend.hpc.stages.common import Lookups
 
 ID_KEY, NAME_KEY, SYNC_KEY, STAGE_KEY = "student_id", "student_name", "sync", "stage"
+PROBLEMS_KEY = "_problems"        # what is wrong with the row itself (e.g. a formula typed into an answer, H-5)
 SHEET_PREFIX = {"Foundational": "Found.", "Preparatory": "Prep", "Middle": "Middle"}
 SUMMARY_HEADER = "Activities and levels (set on the Activities tab - read only)"
 SUMMARY_FILL = PatternFill("solid", fgColor="E7E6E6")
@@ -136,6 +138,7 @@ def build(sections: List[Section], path: Path) -> Path:
                           [max(14, min(45, len(f.label) + 2)) for f in fields])
 
     wb.move_sheet("Lists", offset=len(wb.sheetnames))
+    xl.keep_text(wb)                       # names and answers starting with = stay text (H-5)
     path.parent.mkdir(parents=True, exist_ok=True)
     wb.save(path)
     return path
@@ -146,7 +149,7 @@ def read(path: Path, exception_problems: List[str] = None) -> Dict[str, Dict[str
     Reads every workbook this app made: the per-part sheets (keys in row 2) and the class template
     (keys in row 3, plus its Exceptions sheet). Locked sheets (Part B, Settings, summary) are never read."""
     from backend.hpc import template
-    wb = load_workbook(path, data_only=True)
+    wb = load_workbook(path)                      # what was typed, never a calculated result (H-5)
     out: Dict[str, Dict[str, Any]] = {}
     for ws in wb.worksheets:
         if template.is_locked_sheet(ws.title) or ws.max_row < 2:
@@ -156,14 +159,18 @@ def read(path: Path, exception_problems: List[str] = None) -> Dict[str, Dict[str
             continue
         keys = [c.value for c in ws[key_row]]
         id_col = keys.index(ID_KEY)
-        for row in ws.iter_rows(min_row=key_row + 1, values_only=True):
-            sid = row[id_col]
+        for row in ws.iter_rows(min_row=key_row + 1):
+            sid = row[id_col].value
             if sid in (None, ""):
                 continue
             entry = out.setdefault(str(sid).split(".")[0].strip(), {})
-            for key, value in zip(keys, row):
+            for key, cell in zip(keys, row):
                 if key and key != ID_KEY:
-                    entry[key] = value
+                    if _typed_formula(cell):
+                        entry.setdefault(PROBLEMS_KEY, []).append(_formula_problem(ws.title, cell))
+                        entry[key] = None
+                    else:
+                        entry[key] = cell.value
             if key_row == 3 and ws.title in SHEET_PREFIX:     # class template: the sheet says the stage
                 entry.setdefault(STAGE_KEY, ws.title)
     meta = template.info(wb)
@@ -171,6 +178,17 @@ def read(path: Path, exception_problems: List[str] = None) -> Dict[str, Dict[str
         own = template.sheet_names(stage, combined=True)["exceptions"]
         sheet = own if own in wb.sheetnames else template.EXCEPTIONS_SHEET
         ids = {sid for sid, e in out.items() if e.get(STAGE_KEY, stage) == stage}
+        if sheet in wb.sheetnames:                            # a formula typed there is refused too (H-5)
+            for row in wb[sheet].iter_rows(min_row=2):
+                for cell in row:
+                    if _typed_formula(cell):
+                        owner = str(row[0].value or "").split(".")[0].strip()
+                        message = _formula_problem(sheet, cell)
+                        if owner in out:
+                            out[owner].setdefault(PROBLEMS_KEY, []).append(message)
+                        elif exception_problems is not None:
+                            exception_problems.append(message)
+                        cell.value = None
         exceptions, problems = template.read_exceptions(wb, stage, ids, sheet)
         for sid, values in exceptions.items():
             out[sid].update(values)
@@ -179,6 +197,15 @@ def read(path: Path, exception_problems: List[str] = None) -> Dict[str, Dict[str
     for entry in out.values():
         entry[SYNC_KEY] = str(entry.get(SYNC_KEY, "Yes")).strip().lower() in ("yes", "y", "true", "1")
     return out
+
+
+def _typed_formula(cell) -> bool:
+    return cell.data_type == "f" or (isinstance(cell.value, str) and cell.value.startswith("=") and cell.data_type != "s")
+
+
+def _formula_problem(sheet: str, cell) -> str:
+    return (f"{sheet} {cell.coordinate}: the cell holds a formula ({str(cell.value)[:40]}). Type the answer itself - "
+            f"to start an answer with =, type an apostrophe first ('=)")
 
 
 def template_info(path: Path) -> Dict[str, Any]:
@@ -228,6 +255,7 @@ def set_activity_summaries(path: Path, summaries: Dict[str, Dict[str, str]]) -> 
             sid = str(ws.cell(row=r, column=1).value or "").split(".")[0]
             if sid in by_student:
                 ws.cell(row=r, column=3, value=by_student[sid])
+    xl.keep_text(wb)
     wb.save(path)
 
 
