@@ -296,7 +296,7 @@ def _workbook_stages(teacher: Teacher, path) -> List[str]:
 
 
 @router.post("/upload/validate", response_model=ValidationReportResponse)
-async def validate_upload(file: UploadFile = File(...), teacher: Teacher = Depends(require_teacher)):
+def validate_upload(file: UploadFile = File(...), teacher: Teacher = Depends(require_teacher)):
     """Saves the uploaded workbook and checks every student against the portal (nothing is written)."""
     if not file.filename.endswith(".xlsx"):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Only .xlsx files are supported.")
