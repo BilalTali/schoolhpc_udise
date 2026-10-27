@@ -14,7 +14,7 @@ import {
   ShieldCheck,
   RefreshCw,
   Plus,
-  Trash2,
+  UserX,
   FileCheck2,
   Sparkles,
   Check,
@@ -587,7 +587,7 @@ export default function App() {
         return;
       }
       if (res.ok) {
-        setStatusMsg({ type: "success", text: "Teacher removed." });
+        setStatusMsg({ type: "success", text: "Teacher switched off. Their upload history is kept; switch them on again with Edit." });
         setDeletingTeacherId(null);
         fetchSchoolData();
       } else {
@@ -1730,7 +1730,7 @@ export default function App() {
                           <td>
                             {deletingTeacherId === t.id ? (
                               <div style={{ display: "flex", alignItems: "center", gap: "0.35rem" }}>
-                                <span style={{ fontSize: "0.78rem", color: "var(--danger-600)", fontWeight: 700 }}>Remove?</span>
+                                <span style={{ fontSize: "0.78rem", color: "var(--danger-600)", fontWeight: 700 }}>Switch off?</span>
                                 <button
                                   onClick={() => confirmDeleteTeacher(t.id)}
                                   className="btn btn-outline"
@@ -1760,9 +1760,10 @@ export default function App() {
                                   onClick={() => setDeletingTeacherId(t.id)}
                                   className="btn btn-outline"
                                   style={{ padding: "0.3rem 0.6rem", color: "var(--danger-500)", borderColor: "#FCA5A5" }}
-                                  title="Delete Teacher"
+                                  title="Switch off this teacher (their upload history is kept)"
+                                  aria-label={`Switch off ${t.teacher_name}`}
                                 >
-                                  <Trash2 size={14} />
+                                  <UserX size={14} />
                                 </button>
                               </div>
                             )}

@@ -220,13 +220,16 @@ def delete_teacher(
     admin: School = Depends(require_school_admin),
     db: Session = Depends(get_db)
 ):
-    """Deletes a teacher under this school."""
-
+    """Removes a teacher from use: the account is switched off, not deleted (M-8). Their upload history - the
+    record of what was sent to PARAKH - stays; they are signed out everywhere and their saved PARAKH session is
+    deleted. The admin can switch the account on again."""
     teacher = db.query(Teacher).filter(Teacher.id == teacher_id, Teacher.school_id == admin.id).first()
     if not teacher:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Teacher not found.")
-    db.delete(teacher)
-    db.commit()
+    teacher.is_active = False
+    end_all_sessions(db, teacher)
+    hpc_sessions.end("teacher", teacher.id)
+    audit.record(f"school_admin:{admin.id}", "deactivate_teacher", "teacher", teacher.id, school_id=admin.id)
     return None
 
 
