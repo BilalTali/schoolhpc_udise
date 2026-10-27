@@ -10,6 +10,8 @@ account (no class mapping); any other ID gets a teacher who is class teacher of 
 
 It answers the requests backend/hpc/portal.py and Lookups make, in the shapes the real portal uses.
 GET /_fake/saves lists every PATCH received (for checking what the app sent).
+POST /_fake/mode?delay=<seconds>&fail_saves=<n>&down=<0|1> makes it slow, reject the next n saves, or refuse
+everything (to try failures). GET /_fake/mode shows the current mode.
 """
 import base64
 import copy
@@ -17,6 +19,7 @@ import json
 import re
 import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
@@ -40,7 +43,7 @@ CONTENT = {"gl": ["L1CG1"], "cpt": ["L1C1.1"], "desc": ["Pairs act out a short c
            "approaches": [1], "any-other": ""}
 PARTS = {"FOUNDATIONAL": ["part_a1", "part_a2", "part_b", "part_c", "hpc_credit"],
          "PREPARATORY": ["part_a1", "part_a2", "part_a3", "part_b", "part_c", "hpc_credit"],
-         "MIDDLE": ["part_a1", "part_a2", "part_a3", "part_b", "part_c", "hpc_credit"]}
+         "MIDDLE": ["part_a1", "part_a2", "part_a3", "part_a4", "part_b", "part_c", "hpc_credit"]}
 # class teacher of: Grade 1 A (Foundational), Grade 5 A (Preparatory), Grade 6 A (Middle)
 TEACHER_MAPPING = [{"ct": 1, "grd": 4, "sec": 1}, {"ct": 1, "grd": 8, "sec": 1}, {"ct": 1, "grd": 9, "sec": 1}]
 CLASSES = {"FOUNDATIONAL": (4, 4), "PREPARATORY": (8, 6), "MIDDLE": (9, 5)}   # grade id, number of students
@@ -71,6 +74,7 @@ STUDENTS = _students()
 SAVES = []
 LOCK = threading.Lock()
 TOKENS = {}                     # access token -> staff details
+MODE = {"delay": 0.0, "fail_saves": 0, "down": False}
 
 
 def _staff(login_id):
@@ -110,9 +114,26 @@ class Handler(BaseHTTPRequestHandler):
             self._send(401, {"success": False, "message": "Unauthorized"})
         return staff
 
+    def _mode(self, path):
+        """Control requests, then the chosen delay. True when the request was answered here."""
+        if path == "/_fake/mode":
+            if self.command == "POST":
+                q = {k: v[0] for k, v in parse_qs(urlparse(self.path).query).items()}
+                MODE.update(delay=float(q.get("delay", MODE["delay"])), fail_saves=int(q.get("fail_saves", MODE["fail_saves"])),
+                            down=q.get("down", "1" if MODE["down"] else "0") == "1")
+            self._send(200, MODE)
+            return True
+        if MODE["down"]:
+            self.close_connection = True          # like a portal that is down: the connection is dropped
+            return True
+        time.sleep(MODE["delay"])
+        return False
+
     def do_GET(self):
         url = urlparse(self.path)
         path, q = url.path.removeprefix("/api/proxy"), {k: v[0] for k, v in parse_qs(url.query).items()}
+        if self._mode(path):
+            return
         if path == "/captcha":
             return self._send(200, {"success": True, "data": {"captcha_id": "fake-cap", "image_base64": PNG_1PX}})
         if path == "/_fake/saves":
@@ -172,6 +193,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path, body = urlparse(self.path).path.removeprefix("/api/proxy"), self._body()
+        if self._mode(path):
+            return
         if path == "/captcha/verify":
             return self._send(200, {"success": True, "data": {"captcha_token": "fake-captcha-token"}})
         if path == "/auth/login":
@@ -185,6 +208,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_PATCH(self):
         path, body = urlparse(self.path).path.removeprefix("/api/proxy"), self._body()
+        if self._mode(path):
+            return
+        with LOCK:
+            if MODE["fail_saves"] > 0:
+                MODE["fail_saves"] -= 1
+                return self._send(422, {"success": False, "message": "Validation failed (fake rejection)"})
         staff = self._staff_or_401()
         if staff is None:
             return
