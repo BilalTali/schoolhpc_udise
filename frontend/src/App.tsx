@@ -2335,6 +2335,13 @@ export default function App() {
             )}
 
             {/* Tab 5: download the class template, then upload the filled file */}
+            {teacherTab === "upload" && teacherStagesList().length > 1 && (
+              <AllStagesDownload api={cardsApi} stages={teacherStagesList()}
+                                 onOpenSettings={(st) => { setActiveTeacherStage(st); setTeacherTab("settings"); }} />
+            )}
+            {teacherTab === "upload" && teacherStagesList().length > 1 && (
+              <h3 className="section-label">Or one stage at a time</h3>
+            )}
             {teacherTab === "upload" && renderTeacherStageSwitcher()}
             {teacherTab === "upload" && (
               <div className="ui-panel">
@@ -2346,10 +2353,6 @@ export default function App() {
                                  setTeacherTab("activities");
                                }} />
               </div>
-            )}
-            {teacherTab === "upload" && teacherStagesList().length > 1 && (
-              <AllStagesDownload api={cardsApi} stages={teacherStagesList()}
-                                 onOpenSettings={(st) => { setActiveTeacherStage(st); setTeacherTab("settings"); }} />
             )}
             {teacherTab === "upload" && (
               <div className="ui-panel">

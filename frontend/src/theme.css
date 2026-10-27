@@ -362,3 +362,4 @@ h1, h2, h3, h4 { font-family: var(--font-heading); letter-spacing: -0.02em; }
 .as-list li.ok > svg { color: var(--ok-600); }
 .as-list li b { min-width: 7rem; }
 .as-list li span { color: var(--muted); flex: 1; }
+.section-label { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--faint); margin: 0.5rem 0 0.6rem; font-weight: 700; }
