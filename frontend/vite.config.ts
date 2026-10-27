@@ -7,7 +7,8 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [react()],
     server: {
-      host: '0.0.0.0',
+      // only this computer by default; VITE_HOST=0.0.0.0 opens it to the network (plain http - trusted networks only)
+      host: env.VITE_HOST || '127.0.0.1',
       port: 5173,
       // The web app calls /api on its own address, so the login cookie is same-origin.
       // xfwd passes the browser's address on, so the login limit counts per browser, not per dev server
