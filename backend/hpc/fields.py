@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 Path = Tuple[Union[str, int], ...]
+POSITIONS = ("onehot", "flags", "inlist")   # options map to a place in a list, not to an answer code (H-4)
 
 
 @dataclass
@@ -65,8 +66,11 @@ class Field:
             if not text.lstrip("-").isdigit():
                 return self.blank, f"{self.label}: '{text}' is not a whole number"
             return int(text), None
+        positions = self.kind in POSITIONS
         if self.kind in ("choice", "onehot", "inlist"):
-            match = _lookup(self.options, text)
+            if positions and _is_number(text):
+                return self.blank, _not_a_number(self.label, self.options, text)
+            match = _lookup(self.options, text, by_value=not positions)
             if match is None:
                 return self.blank, _no_match(self.label, self.options, text)
             return match, None
@@ -75,7 +79,9 @@ class Field:
             for part in (p.strip() for p in text.split(",")):
                 if not part:
                     continue
-                match = _lookup(self.options, part)
+                if positions and _is_number(part):
+                    return [], _not_a_number(self.label, self.options, part)
+                match = _lookup(self.options, part, by_value=not positions)
                 (bad.append(part) if match is None else values.append(match))
             if bad:
                 return values, f"{self.label}: unknown choice(s) {bad}"
@@ -134,15 +140,28 @@ def _cell_text(value: Any) -> str:
     return text[:-2] if text.endswith(".0") and text[:-2].isdigit() else text
 
 
-def _lookup(options: Dict[str, Any], text: str):
+def _lookup(options: Dict[str, Any], text: str, by_value: bool = True):
     """The option a cell means: an exact label or stored value (any case), or else the only label that starts
-    with what was typed - so "n" is No and "prof" is Proficient, as long as nothing else starts the same way."""
+    with what was typed - so "n" is No and "prof" is Proficient, as long as nothing else starts the same way.
+    by_value=False for answers stored as positions: there the stored number is a place in a list, not an answer."""
     low = text.lower()
     for label, value in options.items():
-        if label.lower() == low or str(value).lower() == low:
+        if label.lower() == low or (by_value and str(value).lower() == low):
             return value
     starts = [value for label, value in options.items() if label.lower().startswith(low)]
     return starts[0] if len(starts) == 1 else None
+
+
+def _is_number(text: str) -> bool:
+    try:
+        float(text)
+        return True
+    except ValueError:
+        return False
+
+
+def _not_a_number(label: str, options: Dict[str, Any], text: str) -> str:
+    return f"{label}: '{text}' - type the answer ({', '.join(options)}), not a number"
 
 
 def _no_match(label: str, options: Dict[str, Any], text: str) -> str:
