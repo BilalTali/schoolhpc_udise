@@ -9,8 +9,21 @@ from pathlib import Path
 
 import pytest
 
-# The API tests use a throwaway SQLite database, never the real one.
-os.environ["HPC_DATABASE_URL"] = "sqlite:///" + str(Path(tempfile.mkdtemp()) / "test.db")
+# The tests use a throwaway SQLite database, data folder, backup folder and keys - never the real ones.
+# Set before backend.config loads .env (which only fills in what is not set already).
+_SCRATCH = Path(tempfile.mkdtemp(prefix="teacherassist-tests-"))
+os.environ["HPC_DATABASE_URL"] = "sqlite:///" + str(_SCRATCH / "test.db")
+os.environ["HPC_DATA_DIR"] = str(_SCRATCH / "data")
+os.environ["HPC_BACKUP_DIR"] = str(_SCRATCH / "backups")
+os.environ["HPC_BACKUP_KEY_FILE"] = str(_SCRATCH / "keys" / "backup.key")
+for _name in ("HPC_JWT_SECRET", "HPC_SECRET_KEY"):     # generated into the scratch data folder instead
+    os.environ.pop(_name, None)
+
+from backend import config as _config  # noqa: E402
+
+if any(str(p).lower().replace("\\", "/").startswith("c:/teacherassist")
+       for p in (_config.DATA_DIR, _config.BACKUP_DIR, _config.BACKUP_KEY_FILE)):
+    pytest.exit("Tests must not use the real data folder (C:\\TeacherAssist).", returncode=2)
 
 from backend.hpc.stages.common import Lookups  # noqa: E402
 from backend.hpc.sync import StudentData       # noqa: E402
