@@ -181,7 +181,7 @@ interface HpcStatus {
 }
 
 type StatusMsg = { type: "success" | "error" | "info" | "warning"; text: string } | null;
-type AuthTab = "admin_login" | "teacher_login" | "register";
+type AuthTab = "admin_login" | "teacher_login" | "app_admin" | "register";
 type TeacherTab = "roster" | "settings" | "upload" | "bulk" | "activities";
 
 /** Display label and avatar style for a gender value; an empty value is "Not recorded", never guessed. */
@@ -212,6 +212,8 @@ export default function App() {
   // Auth form
   const [adminIdentifier, setAdminIdentifier] = useState("");
   const [adminPassword, setAdminPassword] = useState("");
+  const [appAdminId, setAppAdminId] = useState("");
+  const [appAdminPassword, setAppAdminPassword] = useState("");
   const [appAdminSetup, setAppAdminSetup] = useState<string | null>(null);     // login ID whose first password is being set
   const [setupPassword, setSetupPassword] = useState("");
   const [setupAgain, setSetupAgain] = useState("");
@@ -1127,12 +1129,12 @@ export default function App() {
 
   // ─── Auth ─────────────────────────────────────────────────────────────────
 
-  const handleLogin = async (e: React.FormEvent, role: "SCHOOL_ADMIN" | "TEACHER") => {
+  const handleLogin = async (e: React.FormEvent, role: "SCHOOL_ADMIN" | "TEACHER" | "APP_ADMIN") => {
     e.preventDefault();
     setLoading(true);
     setStatusMsg(null);
-    const identifier = role === "SCHOOL_ADMIN" ? adminIdentifier.trim() : teacherUsername.trim();
-    const password = role === "SCHOOL_ADMIN" ? adminPassword : teacherPassword;
+    const identifier = role === "APP_ADMIN" ? appAdminId.trim() : role === "SCHOOL_ADMIN" ? adminIdentifier.trim() : teacherUsername.trim();
+    const password = role === "APP_ADMIN" ? appAdminPassword : role === "SCHOOL_ADMIN" ? adminPassword : teacherPassword;
     try {
       const res = await apiFetch("/auth/login", {
         method: "POST",
@@ -1165,6 +1167,7 @@ export default function App() {
         setStatusMsg({ type: "success", text: `Welcome back, ${data.name}!` });
       } else if (res.status === 409 && data.detail?.setup_required) {
         setAppAdminSetup(identifier);                  // the application admin's first sign-in: set the password
+        setAuthTab("app_admin");
         setStatusMsg({ type: "warning", text: data.detail.message });
       } else {
         setStatusMsg({ type: "error", text: typeof data.detail === "string" ? data.detail : data.detail?.message || "Invalid credentials." });
@@ -1188,7 +1191,7 @@ export default function App() {
       const data = await res.json();
       if (res.ok) {
         setAppAdminSetup(null);
-        setAdminPassword("");
+        setAppAdminPassword("");
         setSetupPassword("");
         setSetupAgain("");
         setStatusMsg({ type: "success", text: "Password set. Sign in with the login ID and this password." });
@@ -1467,10 +1470,12 @@ export default function App() {
                       onClick={() => { setAuthTab("teacher_login"); setStatusMsg(null); }}><GraduationCap size={15} aria-hidden="true" /> Teacher</button>
               <button type="button" role="tab" aria-selected={authTab === "admin_login"} className={authTab === "admin_login" ? "active" : ""}
                       onClick={() => { setAuthTab("admin_login"); setStatusMsg(null); }}><Building2 size={15} aria-hidden="true" /> School admin</button>
+              <button type="button" role="tab" aria-selected={authTab === "app_admin"} className={authTab === "app_admin" ? "active" : ""}
+                      onClick={() => { setAuthTab("app_admin"); setStatusMsg(null); }}><KeyRound size={15} aria-hidden="true" /> App admin</button>
               <button type="button" role="tab" aria-selected={authTab === "register"} className={authTab === "register" ? "active" : ""}
                       onClick={() => { setAuthTab("register"); setStatusMsg(null); }}><School size={15} aria-hidden="true" /> New school</button>
             </div>
-              {authTab === "admin_login" && appAdminSetup && (
+              {authTab === "app_admin" && appAdminSetup && (
                 <form onSubmit={handleAppAdminSetup}>
                   <p className="lib-muted">First sign-in of the application admin <b>{appAdminSetup}</b>. Choose its password (at least 12
                     characters). This works only in a browser on the server PC.</p>
@@ -1491,10 +1496,30 @@ export default function App() {
                   <button type="button" className="portal-link-btn" onClick={() => setAppAdminSetup(null)}>Back to sign in</button>
                 </form>
               )}
-              {authTab === "admin_login" && !appAdminSetup && (
+              {authTab === "app_admin" && !appAdminSetup && (
+                <form onSubmit={(e) => handleLogin(e, "APP_ADMIN")}>
+                  <p className="lib-muted">The application admin manages every school and teacher on this app.</p>
+                  <div className="form-group" style={{ marginBottom: "1.2rem" }}>
+                    <label className="form-label" htmlFor="app_admin_id">App admin login ID</label>
+                    <input id="app_admin_id" type="text" className="form-input" placeholder="e.g. appadmin" autoComplete="username"
+                           value={appAdminId} onChange={(e) => setAppAdminId(e.target.value)} required />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: "1.5rem" }}>
+                    <label className="form-label" htmlFor="app_admin_password">Password</label>
+                    <input id="app_admin_password" type="password" className="form-input" placeholder="••••••••••••" autoComplete="current-password"
+                           value={appAdminPassword} onChange={(e) => setAppAdminPassword(e.target.value)} required />
+                    <small className="lib-muted">First time? Type any password: you will be asked to set the real one (only on the server PC).</small>
+                  </div>
+                  <button type="submit" className="btn btn-primary" style={{ width: "100%" }} disabled={loading}>
+                    <KeyRound size={16} /> {loading ? "Signing in..." : "Sign In as App Admin"}
+                  </button>
+                </form>
+              )}
+
+              {authTab === "admin_login" && (
                 <form onSubmit={(e) => handleLogin(e, "SCHOOL_ADMIN")}>
                   <div className="form-group" style={{ marginBottom: "1.2rem" }}>
-                    <label className="form-label"><span>UDISE+ Code or Admin Email</span><span className="form-hint">11-digit code (application admin: your login ID)</span></label>
+                    <label className="form-label"><span>UDISE+ Code or Admin Email</span><span className="form-hint">11-digit code</span></label>
                     <input type="text" className="form-input" placeholder="e.g. 27010100101 or principal@school.edu.in" value={adminIdentifier} onChange={(e) => setAdminIdentifier(e.target.value)} required />
                   </div>
                   <div className="form-group" style={{ marginBottom: "1.5rem" }}>
