@@ -29,7 +29,26 @@ DATA_DIR = Path(os.getenv("HPC_DATA_DIR", PROJECT_ROOT / "data"))
 SESSIONS_DIR = DATA_DIR / "sessions"
 BACKUP_DIR = Path(os.getenv("HPC_BACKUP_DIR", PROJECT_ROOT.parent / "hhpc_backups"))
 BACKUP_KEY_FILE = Path(os.getenv("HPC_BACKUP_KEY_FILE", DATA_DIR.parent / "keys" / "backup.key"))
-if any("onedrive" in str(p).lower() for p in (DATA_DIR, BACKUP_DIR)):
+
+
+def _cloud_roots() -> list:
+    """The folders Windows syncs to OneDrive (it sets these variables for each signed-in account)."""
+    return [v for k, v in os.environ.items() if k.lower() in ("onedrive", "onedriveconsumer", "onedrivecommercial") and v]
+
+
+def inside_cloud_folder(path, roots=None) -> bool:
+    """Whether path is inside a synced folder (by where it is, not by what it is called)."""
+    target = Path(path).resolve()
+    for root in _cloud_roots() if roots is None else roots:
+        try:
+            target.relative_to(Path(root).resolve())
+            return True
+        except ValueError:
+            continue
+    return False
+
+
+if any(inside_cloud_folder(p) for p in (DATA_DIR, BACKUP_DIR)):
     print(f"[config] WARNING: data or backups are inside OneDrive ({DATA_DIR}, {BACKUP_DIR}). "
           "Set HPC_DATA_DIR and HPC_BACKUP_DIR in .env to a folder that is not synced.")
 for d in (DATA_DIR, SESSIONS_DIR):

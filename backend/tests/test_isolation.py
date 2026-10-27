@@ -29,3 +29,15 @@ def test_jwt_secret_and_encryption_key_are_made_for_the_tests():
     for name in (".jwt_secret", ".secret_key"):
         if (real / name).exists():
             assert (real / name).read_bytes().strip() != (config.DATA_DIR / name).read_bytes().strip()
+
+
+def test_onedrive_warning_checks_where_the_folder_is_not_its_name(tmp_path):
+    # A-02: a folder whose *name* contains "OneDrive" is not inside OneDrive
+    from backend import config
+    onedrive = tmp_path / "OneDrive"
+    roots = [str(onedrive)]
+    assert config.inside_cloud_folder(onedrive / "TeacherAssist" / "data", roots)
+    assert config.inside_cloud_folder(onedrive, roots)
+    assert not config.inside_cloud_folder(tmp_path / "c--Users-abdul-OneDrive-Desktop" / "data", roots)
+    assert not config.inside_cloud_folder(tmp_path / "OneDriveBackup", roots)
+    assert not config.inside_cloud_folder(tmp_path / "data", [])
