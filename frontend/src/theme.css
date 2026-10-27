@@ -355,3 +355,10 @@ h1, h2, h3, h4 { font-family: var(--font-heading); letter-spacing: -0.02em; }
 .fetch-progress-head svg { color: var(--brand-600); }
 .fetch-progress-head span { color: var(--ink-2); }
 .fetch-progress p { margin: 0; font-size: 0.82rem; color: var(--muted); }
+/* one file for all stages */
+.as-list { list-style: none; padding: 0; margin: 0.4rem 0 0.9rem; display: flex; flex-direction: column; gap: 0.4rem; }
+.as-list li { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; padding: 0.55rem 0.75rem; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+.as-list li > svg { color: #D97706; }
+.as-list li.ok > svg { color: var(--ok-600); }
+.as-list li b { min-width: 7rem; }
+.as-list li span { color: var(--muted); flex: 1; }

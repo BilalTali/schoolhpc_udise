@@ -43,6 +43,7 @@ import { ClassSettings } from "./activities/ClassSettings";
 import { TemplatePanel } from "./activities/TemplatePanel";
 import { LevelsGrid } from "./activities/LevelsGrid";
 import { UploadLive } from "./activities/UploadLive";
+import { AllStagesDownload } from "./activities/AllStagesDownload";
 import type { LiveJob } from "./activities/UploadLive";
 import { OPEN_PARAKH_EVENT } from "./activities/parakhConnect";
 import { CaptchaStep } from "./CaptchaStep";
@@ -465,13 +466,18 @@ export default function App() {
     }
   };
 
-  const renderTeacherStageSwitcher = () => {
-    if (!user) return null;
-    const teacherStages = teacherHpcStatus?.stages && teacherHpcStatus.stages.length > 0
+  const teacherStagesList = (): string[] => {
+    if (!user) return [];
+    return teacherHpcStatus?.stages && teacherHpcStatus.stages.length > 0
       ? teacherHpcStatus.stages
       : user.assigned_stages && user.assigned_stages.length > 0
         ? user.assigned_stages
         : (user.assigned_stage || "Preparatory").split(",").map((s) => s.trim()).filter(Boolean);
+  };
+
+  const renderTeacherStageSwitcher = () => {
+    if (!user) return null;
+    const teacherStages = teacherStagesList();
     if (teacherStages.length > 1) {
       return (
         <div className="stage-switch-bar">
@@ -2340,6 +2346,10 @@ export default function App() {
                                  setTeacherTab("activities");
                                }} />
               </div>
+            )}
+            {teacherTab === "upload" && teacherStagesList().length > 1 && (
+              <AllStagesDownload api={cardsApi} stages={teacherStagesList()}
+                                 onOpenSettings={(st) => { setActiveTeacherStage(st); setTeacherTab("settings"); }} />
             )}
             {teacherTab === "upload" && (
               <div className="ui-panel">

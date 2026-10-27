@@ -71,13 +71,36 @@ def exception_choices(stage: str, marks_subjects=None) -> Dict[str, str]:
     return out
 
 
+def sheet_names(stage: str, combined: bool) -> Dict[str, str]:
+    """A one-stage file keeps the short names; a file for several stages names each stage's own sheets."""
+    if not combined:
+        return {"settings": SETTINGS_SHEET, "exceptions": EXCEPTIONS_SHEET, "part_b": PART_B_SHEET}
+    return {"settings": f"{stage} - Settings", "exceptions": f"{stage} - Exceptions", "part_b": f"{stage} - Part B"}
+
+
+def is_locked_sheet(title: str) -> bool:
+    """Sheets that are never read as student data (their own readers handle Exceptions)."""
+    return title in LOCKED_SHEETS or title.endswith((" - Settings", " - Exceptions", " - Part B"))
+
+
 def build(path, stage: str, students: List[Dict[str, Any]], rows: Dict[str, Dict[str, Any]], lookups,
           settings: Dict[str, Any], marks_subjects, is_setting_key, part_b: Dict[str, Dict[str, Any]],
           problems: Dict[str, List[str]], summary: Dict[str, Any]):
+    """The class template for one stage."""
+    return build_many(path, [{"stage": stage, "students": students, "rows": rows, "lookups": lookups, "settings": settings,
+                              "marks_subjects": marks_subjects, "is_setting_key": is_setting_key, "part_b": part_b,
+                              "problems": problems}], summary)
+
+
+def build_many(path, sections: List[Dict[str, Any]], summary: Dict[str, Any]):
+    """One file for one or more stages: a sheet to fill per stage (sheet 1, 2, 3 ...), each stage with its own
+    Settings, Exceptions and Part B sheets, one How to use and one Class summary."""
+    combined = len(sections) > 1
+    stages = [sec["stage"] for sec in sections]
     wb = Workbook()
     how = wb.active
     how.title = "How to use"
-    _how_to(how, stage)
+    _how_to(how, stages)
     lists = wb.create_sheet("Lists")
     lists.sheet_state = "hidden"
     ranges: Dict[tuple, str] = {}
@@ -91,10 +114,23 @@ def build(path, stage: str, students: List[Dict[str, Any]], rows: Dict[str, Dict
             ranges[key] = f"Lists!${col}$1:${col}${max(len(options), 1)}"
         return ranges[key]
 
-    settings_ws, max_cells, total_cell = _settings_sheet(wb, stage, settings, marks_subjects, summary)
+    for i, sec in enumerate(sections):
+        _stage_sheets(wb, sec, sheet_names(sec["stage"], combined), list_range, summary, position=1 + i)
+    _summary_sheet(wb, ", ".join(stages), summary)
+    wb.move_sheet("Lists", offset=len(wb.sheetnames))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    wb.save(path)
+    return path
+
+
+def _stage_sheets(wb, sec: Dict[str, Any], names: Dict[str, str], list_range, summary: Dict[str, Any], position: int) -> None:
+    stage, students, rows, lookups = sec["stage"], sec["students"], sec["rows"], sec["lookups"]
+    settings, marks_subjects, is_setting_key = sec["settings"], sec["marks_subjects"], sec["is_setting_key"]
+    part_b, problems = sec["part_b"], sec["problems"]
+    settings_ws, max_cells, total_cell = _settings_sheet(wb, stage, settings, marks_subjects, summary, names["settings"])
 
     # ---- the stage sheet -------------------------------------------------
-    ws = wb.create_sheet(stage, 1)
+    ws = wb.create_sheet(stage, position)
     ws.sheet_properties.tabColor = PART_COLOURS["A1"][0]
     ws.sheet_view.showGridLines = False
     groups = editable_fields(stage, lookups, is_setting_key)
@@ -196,17 +232,12 @@ def build(path, stage: str, students: List[Dict[str, Any]], rows: Dict[str, Dict
     ws.row_dimensions[3].hidden = True
     ws.sheet_view.zoomScale = 100
     _highlights(ws, columns, FIRST_DATA_ROW, last_row, max_cells, {str(n): subject for n, subject in marks_subjects},
-                list_range)
+                list_range, names)
     ws.freeze_panes = f"D{FIRST_DATA_ROW}"
     _protect(ws)
 
-    _exceptions_sheet(wb, students, exception_choices(stage, marks_subjects), list_range)
-    _part_b_sheet(wb, stage, students, part_b)
-    _summary_sheet(wb, stage, summary)
-    wb.move_sheet("Lists", offset=len(wb.sheetnames))
-    path.parent.mkdir(parents=True, exist_ok=True)
-    wb.save(path)
-    return path
+    _exceptions_sheet(wb, students, exception_choices(stage, marks_subjects), list_range, names["exceptions"])
+    _part_b_sheet(wb, stage, students, part_b, names["part_b"])
 
 
 def _head(ws, row, col, text, colours=STUDENT_COLOURS):
@@ -271,8 +302,10 @@ def _protect(ws):
     ws.protection.autoFilter = False
 
 
-def _how_to(ws, stage):
+def _how_to(ws, stages):
     """A friendly first page: what to do, in order, and what the colours mean."""
+    stages = [stages] if isinstance(stages, str) else list(stages)
+    stage = stages[0] if len(stages) == 1 else " / ".join(stages)
     ws.sheet_view.showGridLines = False
     ws.sheet_properties.tabColor = "16A34A"
     ws.column_dimensions["A"].width = 3
@@ -287,15 +320,16 @@ def _how_to(ws, stage):
     ws.merge_cells("B3:C3")
     ws["B3"] = "Fill the white cells, upload the file, done. Everything else comes from the web app."
     ws["B3"].font = Font(name=FONT, italic=True, color=MUTED, size=11)
-    parts = "A1, A2" + (", A3" if stage != "Foundational" else "") + (", A4" if stage == "Middle" else "") + ", C"
+    parts = "A1, A2" + (", A3" if stages != ["Foundational"] else "") + (", A4" if "Middle" in stages else "") + ", C"
+    sheets = f"the '{stages[0]}' sheet" if len(stages) == 1 else "each stage's sheet (" + ", ".join(f"'{x}'" for x in stages) + ")"
     steps = [
-        f"Open the '{stage}' sheet. One row per student. Fill the white cells: parts {parts}"
-        + (" and the marks obtained." if stage != "Foundational" else "."),
+        f"Open {sheets}. One row per student. Fill the white cells: parts {parts}"
+        + (" and the marks obtained." if stages != ["Foundational"] else "."),
         "Click a cell to see a short hint. For a list, pick from the dropdown or just type the first letters "
         "(n = No, y = Yes, prof = Proficient, adv = Advanced); the upload turns them into the full answer.",
         "Grey cells and the grey sheets (Part B, Settings, Class summary) come from the web app and are not read back.",
         "A student who is different from the class settings (working days, medium, rural/urban, max marks)? "
-        "Add a row on the 'Exceptions' sheet.",
+        + ("Add a row on the 'Exceptions' sheet." if len(stages) == 1 else "Add a row on that stage's Exceptions sheet."),
         "Set Sync to 'No' for anyone you do not want to upload yet.",
         "Upload the file on 'Download & Upload'. Everyone is checked again; anyone not ready is skipped and listed.",
     ]
@@ -329,13 +363,13 @@ def _how_to(ws, stage):
         ws.row_dimensions[r].height = 30
         r += 1
     # The stage, where every workbook from this app keeps it (read back; invisible here).
-    ws["A19"], ws["A20"] = "Stages in this file (do not edit):", stage
+    ws["A19"], ws["A20"] = "Stages in this file (do not edit):", ", ".join(stages)
     ws["A19"].font = ws["A20"].font = Font(color="FFFFFF", size=1)
     _protect(ws)
 
 
-def _settings_sheet(wb, stage, settings, marks_subjects, summary):
-    ws = wb.create_sheet(SETTINGS_SHEET)
+def _settings_sheet(wb, stage, settings, marks_subjects, summary, sheet_name=SETTINGS_SHEET):
+    ws = wb.create_sheet(sheet_name)
     ws.sheet_view.showGridLines = False
     ws.sheet_properties.tabColor = "64748B"
     ws["A1"] = f"Class settings - {stage}"
@@ -357,7 +391,7 @@ def _settings_sheet(wb, stage, settings, marks_subjects, summary):
         name.font = Font(name=FONT, bold=True, color=INK)
         if label == "Working days - total":
             cell = ws.cell(row=i, column=2, value=f"=SUM(B{first + 2}:B{first + 13})")
-            total_cell = f"'{SETTINGS_SHEET}'!$B${i}"
+            total_cell = f"'{sheet_name}'!$B${i}"
             cell.font = Font(name=FONT, bold=True, color=PART_COLOURS["A1"][0])
         else:
             cell = ws.cell(row=i, column=2, value=value)
@@ -371,15 +405,15 @@ def _settings_sheet(wb, stage, settings, marks_subjects, summary):
         ws.row_dimensions[i].height = 20
         if label.startswith("Max marks - "):
             n = next(n for n, s in marks_subjects if s == label[len("Max marks - "):])
-            max_cells[n] = f"'{SETTINGS_SHEET}'!$B${i}"
+            max_cells[n] = f"'{sheet_name}'!$B${i}"
     ws.column_dimensions["A"].width = 44
     ws.column_dimensions["B"].width = 20
     _protect(ws)
     return ws, max_cells, total_cell
 
 
-def _exceptions_sheet(wb, students, choices, list_range):
-    ws = wb.create_sheet(EXCEPTIONS_SHEET)
+def _exceptions_sheet(wb, students, choices, list_range, name=EXCEPTIONS_SHEET):
+    ws = wb.create_sheet(name)
     ws.sheet_view.showGridLines = False
     ws.sheet_properties.tabColor = PART_COLOURS["A3"][0]
     heads = [("Student ID", 14), ("What is different for this student", 40), ("Value", 16), ("Note (not read)", 40)]
@@ -403,8 +437,8 @@ def _exceptions_sheet(wb, students, choices, list_range):
     ws.freeze_panes = "A2"
 
 
-def _part_b_sheet(wb, stage, students, part_b):
-    ws = wb.create_sheet(PART_B_SHEET)
+def _part_b_sheet(wb, stage, students, part_b, name=PART_B_SHEET):
+    ws = wb.create_sheet(name)
     ws.sheet_view.showGridLines = False
     ws.sheet_properties.tabColor = PART_COLOURS["C"][0]
     st = get_stage(stage)
@@ -418,7 +452,7 @@ def _part_b_sheet(wb, stage, students, part_b):
     for d in st.DOMAINS:
         heads += [f"{names[d]}\nactivity", f"{names[d]}\nlevels (A/S/C)"]
     heads += answer_labels
-    ws.cell(row=1, column=1, value="Part B - set on the web app (read only)").font = Font(name=FONT, bold=True, size=14, color=INK)
+    ws.cell(row=1, column=1, value=f"Part B - {stage} - set on the web app (read only)").font = Font(name=FONT, bold=True, size=14, color=INK)
     for c, h in enumerate(heads, start=1):
         _head(ws, 2, c, h, PART_COLOURS["C"])
         ws.column_dimensions[get_column_letter(c)].width = 12 if c == 1 else (11 if "levels" in h else 28)
@@ -450,17 +484,18 @@ BAD_FONT = Font(color="991B1B", bold=True)
 SETTINGS_FIRST_MONTH_ROW = 6                     # Settings sheet: B6..B17 are the working days April..March
 
 
-def _effective(sid_cell: str, what: str, default: str) -> str:
+def _effective(sid_cell: str, what: str, default: str, exceptions: str = EXCEPTIONS_SHEET) -> str:
     """This student's value from the Exceptions sheet when there is one, else the class setting."""
-    ex = f"'{EXCEPTIONS_SHEET}'"
+    ex = f"'{exceptions}'"
     return (f'IF(COUNTIFS({ex}!$A:$A,{sid_cell},{ex}!$B:$B,"{what}")>0,'
             f'SUMIFS({ex}!$C:$C,{ex}!$A:$A,{sid_cell},{ex}!$B:$B,"{what}"),{default})')
 
 
 def _highlights(ws, columns, first: int, last: int, max_cells: Dict[str, str], marks_label: Dict[str, str],
-                list_range) -> None:
+                list_range, names: Dict[str, str] = None) -> None:
     """Live colours, worked out by Excel: red where a value is wrong, yellow where a required one is missing."""
     from openpyxl.formatting.rule import FormulaRule
+    names = names or sheet_names("", False)
     sid = f"$A{first}"
     for c, f in columns:
         letter = get_column_letter(c)
@@ -469,11 +504,11 @@ def _highlights(ws, columns, first: int, last: int, max_cells: Dict[str, str], m
         if f.key.startswith("a1_present_"):
             month = int(f.key.rsplit("_", 1)[1])
             days = _effective(sid, f"Working days - {MONTH_LABELS[month - 1]}",
-                              f"'{SETTINGS_SHEET}'!$B${SETTINGS_FIRST_MONTH_ROW + month - 1}")
+                              f"'{names['settings']}'!$B${SETTINGS_FIRST_MONTH_ROW + month - 1}", names["exceptions"])
             bad.append(f"AND(ISNUMBER({cell}),{cell}>{days})")
         elif f.key.endswith("_obtained"):
             n = f.key.split("_")[1]
-            top = _effective(sid, f"Max marks - {marks_label.get(n, '')}", max_cells.get(n, "0"))
+            top = _effective(sid, f"Max marks - {marks_label.get(n, '')}", max_cells.get(n, "0"), names["exceptions"])
             bad.append(f"AND(ISNUMBER({cell}),OR({cell}<0,{cell}>{top}))")
         if f.max_len:
             bad.append(f"LEN({cell})>{f.max_len}")
@@ -502,12 +537,12 @@ def _summary_sheet(wb, stage, summary):
         ws.cell(row=i, column=1, value=label).font = Font(name=FONT, bold=True, color=INK)
         ws.cell(row=i, column=2, value=value).font = Font(name=FONT, color=INK)
     start = len(facts) + 5
-    for c, h in enumerate(["Student ID", "In this file", "Part B", "Other problems when downloaded"], start=1):
+    for c, h in enumerate(["Student ID", "In this file", "Part B", "Other problems when downloaded", "Stage"], start=1):
         _head(ws, start, c, h)
     for r, item in enumerate(summary.get("students", []), start=start + 1):
         values = [item["student_id"], "Yes" if item["in_file"] else "No",
                   "Ready" if item["ready"] else "Not ready: " + "; ".join(item["part_b_problems"]),
-                  "; ".join(item["other_problems"]) or "None"]
+                  "; ".join(item["other_problems"]) or "None", item.get("stage", stage)]
         for c, v in enumerate(values, start=1):
             cell = ws.cell(row=r, column=c, value=v)
             cell.font = Font(name=FONT, color=INK if c != 4 else MUTED)
@@ -515,21 +550,21 @@ def _summary_sheet(wb, stage, summary):
             cell.alignment = Alignment(wrap_text=True, vertical="top", horizontal="center" if c < 3 else "left")
             if (r - start) % 2 == 0:
                 cell.fill = STRIPE_FILL
-    for c, w in zip("ABCD", (14, 12, 60, 60)):
+    for c, w in zip("ABCDE", (14, 12, 60, 60, 14)):
         ws.column_dimensions[c].width = w
     ws["F3"], ws["G3"] = "summary_start_row", start                 # where the list starts (for reading back)
     ws.column_dimensions["F"].hidden = ws.column_dimensions["G"].hidden = True
     _protect(ws)
 
 
-def read_exceptions(wb, stage: str, known_ids) -> Tuple[Dict[str, Dict[str, Any]], List[str]]:
-    """{student_id: {field key: value}} from the Exceptions sheet, and problems with rows that cannot be used."""
+def read_exceptions(wb, stage: str, known_ids, sheet: str = EXCEPTIONS_SHEET) -> Tuple[Dict[str, Dict[str, Any]], List[str]]:
+    """{student_id: {field key: value}} from a stage's Exceptions sheet, and problems with rows that cannot be used."""
     out: Dict[str, Dict[str, Any]] = {}
     problems: List[str] = []
-    if EXCEPTIONS_SHEET not in wb.sheetnames:
+    if sheet not in wb.sheetnames:
         return out, problems
     choices = exception_choices(stage)
-    for r, (sid, what, value, *_rest) in enumerate(wb[EXCEPTIONS_SHEET].iter_rows(min_row=2, values_only=True), start=2):
+    for r, (sid, what, value, *_rest) in enumerate(wb[sheet].iter_rows(min_row=2, values_only=True), start=2):
         if sid in (None, "") and what in (None, "") and value in (None, ""):
             continue
         sid = str(sid or "").split(".")[0].strip()
@@ -557,8 +592,9 @@ def info(wb) -> Dict[str, Any]:
     for row in ws.iter_rows(min_row=start + 1, values_only=True) if start else []:
         if row[0] not in (None, "") and str(row[1]) == "Yes":
             included.append(str(row[0]))
-    return {"is_template": True, "stage": facts.get("Stage"), "ready_as_of": facts.get("Part B ready as of"),
-            "made_at": facts.get("Made at"), "included": included}
+    stage_text = str(facts.get("Stage") or "")
+    return {"is_template": True, "stage": stage_text, "stages": [x.strip() for x in stage_text.split(",") if x.strip()],
+            "ready_as_of": facts.get("Part B ready as of"), "made_at": facts.get("Made at"), "included": included}
 
 
 def part_b_view(stage: str, row: Dict[str, Any], lookups, labels: Dict[str, str]) -> Dict[str, Any]:

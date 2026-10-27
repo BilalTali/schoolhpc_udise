@@ -166,7 +166,7 @@ def test_download_needs_settings_first_and_all_needs_confirmation(world):
     hpc_cards.save_draft(teacher.id, portal.ay, "Preparatory", "3001", {**grid(), **ANSWERS})
     run_check(client)
     blocked = client.get(f"{API}/teacher/template/Preparatory/download")
-    assert blocked.status_code == 409 and "Finish the class settings first" in blocked.json()["detail"]
+    assert blocked.status_code == 409 and "Finish the class settings" in blocked.json()["detail"]
     status = client.get(f"{API}/teacher/template/Preparatory/check").json()
     assert status["settings_complete"] is False and status["settings_missing"]
     client.put(f"{API}/teacher/settings/Preparatory", json={"values": SETTINGS})
@@ -340,3 +340,45 @@ def test_excel_functions_stay_usable_and_long_text_wraps(world):
     rules = [r.formula[0] for area, items in ws.conditional_formatting._cf_rules.items()
              if str(area.sqref).startswith(level + "4") for r in items]
     assert any('&"*")<>1' in f for f in rules)                                    # a short form is not red
+
+
+def test_one_file_for_several_stages_reads_back_by_stage(tmp_path):
+    """A sheet per stage, each with its own Settings, Exceptions and Part B; the upload knows each row's stage."""
+    from backend.hpc import workbook
+    from backend.hpc.credit import summative_subjects
+    from backend.tests.conftest import make_lookups
+
+    def section(stage, code, ids):
+        settings = {"medium": "English", "rural_urban": "Rural", "working_days": [22] * 12,
+                    "max_marks": {n: 50 for n, _ in summative_subjects(stage)}, "declaration": "Yes"}
+        return {"stage": stage, "students": [{"student_id": i, "student_name": f"STUDENT {i}"} for i in ids],
+                "rows": {i: {} for i in ids}, "lookups": make_lookups(code), "settings": settings,
+                "marks_subjects": summative_subjects(stage), "is_setting_key": class_settings.is_setting_key,
+                "part_b": {}, "problems": {}}
+    summary = {"generated_at": "2026-10-27T09:00:00+00:00", "ready_as_of": "2026-10-27T08:55:00+00:00", "classes": "Grade 5 A, Grade 6 A",
+               "included_count": 3, "excluded_count": 0, "rule": "test", "settings_saved_at": "-",
+               "students": [{"student_id": i, "in_file": True, "ready": True, "part_b_problems": [], "other_problems": [], "stage": st}
+                            for i, st in (("5001", "Preparatory"), ("5002", "Preparatory"), ("6001", "Middle"))]}
+    path = tmp_path / "all.xlsx"
+    template.build_many(path, [section("Preparatory", "PREPARATORY", ["5001", "5002"]), section("Middle", "MIDDLE", ["6001"])], summary)
+
+    wb = load_workbook(path)
+    assert wb.sheetnames[:3] == ["How to use", "Preparatory", "Middle"]                     # sheet 1, sheet 2 ...
+    for st in ("Preparatory", "Middle"):
+        assert {f"{st} - Settings", f"{st} - Exceptions", f"{st} - Part B"} <= set(wb.sheetnames)
+    assert "Settings" not in wb.sheetnames and wb["How to use"]["A20"].value == "Preparatory, Middle"
+    rules = [r.formula[0] for items in wb["Middle"].conditional_formatting._cf_rules.values() for r in items]
+    assert any("'Middle - Settings'!$B$" in f for f in rules) and any("'Middle - Exceptions'!" in f for f in rules)
+    assert not any("'Preparatory - " in f for f in rules)                                    # each sheet uses its own stage
+    wb["Middle - Exceptions"]["A2"], wb["Middle - Exceptions"]["B2"], wb["Middle - Exceptions"]["C2"] = "6001", "Working days - April", 18
+    wb["Preparatory - Exceptions"]["A2"], wb["Preparatory - Exceptions"]["B2"], wb["Preparatory - Exceptions"]["C2"] = "6001", "Working days - May", 9
+    wb.save(path)
+
+    problems = []
+    rows = workbook.read(path, problems)
+    assert {sid: r["stage"] for sid, r in rows.items()} == {"5001": "Preparatory", "5002": "Preparatory", "6001": "Middle"}
+    assert rows["6001"]["a1_working_1"] == 18 and "a1_working_2" not in rows["6001"]       # Middle's exception only
+    assert any("6001" in p and "not in this file" in p for p in problems)                   # wrong stage's sheet: reported
+    assert sorted(workbook.detect_stages(path)) == ["Middle", "Preparatory"]
+    info = template.info(load_workbook(path))
+    assert info["stages"] == ["Preparatory", "Middle"] and sorted(info["included"]) == ["5001", "5002", "6001"]

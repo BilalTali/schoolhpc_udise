@@ -136,44 +136,72 @@ def _run(job, client: Portal, teacher_id: str, stage: str, students, resolve, lo
 RULE = "Only students whose Part B is complete (the same checks a real save runs) - unless 'all students' was chosen."
 
 
-def build_download(teacher, stage: str, include_all: bool, path, labels: Dict[str, str]):
-    """Builds the template from the last finished check (nothing more is read from PARAKH)."""
+def _section(teacher, stage: str, include_all: bool, labels: Dict[str, str]):
+    """One stage's part of a template, from its last finished check (nothing more is read from PARAKH).
+    Returns (section for template.build_many, every student's result, the students in the file, the check)."""
     from fastapi import HTTPException, status
     from backend.hpc import template
     job = latest(teacher.id, stage)
     if not job or job["status"] != "COMPLETED":
-        raise HTTPException(status.HTTP_409_CONFLICT, "Check the class first (it reads each student's card).")
+        raise HTTPException(status.HTTP_409_CONFLICT, f"Check the class first on {stage} (it reads each student's card).")
     settings = (job.get("settings") or {}).get("values") or class_settings.blank(stage)
     gaps = class_settings.missing(stage, settings)
     if gaps:
-        raise HTTPException(status.HTTP_409_CONFLICT, "Finish the class settings first: " + "; ".join(gaps) + ".")
+        raise HTTPException(status.HTTP_409_CONFLICT, f"Finish the class settings for {stage} first: " + "; ".join(gaps) + ".")
     results = job["results"]
     chosen = [r for r in results if (include_all or r["ready"]) and r["student_id"] in job["data"]]
-    if not chosen:
-        raise HTTPException(status.HTTP_409_CONFLICT, "No student's Part B is complete yet, so there is nothing to put in the file.")
     lookups = job["lookups"]
     rows, part_b, problems = {}, {}, {}
+    st = get_stage(stage)
     for r in chosen:
         data, row = job["data"][r["student_id"]]
-        st = get_stage(stage)
         parts = {p.col: p.load(data.raw_parts.get(p.col)) for p in st.PARTS if p.col in ("part_b", "part_c")}
         _, grid_values, _ = sync.grid_state(stage, parts, row, lookups, job.get("typed"))
         rows[r["student_id"]] = row
         part_b[r["student_id"]] = template.part_b_view(stage, {**row, **grid_values}, lookups, labels)
         problems[r["student_id"]] = [] if r["ready"] else list(r["part_b_problems"])   # the rest: live colours
-    students = [{"student_id": r["student_id"], "student_name": r["student_name"]} for r in chosen]
-    in_file = {r["student_id"] for r in chosen}
-    summary = {"generated_at": _now(), "ready_as_of": job["finished_at"],
-               "settings_saved_at": (job.get("settings") or {}).get("saved_at"),
-               "classes": ", ".join(sorted({f"{r['grade']} {r['section']}".strip() for r in results})),
-               "included_count": len(chosen), "excluded_count": len(results) - len(chosen),
-               "rule": "All students (not-ready ones are marked)" if include_all else RULE,
+    section = {"stage": stage, "students": [{"student_id": r["student_id"], "student_name": r["student_name"]} for r in chosen],
+               "rows": rows, "lookups": lookups, "settings": settings, "marks_subjects": class_settings.marks_subjects(stage),
+               "is_setting_key": class_settings.is_setting_key, "part_b": part_b, "problems": problems}
+    return section, results, chosen, job
+
+
+def build_download(teacher, stage: str, include_all: bool, path, labels: Dict[str, str]):
+    """The template for one stage."""
+    return build_download_many(teacher, [stage], include_all, path, {stage: labels})
+
+
+def build_download_many(teacher, stages: List[str], include_all: bool, path, labels: Dict[str, Dict[str, str]]):
+    """One file for several stages: a sheet per stage. Every stage needs a finished check and its class settings;
+    a stage with nobody ready is left out (the Class summary says so)."""
+    from fastapi import HTTPException, status
+    from backend.hpc import template
+    sections, everyone, in_file, checks = [], [], set(), []
+    for stage in stages:
+        section, results, chosen, job = _section(teacher, stage, include_all, labels.get(stage) or {})
+        checks.append((stage, job))
+        everyone += [{**r, "stage": stage} for r in results]
+        in_file |= {r["student_id"] for r in chosen}
+        if chosen:
+            sections.append(section)
+    if not sections:
+        raise HTTPException(status.HTTP_409_CONFLICT, "No student's Part B is complete yet, so there is nothing to put in the file.")
+    one = len(stages) == 1
+    saved = [(stage, (job.get("settings") or {}).get("saved_at")) for stage, job in checks]
+    summary = {"generated_at": _now(),
+               "ready_as_of": min(job["finished_at"] for _, job in checks),
+               "settings_saved_at": saved[0][1] if one else "; ".join(f"{stage}: {at or '-'}" for stage, at in saved),
+               "classes": ", ".join(sorted({f"{r['grade']} {r['section']}".strip() for r in everyone})),
+               "included_count": len(in_file), "excluded_count": len(everyone) - len(in_file),
+               "rule": ("All students (not-ready ones are marked)" if include_all else RULE)
+                       + ("" if one or len(sections) == len(stages) else
+                          " Stages with nobody ready yet are not in this file: "
+                          + ", ".join(st for st in stages if st not in {sec["stage"] for sec in sections}) + "."),
                "students": [{"student_id": r["student_id"], "in_file": r["student_id"] in in_file, "ready": r["ready"],
-                             "part_b_problems": r["part_b_problems"], "other_problems": r["other_problems"][:10]}
-                            for r in results]}
-    template.build(path, stage, students, rows, lookups, settings, class_settings.marks_subjects(stage),
-                   class_settings.is_setting_key, part_b, problems, summary)
+                             "part_b_problems": r["part_b_problems"], "other_problems": r["other_problems"][:10],
+                             "stage": r["stage"]} for r in everyone]}
+    template.build_many(path, sections, summary)
     from backend.services import audit
-    audit.record(f"teacher:{teacher.id}", "download_template", "class_template", stage, None,
+    audit.record(f"teacher:{teacher.id}", "download_template", "class_template", ",".join(sec["stage"] for sec in sections), None,
                  {"students": sorted(in_file), "include_all": include_all})
     return path

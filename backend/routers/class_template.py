@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 
 from backend.hpc.portal import PortalError
 from backend.models.entities import Teacher
-from backend.routers.teachers import _portal, _roster_file, _stage
+from backend.routers.teachers import _portal, _roster_file, _stage, teacher_stages
 from backend.services import activity_library, class_settings, class_template, hpc_cards, hpc_sessions
 from backend.services.auth_service import require_teacher
 
@@ -79,8 +79,37 @@ def start_check(stage: str, teacher: Teacher = Depends(require_teacher)):
 def check_status(stage: str, teacher: Teacher = Depends(require_teacher)):
     stage = _stage(teacher, stage)
     settings = class_settings.view(stage, class_settings.load(teacher.id, stage))
+    path = _roster_file(teacher, stage)
+    students = len(json.loads(path.read_text(encoding="utf-8"))) if path.exists() else 0
     return {"job": class_template.job_view(class_template.latest(teacher.id, stage)),
-            "settings_complete": settings["complete"], "settings_missing": settings["missing"]}
+            "settings_complete": settings["complete"], "settings_missing": settings["missing"], "students": students}
+
+
+def _labels(teacher: Teacher, stage: str) -> Dict[str, str]:
+    actor = activity_library.Actor("TEACHER", teacher.id, teacher.school_id, teacher.teacher_name)
+    from backend.database import SessionLocal
+    with SessionLocal() as db:
+        labels = {e["key"]: e["label"] for e in activity_library.library_entries(db, actor, stage).values()}
+    job = class_template.latest(teacher.id, stage)
+    if job and job.get("lookups") is not None and not labels:
+        labels = {f"P{i}": job["lookups"].activity_label(i) for i in job["lookups"].activities}
+    return labels
+
+
+@router.get("/template/all/download")
+def download_all(include: Literal["ready", "all"] = "ready", confirmed: bool = False,
+                 teacher: Teacher = Depends(require_teacher)):
+    """One Excel file for all the teacher's stages that have students: a sheet per stage."""
+    if include == "all" and not confirmed:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Confirm first: students who are not ready will be in the file.")
+    stages = [st for st in teacher_stages(teacher) if _roster_file(teacher, st).exists()
+              and json.loads(_roster_file(teacher, st).read_text(encoding="utf-8"))]
+    if not stages:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No students yet. Use 'Fetch from PARAKH' on the Students page first.")
+    path = hpc_sessions.session_dir("teacher", teacher.id) / f"HPC_All_stages_template{'_all' if include == 'all' else ''}.xlsx"
+    class_template.build_download_many(teacher, stages, include == "all", path, {st: _labels(teacher, st) for st in stages})
+    return FileResponse(path, filename=path.name,
+                        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
 @router.get("/template/{stage}/download")
@@ -89,14 +118,7 @@ def download(stage: str, include: Literal["ready", "all"] = "ready", confirmed: 
     stage = _stage(teacher, stage)
     if include == "all" and not confirmed:
         raise HTTPException(status.HTTP_409_CONFLICT, "Confirm first: students who are not ready will be in the file.")
-    actor = activity_library.Actor("TEACHER", teacher.id, teacher.school_id, teacher.teacher_name)
-    from backend.database import SessionLocal
-    with SessionLocal() as db:
-        labels = {e["key"]: e["label"] for e in activity_library.library_entries(db, actor, stage).values()}
-    job = class_template.latest(teacher.id, stage)
-    if job and job.get("lookups") is not None and not labels:
-        labels = {f"P{i}": job["lookups"].activity_label(i) for i in job["lookups"].activities}
     path = hpc_sessions.session_dir("teacher", teacher.id) / f"HPC_{stage}_template{'_all' if include == 'all' else ''}.xlsx"
-    class_template.build_download(teacher, stage, include == "all", path, labels)
+    class_template.build_download(teacher, stage, include == "all", path, _labels(teacher, stage))
     return FileResponse(path, filename=path.name,
                         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")

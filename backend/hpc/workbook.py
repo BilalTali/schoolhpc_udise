@@ -149,7 +149,7 @@ def read(path: Path, exception_problems: List[str] = None) -> Dict[str, Dict[str
     wb = load_workbook(path, data_only=True)
     out: Dict[str, Dict[str, Any]] = {}
     for ws in wb.worksheets:
-        if ws.title in template.LOCKED_SHEETS or ws.max_row < 2:
+        if template.is_locked_sheet(ws.title) or ws.max_row < 2:
             continue
         key_row = next((r for r in (2, 3) if ID_KEY in [c.value for c in ws[r]]), None)
         if key_row is None:
@@ -164,9 +164,14 @@ def read(path: Path, exception_problems: List[str] = None) -> Dict[str, Dict[str
             for key, value in zip(keys, row):
                 if key and key != ID_KEY:
                     entry[key] = value
+            if key_row == 3 and ws.title in SHEET_PREFIX:     # class template: the sheet says the stage
+                entry.setdefault(STAGE_KEY, ws.title)
     meta = template.info(wb)
-    if meta["is_template"] and meta.get("stage"):
-        exceptions, problems = template.read_exceptions(wb, meta["stage"], set(out))
+    for stage in meta.get("stages") or [] if meta["is_template"] else []:
+        own = template.sheet_names(stage, combined=True)["exceptions"]
+        sheet = own if own in wb.sheetnames else template.EXCEPTIONS_SHEET
+        ids = {sid for sid, e in out.items() if e.get(STAGE_KEY, stage) == stage}
+        exceptions, problems = template.read_exceptions(wb, stage, ids, sheet)
         for sid, values in exceptions.items():
             out[sid].update(values)
         if exception_problems is not None:
