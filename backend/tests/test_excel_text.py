@@ -79,3 +79,46 @@ def test_a_formula_typed_into_an_answer_is_refused_not_calculated(tmp_path, shee
     monkeypatch.setattr(sync, "Lookups", lambda client, code: make_lookups(code, client))
     results = {r.student_id: r for r in sync.sync_workbook(FakePortal(data), path, dry_run=True)}
     assert results["1001"].status == "INVALID" and any("formula" in e and where in e for e in results["1001"].errors)
+
+
+# H-6: the same student twice is never merged - both rows are skipped and the upload says why
+def test_a_student_twice_on_one_sheet_is_skipped_not_merged(tmp_path, monkeypatch):
+    path = _template(tmp_path)
+    wb = load_workbook(path)
+    ws = wb["Preparatory"]
+    keys = {ws.cell(row=3, column=c).value: c for c in range(1, ws.max_column + 1)}
+    ws.cell(row=5, column=keys["student_id"], value="1001")          # a copied row kept the first student's id
+    ws.cell(row=5, column=keys["a1_mother_tongue"], value=None)
+    wb.save(path)
+    rows = workbook.read(path)
+    assert rows["1001"]["a1_mother_tongue"] == "=Kashmiri"            # the first row's value, not merged with blanks
+    assert any("rows 4 and 5" in p and "Preparatory" in p for p in rows["1001"][workbook.PROBLEMS_KEY])
+    data = {("PREPARATORY", sid): {"record": blank_student("PREPARATORY", sid).record,
+                                   "parts": blank_student("PREPARATORY", sid).raw_parts} for sid in IDS}
+    monkeypatch.setattr(sync, "Lookups", lambda client, code: make_lookups(code, client))
+    results = {r.student_id: r for r in sync.sync_workbook(FakePortal(data), path, dry_run=True)}
+    assert results["1001"].status == "INVALID" and "appears twice" in results["1001"].errors[0]
+
+
+def test_a_student_on_two_stage_sheets_is_skipped(tmp_path):
+    def section(stage, ids):
+        settings = {"medium": "English", "rural_urban": "Rural", "working_days": [22] * 12,
+                    "max_marks": {n: 50 for n, _ in summative_subjects(stage)}, "declaration": "Yes"}
+        return {"stage": stage, "students": [{"student_id": i, "student_name": f"STUDENT {i}"} for i in ids],
+                "rows": {i: {} for i in ids}, "lookups": make_lookups(stage.upper()), "settings": settings,
+                "marks_subjects": summative_subjects(stage), "is_setting_key": class_settings.is_setting_key,
+                "part_b": {}, "problems": {}}
+    summary = {"generated_at": "x", "ready_as_of": "x", "classes": "", "included_count": 2, "excluded_count": 0, "rule": "t",
+               "settings_saved_at": "-", "students": []}
+    path = tmp_path / "all.xlsx"
+    template.build_many(path, [section("Preparatory", ["5001"]), section("Middle", ["5001"])], summary)
+    rows = workbook.read(path)
+    assert any("Preparatory" in p and "Middle" in p for p in rows["5001"][workbook.PROBLEMS_KEY])
+
+
+def test_the_old_class_workbook_still_joins_a_student_across_its_part_sheets(tmp_path):
+    students = [{"student_id": "1001", "student_name": "TEST STUDENT", "status": "IN_PROGRESS"}]
+    path = workbook.build([workbook.Section("Preparatory", students, {"1001": filled_row("PREPARATORY")},
+                                            make_lookups("PREPARATORY"))], tmp_path / "class.xlsx")
+    rows = workbook.read(path)
+    assert not rows["1001"].get(workbook.PROBLEMS_KEY) and rows["1001"]["a1_mother_tongue"] == "Kashmiri"

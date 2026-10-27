@@ -151,6 +151,7 @@ def read(path: Path, exception_problems: List[str] = None) -> Dict[str, Dict[str
     from backend.hpc import template
     wb = load_workbook(path)                      # what was typed, never a calculated result (H-5)
     out: Dict[str, Dict[str, Any]] = {}
+    stage_sheet: Dict[str, str] = {}              # class template: the stage sheet each student is on
     for ws in wb.worksheets:
         if template.is_locked_sheet(ws.title) or ws.max_row < 2:
             continue
@@ -159,11 +160,26 @@ def read(path: Path, exception_problems: List[str] = None) -> Dict[str, Dict[str
             continue
         keys = [c.value for c in ws[key_row]]
         id_col = keys.index(ID_KEY)
+        first_row: Dict[str, int] = {}
         for row in ws.iter_rows(min_row=key_row + 1):
             sid = row[id_col].value
             if sid in (None, ""):
                 continue
-            entry = out.setdefault(str(sid).split(".")[0].strip(), {})
+            sid = str(sid).split(".")[0].strip()
+            # the same student twice is never merged: both rows are skipped (H-6)
+            if sid in first_row:
+                out[sid].setdefault(PROBLEMS_KEY, []).append(
+                    f"Student {sid} appears twice on {ws.title} (rows {first_row[sid]} and {row[id_col].row}) - "
+                    f"keep one row; neither was used")
+                continue
+            first_row[sid] = row[id_col].row
+            if key_row == 3 and ws.title in SHEET_PREFIX:
+                if sid in stage_sheet:
+                    out[sid].setdefault(PROBLEMS_KEY, []).append(
+                        f"Student {sid} appears twice: on {stage_sheet[sid]} and on {ws.title} - keep one row; neither was used")
+                    continue
+                stage_sheet[sid] = ws.title
+            entry = out.setdefault(sid, {})
             for key, cell in zip(keys, row):
                 if key and key != ID_KEY:
                     if _typed_formula(cell):
