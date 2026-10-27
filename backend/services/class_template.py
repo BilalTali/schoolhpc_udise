@@ -95,7 +95,7 @@ def start_check(client: Portal, teacher, stage: str, students: List[Dict[str, An
         job = {"id": uuid.uuid4().hex[:12], "stage": stage, "status": "RUNNING", "done": 0, "total": len(students),
                "results": [], "data": {}, "error": None, "started_at": _now(), "finished_at": None, "t0": time.time(),
                "session": client.ay, "settings": None, "lookups": lookups,
-               "typed": activity_grid.typed_keys(resolve)}
+               "typed": activity_grid.typed_keys(resolve), "defaults": getattr(resolve, "defaults", None)}
         _jobs[(teacher.id, stage)] = job
     threading.Thread(target=_run, args=(job, client, teacher.id, stage, students, resolve, lookups), daemon=True).start()
     return job
@@ -156,7 +156,7 @@ def _section(teacher, stage: str, include_all: bool, labels: Dict[str, str]):
     for r in chosen:
         data, row = job["data"][r["student_id"]]
         parts = {p.col: p.load(data.raw_parts.get(p.col)) for p in st.PARTS if p.col in ("part_b", "part_c")}
-        _, grid_values, _ = sync.grid_state(stage, parts, row, lookups, job.get("typed"))
+        _, grid_values, _ = sync.grid_state(stage, parts, row, lookups, job.get("typed"), job.get("defaults"))
         rows[r["student_id"]] = row
         part_b[r["student_id"]] = template.part_b_view(stage, {**row, **grid_values}, lookups, labels)
         problems[r["student_id"]] = [] if r["ready"] else list(r["part_b_problems"])   # the rest: live colours

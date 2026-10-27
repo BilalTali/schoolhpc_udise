@@ -443,7 +443,24 @@ def library_entries(db: Session, actor: Actor, stage: str) -> Dict[str, Dict[str
                         "content": effective_content(a, settings.get(a.id), mine.get(a.id)),
                         "is_global": a.source == "portal_global", "modified": v["modified"],
                         "usable": v["usable_in_excel"], "reason": v["not_usable_reason"], "key": _key(v),
-                        "subjects": v["subjects"]}
+                        "subjects": v["subjects"], "activity_id": a.id}
+    return out
+
+
+def subject_defaults(db: Session, actor: Actor, stage: str, entries: Dict[str, Dict[str, Any]]) -> Dict[str, str]:
+    """Subject code -> the activity filled in when a student has none for it: the school's default activity if
+    it belongs to that subject, otherwise the subject's first own activity (by name). Subjects without activities
+    of their own get none - the teacher chooses from all."""
+    row = db.query(StageActivityDefault).filter_by(school_id=actor.school_id, teacher_id=None, stage=stage).first()
+    school_default = next((k for k, e in entries.items() if row and e.get("activity_id") == row.activity_id), None)
+    out = {}
+    for s in stage_subjects(stage):
+        own = sorted((k for k, e in entries.items() if e["usable"] and s["code"] in (e.get("subjects") or [])),
+                     key=lambda k: entries[k]["label"].lower())
+        if school_default in own:
+            out[s["code"]] = school_default
+        elif own:
+            out[s["code"]] = own[0]
     return out
 
 
@@ -452,7 +469,9 @@ def resolver_for_teacher(teacher_id: str, stage: str, fallback=None):
     from backend.models.entities import Teacher
     with SessionLocal() as db:
         t = db.get(Teacher, teacher_id)
-        entries = library_entries(db, Actor("TEACHER", t.id, t.school_id, t.teacher_name), stage) if t else {}
+        actor = Actor("TEACHER", t.id, t.school_id, t.teacher_name) if t else None
+        entries = library_entries(db, actor, stage) if t else {}
+        defaults = subject_defaults(db, actor, stage, entries) if t else {}
     if not entries and fallback is None:
         return None                     # never synced: the save uses PARAKH's own lists
 
@@ -463,6 +482,7 @@ def resolver_for_teacher(teacher_id: str, stage: str, fallback=None):
     own = [(k, e) for k, e in entries.items() if e["portal_id"] is None] + \
           [(k, e) for k, e in entries.items() if e["portal_id"] is not None and e["modified"]]
     resolve.typed = {}
+    resolve.defaults = defaults                       # each subject's own activity, used when a student has none
     for k, e in own:                                 # made here first, then edited bank activities
         resolve.typed.setdefault(e["caption"], k)
     from backend.services import own_activities

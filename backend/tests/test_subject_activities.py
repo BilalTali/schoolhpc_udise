@@ -74,3 +74,35 @@ def test_the_activities_grid_offers_and_accepts_only_the_subjects_activities():
     assert activity_grid._check_values("Preparatory", {"b_act_PSLS3": "P1"}, allowed, {"P1"}) == {}
     assert activity_grid.subjects_for(["PSLS1", "PSLS3", "PSLS4"], ["PSLS3"]) == ["PSLS3"]
     assert activity_grid.subjects_for(["PSLS1"], None) == ["PSLS1"]           # no subjects known: as before
+
+
+def test_each_subject_gets_its_own_activity_as_the_default(world):
+    from backend.database import SessionLocal
+    from backend.services import activity_library as lib
+    users = _library(world)
+    teacher = client.get(f"{API}/auth/me", headers=users["t1"]).json()
+    actor = lib.Actor("TEACHER", teacher["id"], teacher["school_id"], "")
+    with SessionLocal() as db:
+        entries = lib.library_entries(db, actor, "Preparatory")
+        defaults = lib.subject_defaults(db, actor, "Preparatory", entries)
+    assert defaults == {"PSLS1": "P1", "PSLS3": "P2"}               # R2, Other Learning Activities ...: none of their own
+    resolve = lib.resolver_for_teacher(teacher["id"], "Preparatory")
+    assert resolve.defaults == defaults
+
+
+def test_defaults_fill_only_empty_subjects_and_never_override_a_choice():
+    from backend.hpc.stages import activity_grid as grid
+    subjects = ["PSLS1", "PSLS2", "PSLS3"]
+    now = grid.Current({grid.act_key("PSLS3"): "P9"}, [], False)
+    draft = {grid.act_key("PSLS2"): ""}                                # the teacher cleared R2 on purpose
+    values, source = grid.effective(subjects, now, draft, {}, {"PSLS1": "P1", "PSLS2": "P5", "PSLS3": "P2"})
+    assert (values[grid.act_key("PSLS1")], source[grid.act_key("PSLS1")]) == ("P1", "default")
+    assert (values[grid.act_key("PSLS2")], source[grid.act_key("PSLS2")]) == ("", "draft")
+    assert (values[grid.act_key("PSLS3")], source[grid.act_key("PSLS3")]) == ("P9", "portal")
+
+
+def test_a_subject_without_activities_of_its_own_can_take_any_activity():
+    allowed = {"P1": ["PSLS1"], "P2": ["PSLS3"]}
+    assert activity_grid._check_values("Preparatory", {"b_act_PSLS7": "P1"}, allowed, set()) == {}    # Other Learning Activities
+    assert "b_act_PSLS3" in activity_grid._check_values("Preparatory", {"b_act_PSLS3": "P1"}, allowed, set())
+    assert activity_grid.subjects_for(["PSLS1", "PSLS3", "PSLS7"], ["PSLS1"], {"PSLS1", "PSLS3"}) == ["PSLS1", "PSLS7"]

@@ -17,7 +17,7 @@ export interface GridStudent {
   section: string;
   status: string;
   values: Record<string, string>;
-  source: Record<string, "draft" | "portal" | "part_c" | "">;
+  source: Record<string, "draft" | "portal" | "part_c" | "default" | "">;   // default: the subject's own activity, filled in
   locked: boolean;
   replace: boolean;
   existing: { key: string; name: string; label: string; subject_names: string[]; complete: boolean }[];

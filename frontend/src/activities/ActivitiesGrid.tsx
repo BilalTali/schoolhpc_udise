@@ -402,11 +402,13 @@ function Cells({ sid, name, subject, value, row, options, unknownLabel, disabled
   const ak = actKey(subject.code);
   // only this subject's activities (R1 under R1, Mathematics under Mathematics); a choice made before that
   // belongs elsewhere stays visible, marked, so nothing disappears silently
-  const mine = options.filter((o) => !o.subjects || o.subjects.includes(subject.code));
+  const own = options.filter((o) => !o.subjects || o.subjects.includes(subject.code));
+  const mine = own.length ? own : options;            // a subject with no activity of its own: every activity
   const elsewhere = value && !mine.some((o) => o.key === value) ? options.find((o) => o.key === value) : undefined;
   return (
     <>
-      <td className={`grid-act ${value ? "" : "grid-empty"}`}>
+      <td className={`grid-act ${value ? "" : "grid-empty"} ${row.source[ak] === "default" ? "grid-from-c" : ""}`}
+          title={row.source[ak] === "default" ? "Filled in: this subject's own activity. Choose another to change it." : undefined}>
         <select value={value} disabled={disabled} aria-label={`${name}, ${subject.name}, activity`}
                 onChange={(e) => onChange(sid, ak, e.target.value)}>
           <option value="">— Choose —</option>

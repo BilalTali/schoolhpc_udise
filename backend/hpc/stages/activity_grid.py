@@ -137,9 +137,12 @@ def current(subjects: List[str], fd: List[Dict[str, Any]], typed: Optional[Dict[
     return Current(values, existing, locked=any(n > 1 for n in cover.values()))
 
 
-def effective(subjects: List[str], now: Current, draft: Dict[str, Any], part_c_levels: Dict[str, str]) -> Tuple[Dict[str, str], Dict[str, str]]:
-    """Grid values to use and where each came from: the teacher's draft, PARAKH, or the student's Part C."""
+def effective(subjects: List[str], now: Current, draft: Dict[str, Any], part_c_levels: Dict[str, str],
+              defaults: Optional[Dict[str, str]] = None) -> Tuple[Dict[str, str], Dict[str, str]]:
+    """Grid values to use and where each came from: the teacher's draft, PARAKH, the student's Part C, or the
+    subject's default activity (defaults: subject code -> activity key) when nothing else gives one."""
     values, source = {}, {}
+    act_default = {act_key(s): k for s, k in (defaults or {}).items()}
     for key in grid_keys(subjects):
         if key in draft and draft[key] not in (None,):
             values[key], source[key] = str(draft[key] or ""), "draft"
@@ -147,6 +150,8 @@ def effective(subjects: List[str], now: Current, draft: Dict[str, Any], part_c_l
             values[key], source[key] = now.values[key], "portal"
         elif key in part_c_levels and part_c_levels[key]:
             values[key], source[key] = part_c_levels[key], "part_c"
+        elif key in act_default:
+            values[key], source[key] = act_default[key], "default"
         else:
             values[key], source[key] = "", ""
     return values, source

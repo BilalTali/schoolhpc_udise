@@ -51,7 +51,8 @@ def student_row(stage: str, student: Dict[str, Any], raw: Dict[str, Any], draft:
     st, subjects, names = _stage_info(stage)
     parts = _parts(stage, raw)
     draft_values = (draft or {}).get("values") or {}
-    now, values, source = sync.grid_state(stage, parts, draft_values, None, grid.typed_keys(resolve))
+    now, values, source = sync.grid_state(stage, parts, draft_values, None, grid.typed_keys(resolve),
+                                          getattr(resolve, "defaults", None))
     replace = str(values.get(grid.REPLACE_KEY, "")).lower() in ("yes", "true", "1")
     unchanged = all(values[k] == now.values.get(k, "") for k in values if k != grid.REPLACE_KEY)
     stale = grid.stale_texts(parts["part_b"], now, resolve)          # edited in the library since
@@ -109,9 +110,16 @@ def load(client: Portal, teacher, stage: str, students: List[Dict[str, Any]], re
                         "locked": sum(r["locked"] for r in rows)}}
 
 
-def subjects_for(scope: List[str], activity_subjects: Optional[List[str]]) -> List[str]:
-    """The subjects of scope an activity may be chosen for (all of them when its subjects are not known)."""
-    return [s for s in scope if activity_subjects is None or s in activity_subjects]
+def subjects_for(scope: List[str], activity_subjects: Optional[List[str]], with_own: Optional[set] = None) -> List[str]:
+    """The subjects of scope an activity may be chosen for: its own subjects, and any subject that has no
+    activity of its own (there every activity is offered). All of them when its subjects are not known."""
+    return [s for s in scope if activity_subjects is None or s in activity_subjects
+            or (with_own is not None and s not in with_own)]
+
+
+def _with_own(allowed) -> set:
+    """Subjects that have at least one activity of their own."""
+    return {s for subs in allowed.values() if subs for s in subs}
 
 
 def _check_values(stage: str, values: Dict[str, Any], allowed, current_keys: set) -> Dict[str, str]:
@@ -130,7 +138,7 @@ def _check_values(stage: str, values: Dict[str, Any], allowed, current_keys: set
         elif k.startswith("b_act_") and v and v not in allowed and v not in current_keys:
             problems[k] = "This activity is not offered in your Activity Library (it may be turned off)."
         elif k.startswith("b_act_") and v and v not in current_keys and allowed[v] is not None \
-                and k[len("b_act_"):] not in allowed[v]:
+                and k[len("b_act_"):] not in allowed[v] and k[len("b_act_"):] in _with_own(allowed):
             problems[k] = (f"This activity is for {', '.join(names.get(s, s) for s in allowed[v])}, not "
                            f"{names.get(k[len('b_act_'):], k)}. Choose one of this subject's activities.")
     return problems
@@ -169,7 +177,7 @@ def quick_fill(client: Portal, teacher, stage: str, students: List[Dict[str, Any
     scope = [s for s in subjects if not subject_codes or s in subject_codes]
     if activity_key:                                  # an activity goes only under its own subjects
         own = next((e.get("subjects") for e in entries if e["key"] == activity_key), None)
-        scope = subjects_for(scope, own)
+        scope = subjects_for(scope, own, _with_own({e["key"]: e.get("subjects") for e in entries}))
         if not scope:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
                                 f"This activity is for {', '.join(names.get(s, s) for s in own or [])}. "
