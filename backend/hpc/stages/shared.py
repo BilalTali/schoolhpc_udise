@@ -4,6 +4,7 @@ A1 (general info + attendance), C (subject assessment) and D (HPC Credit).
 """
 import copy
 import json
+import math
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -176,7 +177,10 @@ def make_part_d(stage_key: str, domains: List[str]) -> Part:
             try:
                 mx_f, got_f = float(mx), float(got)
             except ValueError:
-                errors.append(f"{name}: summative marks must be numbers")
+                mx_f = got_f = math.nan
+            if not (math.isfinite(mx_f) and math.isfinite(got_f)):      # 'nan', 'inf', 1e400 (H-7)
+                errors.append(f"{name}: summative marks must be numbers (you typed {mx!r} and {got!r})")
+                fd["credit"][i] = ["", ""]           # nothing that is not a number reaches the credit tables
                 continue
             if mx_f <= 0 or got_f < 0:
                 errors.append(f"{name}: summative marks must be positive")

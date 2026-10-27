@@ -39,3 +39,29 @@ def test_the_upload_preview_says_it_in_plain_words():
     row = {**filled_row("FOUNDATIONAL"), "b_sa_liked": "1"}
     _, errors = sync.build_payloads("Foundational", blank_student("FOUNDATIONAL"), row, make_lookups("FOUNDATIONAL"))
     assert any("I liked doing this work" in e and "type the answer" in e for e in errors)
+
+
+# H-7: marks are real numbers - never NaN or infinity in the HPC Credit sent to PARAKH
+@pytest.mark.parametrize("stage", ["Preparatory", "Middle"])
+@pytest.mark.parametrize("change", [{"d_1_obtained": "nan"}, {"d_1_max": "inf"}, {"d_1_max": "-inf", "d_1_obtained": "-inf"},
+                                    {"d_1_obtained": "1e400"}, {"d_1_max": "NaN", "d_1_obtained": "NaN"}])
+def test_marks_must_be_ordinary_numbers(stage, change):
+    row = {**filled_row(stage.upper()), **change}
+    payloads, errors = sync.build_payloads(stage, blank_student(stage.upper()), row, make_lookups(stage.upper()))
+    assert any("summative marks must be numbers" in e for e in errors), errors
+    credit = next(p for p in payloads if p["hpc_col"] == "hpc_credit")["formdata"]
+    assert "NaN" not in credit and "Infinity" not in credit
+
+
+def test_ordinary_marks_still_work():
+    row = {**filled_row("PREPARATORY"), "d_1_max": "50", "d_1_obtained": "42.5"}
+    _, errors = sync.build_payloads("Preparatory", blank_student("PREPARATORY"), row, make_lookups("PREPARATORY"))
+    assert errors == []
+
+
+@pytest.mark.parametrize("raw", ["nan", "inf", "-inf", "1e400"])
+def test_class_settings_refuse_max_marks_that_are_not_numbers(raw):
+    from backend.services import class_settings
+    n = class_settings.marks_subjects("Preparatory")[0][0]
+    clean, problems, _ = class_settings.validate("Preparatory", {"max_marks": {n: raw}})
+    assert f"max_marks.{n}" in problems and clean["max_marks"][n] is None

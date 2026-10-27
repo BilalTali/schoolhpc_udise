@@ -7,6 +7,7 @@ workbook's Exceptions sheet. The academic year, grade and section come from PARA
 values = {"medium": "English", "rural_urban": "Rural", "working_days": [22, 23, ... 12 numbers],
           "max_marks": {"1": 33, "2": 33, ...}, "declaration": "Yes"}
 """
+import math
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -67,6 +68,8 @@ def validate(stage: str, values: Dict[str, Any], medium_options: Optional[List[s
         try:
             m = float(str(raw).strip())
         except ValueError:
+            m = math.nan
+        if not math.isfinite(m):                          # 'nan', 'inf' (H-7)
             problems[f"max_marks.{n}"] = f"{subject}: use a number."
             continue
         if m <= 0:
