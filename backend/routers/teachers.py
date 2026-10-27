@@ -51,7 +51,7 @@ def _stage(teacher: Teacher, stage: Optional[str]) -> str:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Unsupported stage '{stage}'. Use one of {', '.join(SUPPORTED)}.")
     if stages and name not in stages:                 # only the teacher's own stages (L-3)
         raise HTTPException(status.HTTP_403_FORBIDDEN,
-                            f"{name} is not one of your stages ({', '.join(stages)}). Ask your school admin to add it.")
+                            f"{name} is not one of your stages ({', '.join(stages)}). Ask your school to add it.")
     return name
 
 
@@ -192,7 +192,7 @@ def _not_yours_note(stage: str, classes: List[Dict[str, Any]]) -> str:
     """Why some students PARAKH lists are not in the app: this login is not their class teacher."""
     what = ", ".join(f"{c['count']} in {c['grade']} {c['section']}".strip() for c in classes)
     return (f"{stage}: PARAKH lists {what}, but this login is not the class teacher of that class, so PARAKH does not "
-            f"let it open their cards. Ask the school admin to make you class teacher of that class on PARAKH, then fetch again.")
+            f"let it open their cards. Ask the school to make you class teacher of that class on PARAKH, then fetch again.")
 
 
 def _run_fetch(job: Dict[str, Any], teacher: Teacher, client, stages: List[str]) -> None:

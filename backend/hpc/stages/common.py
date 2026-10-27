@@ -32,7 +32,7 @@ def clean(text: Any) -> str:
 
 
 # Where Lookups gets the Activity Bank: set by backend.services.activity_library to read the app's own copy
-# (kept up to date by the school admin's sync). PARAKH's bank is read only while that copy is empty.
+# (kept up to date by the school's sync). PARAKH's bank is read only while that copy is empty.
 ACTIVITY_SOURCE: Optional[Callable[[str], Dict[int, Dict[str, Any]]]] = None
 
 

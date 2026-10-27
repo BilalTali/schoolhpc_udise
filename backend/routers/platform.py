@@ -1,6 +1,6 @@
 """
-The application admin's endpoints: every school and teacher, a platform dashboard, the audit trail, and the
-activities offered to every school (shared by teachers, or made by the application admin).
+The admin's endpoints: every school and teacher, a platform dashboard, the audit trail, and the
+activities offered to every school (shared by teachers, or made by the admin).
 
 Nothing here reads students' records or PARAKH passwords.
 """
@@ -18,7 +18,7 @@ from backend.models.library import AuditLog, LibraryActivity
 from backend.services import audit
 from backend.services.auth_service import end_all_sessions, hash_password, require_app_admin
 
-router = APIRouter(prefix="/platform", tags=["Application admin"])
+router = APIRouter(prefix="/platform", tags=["Admin"])
 
 
 class ActiveRequest(BaseModel):
@@ -152,7 +152,7 @@ def set_teacher_active(teacher_id: str, payload: ActiveRequest, admin: PlatformA
 @router.post("/schools/{school_id}/password")
 def set_school_password(school_id: str, payload: PasswordRequest, admin: PlatformAdmin = Depends(require_app_admin),
                         db: Session = Depends(get_db)):
-    """A new password for a school admin who forgot theirs; their old sessions end."""
+    """A new password for a school who forgot theirs; their old sessions end."""
     school = _school_or_404(db, school_id)
     school.hashed_password = hash_password(payload.password)
     end_all_sessions(db, school)
@@ -211,14 +211,14 @@ def activities(admin: PlatformAdmin = Depends(require_app_admin), db: Session = 
     from backend.services.activity_library import STAGE_GRADES, _subject_names
     return [{"id": a.id, "title": a.title, "stage": a.stage, "grade": STAGE_GRADES.get(a.stage, {}).get(a.grade_id, ""),
              "subjects": [_subject_names(a.stage).get(c, c) for c in (a.subjects or [])],
-             "made_by": "Application admin" if a.owner_school_id is None else names.get(a.owner_school_id, "a school"),
+             "made_by": "Admin" if a.owner_school_id is None else names.get(a.owner_school_id, "a school"),
              "state": {"community": "waiting", "community_ok": "offered"}.get(a.share_state, "not offered"),
              "updated_at": _iso(a.updated_at)} for a in rows]
 
 
 @router.post("/activities/{activity_id}/offer")
 def offer(activity_id: str, admin: PlatformAdmin = Depends(require_app_admin), db: Session = Depends(get_db)):
-    """Offers an activity to every school: a teacher's shared one after review, or one the application admin made."""
+    """Offers an activity to every school: a teacher's shared one after review, or one the admin made."""
     act = _activity(db, activity_id)
     if act.owner_school_id is not None and act.share_state != "community":
         raise HTTPException(status.HTTP_409_CONFLICT, "Only activities a teacher shared with other schools can be offered.")

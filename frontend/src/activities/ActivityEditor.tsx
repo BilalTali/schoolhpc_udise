@@ -40,7 +40,7 @@ const toForm = (a: ActivityDetail): Form => ({
 });
 
 const SHARE_OPTIONS: { value: ShareLevel; label: string; hint: string }[] = [
-  { value: "private", label: "Only me", hint: "You and your school admin can see it." },
+  { value: "private", label: "Only me", hint: "You and your school can see it." },
   { value: "school", label: "My school", hint: "Every teacher in your school can use it." },
   { value: "community", label: "Teachers in other schools too", hint: "Helps the shared bank grow. Checked by the app team before others see it." },
 ];

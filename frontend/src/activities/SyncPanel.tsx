@@ -5,7 +5,7 @@ import type { Api } from "../api";
 import { formatWhen } from "./types";
 import type { SyncJob } from "./types";
 
-// "Get activities from PARAKH" (school admin only): starts a read-only sync and follows it until it ends, and
+// "Get activities from PARAKH" (school only): starts a read-only sync and follows it until it ends, and
 // shows what the last update - by hand or the daily automatic one - changed. Teachers get the app's copy and
 // only see when it was last updated. Polling stops as soon as the page is left (the sync keeps running).
 
@@ -85,7 +85,7 @@ export function SyncPanel({ api, stage, isAdmin, latest, lastSynced, onFinished 
       <section className="lib-sync" aria-labelledby="lib-sync-title">
         <h2 id="lib-sync-title" className="lib-section-title"><CloudDownload size={18} aria-hidden="true" /> Activities from PARAKH</h2>
         <p className="lib-muted">
-          Your school admin keeps the PARAKH activities up to date (it also happens automatically every day), so they
+          Your school keeps the PARAKH activities up to date (it also happens automatically every day), so they
           load quickly from here. {stage} last updated: <b>{formatWhen(lastSynced[stage])}</b>.
         </p>
       </section>

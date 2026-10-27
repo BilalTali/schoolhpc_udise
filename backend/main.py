@@ -45,7 +45,7 @@ async def lifespan(app):
     if scrubbed:
         print(f"[startup] Hid UDID / guardian name values in {scrubbed} older audit row(s).")
     from backend.services.activity_library import start_auto_sync_timer
-    start_auto_sync_timer()                      # daily update of the activities with the school admin's session
+    start_auto_sync_timer()                      # daily update of the activities with the school's session
     yield
 
 

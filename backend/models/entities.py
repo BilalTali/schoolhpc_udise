@@ -91,7 +91,7 @@ class Teacher(Base):
 
 
 class PlatformAdmin(Base):
-    """The application admin: one account that sees and manages every school (its login ID comes from .env)."""
+    """The admin: one account that sees and manages every school (its login ID comes from .env)."""
     __tablename__ = "platform_admins"
 
     id = Column(String(36), primary_key=True, default=generate_uuid)

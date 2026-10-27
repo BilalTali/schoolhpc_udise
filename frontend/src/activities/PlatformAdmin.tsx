@@ -7,7 +7,7 @@ import { Modal } from "./Dialog";
 import { STAGES, formatWhen } from "./types";
 import type { Subject } from "./types";
 
-// The application admin: one account above every school - schools and teachers, a platform dashboard, the
+// The admin: one account above every school - schools and teachers, a platform dashboard, the
 // activities offered to every school, and the audit trail. No students' records and no PARAKH passwords here.
 
 interface Stats {
@@ -41,12 +41,12 @@ export function PlatformAdmin({ api, onLogout }: { api: Api; onLogout: () => voi
     <div className="pa-shell">
       <header className="pa-head">
         <div>
-          <h1>Teacher Assist · Application admin</h1>
+          <h1>Teacher Assist · Admin</h1>
           <p className="lib-muted">Every school and teacher on this app. Students' records and PARAKH passwords are never shown here.</p>
         </div>
         <button type="button" className="btn btn-outline" onClick={onLogout}><LogOut size={15} aria-hidden="true" /> Sign out</button>
       </header>
-      <nav className="pa-tabs" role="tablist" aria-label="Application admin">
+      <nav className="pa-tabs" role="tablist" aria-label="Admin">
         {TABS.map(({ key, label, icon: Icon }) => (
           <button key={key} type="button" role="tab" aria-selected={tab === key} className={tab === key ? "active" : ""}
                   onClick={() => { setTab(key); setMessage(null); }}>

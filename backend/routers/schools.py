@@ -1,5 +1,5 @@
 """
-School admin endpoints: teacher accounts, dashboard stats, the school's HPC session and roster.
+School endpoints: teacher accounts, dashboard stats, the school's HPC session and roster.
 """
 import json
 import os
@@ -22,7 +22,7 @@ from backend.services import audit, hpc_sessions
 from backend.services.safe_paths import inside
 from backend.services.auth_service import end_all_sessions, hash_password, require_school_admin
 
-router = APIRouter(prefix="/school", tags=["School Administration"])
+router = APIRouter(prefix="/school", tags=["School"])
 
 
 # ---------------------------------------------------------------------------
@@ -238,7 +238,7 @@ def get_school_stats(
     admin: School = Depends(require_school_admin),
     db: Session = Depends(get_db)
 ):
-    """Aggregated stats for the school admin dashboard."""
+    """Aggregated stats for the school dashboard."""
     teachers = db.query(Teacher).filter(Teacher.school_id == admin.id).all()
     teacher_ids = [t.id for t in teachers]
 

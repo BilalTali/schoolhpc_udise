@@ -234,7 +234,7 @@ export default function App() {
   const [statusMsg, setStatusMsg] = useState<StatusMsg>(null);
   const [loading, setLoading] = useState(false);
 
-  // School admin state
+  // School state
   const [teachers, setTeachers] = useState<TeacherItem[]>([]);
   const [schoolStats, setSchoolStats] = useState<SchoolStats | null>(null);
   const [showAddTeacherModal, setShowAddTeacherModal] = useState(false);
@@ -316,7 +316,7 @@ export default function App() {
   const [openCard, setOpenCard] = useState<{ id: string; name: string } | null>(null);
   const [gridFocus, setGridFocus] = useState<string | undefined>(undefined);   // student to open on the Activities tab
 
-  // School Admin students states
+  // School students states
   const [schoolStudents, setSchoolStudents] = useState<StudentItem[]>([]);
   const [schoolStudentsLoading, setSchoolStudentsLoading] = useState(false);
   const [schoolActiveStage, setSchoolActiveStage] = useState<string>("Preparatory");
@@ -1166,7 +1166,7 @@ export default function App() {
         setUser(userInfo);
         setStatusMsg({ type: "success", text: `Welcome back, ${data.name}!` });
       } else if (res.status === 409 && data.detail?.setup_required) {
-        setAppAdminSetup(identifier);                  // the application admin's first sign-in: set the password
+        setAppAdminSetup(identifier);                  // the admin's first sign-in: set the password
         setAuthTab("app_admin");
         setStatusMsg({ type: "warning", text: data.detail.message });
       } else {
@@ -1469,15 +1469,15 @@ export default function App() {
               <button type="button" role="tab" aria-selected={authTab === "teacher_login"} className={authTab === "teacher_login" ? "active" : ""}
                       onClick={() => { setAuthTab("teacher_login"); setStatusMsg(null); }}><GraduationCap size={15} aria-hidden="true" /> Teacher</button>
               <button type="button" role="tab" aria-selected={authTab === "admin_login"} className={authTab === "admin_login" ? "active" : ""}
-                      onClick={() => { setAuthTab("admin_login"); setStatusMsg(null); }}><Building2 size={15} aria-hidden="true" /> School admin</button>
+                      onClick={() => { setAuthTab("admin_login"); setStatusMsg(null); }}><Building2 size={15} aria-hidden="true" /> School</button>
               <button type="button" role="tab" aria-selected={authTab === "app_admin"} className={authTab === "app_admin" ? "active" : ""}
-                      onClick={() => { setAuthTab("app_admin"); setStatusMsg(null); }}><KeyRound size={15} aria-hidden="true" /> App admin</button>
+                      onClick={() => { setAuthTab("app_admin"); setStatusMsg(null); }}><KeyRound size={15} aria-hidden="true" /> Admin</button>
               <button type="button" role="tab" aria-selected={authTab === "register"} className={authTab === "register" ? "active" : ""}
                       onClick={() => { setAuthTab("register"); setStatusMsg(null); }}><School size={15} aria-hidden="true" /> New school</button>
             </div>
               {authTab === "app_admin" && appAdminSetup && (
                 <form onSubmit={handleAppAdminSetup}>
-                  <p className="lib-muted">First sign-in of the application admin <b>{appAdminSetup}</b>. Choose its password (at least 12
+                  <p className="lib-muted">First sign-in of the admin <b>{appAdminSetup}</b>. Choose its password (at least 12
                     characters). This works only in a browser on the server PC.</p>
                   <div className="form-group" style={{ marginBottom: "1.2rem" }}>
                     <label className="form-label" htmlFor="app_admin_pw">New password</label>
@@ -1498,9 +1498,9 @@ export default function App() {
               )}
               {authTab === "app_admin" && !appAdminSetup && (
                 <form onSubmit={(e) => handleLogin(e, "APP_ADMIN")}>
-                  <p className="lib-muted">The application admin manages every school and teacher on this app.</p>
+                  <p className="lib-muted">The admin manages every school and teacher on this app.</p>
                   <div className="form-group" style={{ marginBottom: "1.2rem" }}>
-                    <label className="form-label" htmlFor="app_admin_id">App admin login ID</label>
+                    <label className="form-label" htmlFor="app_admin_id">Admin login ID</label>
                     <input id="app_admin_id" type="text" className="form-input" placeholder="e.g. appadmin" autoComplete="username"
                            value={appAdminId} onChange={(e) => setAppAdminId(e.target.value)} required />
                   </div>
@@ -1511,7 +1511,7 @@ export default function App() {
                     <small className="lib-muted">First time? Type any password: you will be asked to set the real one (only on the server PC).</small>
                   </div>
                   <button type="submit" className="btn btn-primary" style={{ width: "100%" }} disabled={loading}>
-                    <KeyRound size={16} /> {loading ? "Signing in..." : "Sign In as App Admin"}
+                    <KeyRound size={16} /> {loading ? "Signing in..." : "Sign In as Admin"}
                   </button>
                 </form>
               )}
@@ -1523,11 +1523,11 @@ export default function App() {
                     <input type="text" className="form-input" placeholder="e.g. 27010100101 or principal@school.edu.in" value={adminIdentifier} onChange={(e) => setAdminIdentifier(e.target.value)} required />
                   </div>
                   <div className="form-group" style={{ marginBottom: "1.5rem" }}>
-                    <label className="form-label">School Admin Password</label>
+                    <label className="form-label">School password</label>
                     <input type="password" className="form-input" placeholder="••••••••••••" value={adminPassword} onChange={(e) => setAdminPassword(e.target.value)} required />
                   </div>
                   <button type="submit" className="btn btn-primary" style={{ width: "100%" }} disabled={loading}>
-                    <KeyRound size={16} /> {loading ? "Authenticating..." : "Sign In as School Admin"}
+                    <KeyRound size={16} /> {loading ? "Authenticating..." : "Sign In as School"}
                   </button>
                 </form>
               )}
@@ -1599,7 +1599,7 @@ export default function App() {
     );
   }
 
-  // ─── The application admin: its own pages, above every school ─────────────
+  // ─── The admin: its own pages, above every school ─────────────
   if (user.role === "APP_ADMIN") {
     return <main className="content">{statusAlert}<PlatformAdmin api={cardsApi} onLogout={handleLogout} /></main>;
   }
@@ -1635,7 +1635,7 @@ export default function App() {
         <div className="sb-brand">{logo}<div><b>Teacher Assist</b><span>HPC helper</span></div></div>
         <div className="sb-school">
           <span className="sb-school-name">{user.school_name || "Your school"}</span>
-          <span className="sb-school-meta">{isTeacher ? `Class teacher${user.assigned_grade ? ` · ${user.assigned_grade}${user.assigned_section ? ` ${user.assigned_section}` : ""}` : ""}` : "School admin"}</span>
+          <span className="sb-school-meta">{isTeacher ? `Class teacher${user.assigned_grade ? ` · ${user.assigned_grade}${user.assigned_section ? ` ${user.assigned_section}` : ""}` : ""}` : "School"}</span>
         </div>
         <nav className="sb-nav">
           {isTeacher ? (
@@ -1671,7 +1671,7 @@ export default function App() {
           </NavLink>
         </nav>
         <div className="sb-foot">
-          <div className="sb-user"><span className="sb-avatar" aria-hidden="true">{initials}</span><div><b>{user.name}</b><small>{isTeacher ? "Teacher" : "School admin"}</small></div></div>
+          <div className="sb-user"><span className="sb-avatar" aria-hidden="true">{initials}</span><div><b>{user.name}</b><small>{isTeacher ? "Teacher" : "School"}</small></div></div>
           <button type="button" className="sb-logout" onClick={handleLogout}><LogOut size={15} aria-hidden="true" /> Sign out</button>
         </div>
       </aside>
@@ -1863,7 +1863,7 @@ export default function App() {
             </div>
             )}
 
-            {/* Tab 2: Synced Students Directory (School Admin) */}
+            {/* Tab 2: Synced Students Directory (School) */}
             {schoolTab === "students" && (
               <div className="ui-panel">
                 <div className="panel-header">

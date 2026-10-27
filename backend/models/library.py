@@ -20,7 +20,7 @@ from backend.models.entities import generate_uuid
 
 SOURCES = ("portal_global", "portal_teacher", "local")
 # Sharing of a teacher's local activity, only ever widened with the teacher's consent:
-#   private       the teacher (and their school admin) only
+#   private       the teacher (and their school) only
 #   school        everyone in the teacher's school
 #   community     shared with other schools, waiting for the platform admin's review
 #   community_ok  approved: every school can use it

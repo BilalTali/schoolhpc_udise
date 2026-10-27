@@ -4,12 +4,12 @@ names, edits, on/off switches and defaults, plus activities made in this app.
 
 Who sees what
   portal_global   every school (one shared copy)
-  portal_teacher  the teacher who owns it on PARAKH, and their school admin
-  local           the school admin and the teacher who made it; the whole school once it is
+  portal_teacher  the teacher who owns it on PARAKH, and their school
+  local           the school and the teacher who made it; the whole school once it is
                   shared ("school"); other schools only after the teacher consented to share
                   it AND the platform admin approved it ("community_ok")
 Who may change what
-  school admin    names, edits and on/off for every activity the school sees; defaults;
+  school    names, edits and on/off for every activity the school sees; defaults;
                   local activities of the school
   teacher         their own local activities (create, edit, share, delete); sync with their
                   own PARAKH session
@@ -80,7 +80,7 @@ class Actor:
 
     @property
     def is_platform(self) -> bool:
-        """The application admin: reviews shared activities and makes activities for every school."""
+        """The admin: reviews shared activities and makes activities for every school."""
         return self.role == "APP_ADMIN"
 
 
@@ -137,7 +137,7 @@ def can_view(actor: Actor, act: LibraryActivity) -> bool:
 
 
 def can_edit_text(actor: Actor, act: LibraryActivity) -> bool:
-    """PARAKH activities: anyone who sees them - the school admin edits the school's copy, a teacher their own
+    """PARAKH activities: anyone who sees them - the school edits the school's copy, a teacher their own
     (used for their students only). Made in this app: the owner (or the admin)."""
     if actor.is_platform:                  # its own activities only; schools edit their own copies of PARAKH's
         return act.source == "local" and act.owner_school_id is None
@@ -271,7 +271,7 @@ def view(act: LibraryActivity, setting: Optional[SchoolActivitySetting], actor: 
         subjects = list(act.subjects or [])
     else:
         # a PARAKH activity belongs to the subject(s) PARAKH lists it under (each bank activity has one);
-        # the school admin - or a teacher, for their own copy - can widen that on purpose
+        # the school - or a teacher, for their own copy - can widen that on purpose
         listed = [c for c in all_codes if c in (act.portal_subjects or [])]
         subjects = list(my_edits.get("subjects") or school_edits.get("subjects") or listed or all_codes)
     subjects = [c for c in all_codes if c in subjects]
@@ -375,7 +375,7 @@ def _who(db: Session, actor: str) -> str:
         return t.teacher_name if t else "A teacher"
     if role == "school_admin":
         s = db.get(School, uid)
-        return f"{s.admin_name} (school admin)" if s else "School admin"
+        return f"{s.admin_name} (school)" if s else "School"
     return "PARAKH sync" if actor == "sync" else "Someone"
 
 
@@ -660,9 +660,9 @@ def update(db: Session, actor: Actor, act: LibraryActivity, changes: Dict[str, A
     clean = _clean_changes(act.stage, changes)
     _check_codes(db, actor, act.stage, clean, act)
     if (clean or title is not None) and not can_edit_text(actor, act):
-        _forbid("Only the school admin, or the teacher who made this activity, can change it.")
+        _forbid("Only the school, or the teacher who made this activity, can change it.")
     if (display_name is not None or new_status is not None) and not actor.is_admin:
-        _forbid("Only the school admin can rename activities or turn them on or off.")
+        _forbid("Only the school can rename activities or turn them on or off.")
 
     if act.source == "local":
         if version is not None and version != act.version:
@@ -786,7 +786,7 @@ def delete_local(db: Session, actor: Actor, act: LibraryActivity) -> None:
     if act.source != "local":
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Activities from PARAKH cannot be deleted. Turn them off instead.")
     if not can_edit_text(actor, act):
-        _forbid("Only the school admin, or the teacher who made this activity, can delete it.")
+        _forbid("Only the school, or the teacher who made this activity, can delete it.")
     audit(db, actor, "delete", "activity", act.id, before={"title": act.title, "stage": act.stage})
     db.query(StageActivityDefault).filter_by(activity_id=act.id).update({"activity_id": None})
     db.delete(act)
@@ -795,7 +795,7 @@ def delete_local(db: Session, actor: Actor, act: LibraryActivity) -> None:
 def set_share(db: Session, actor: Actor, act: LibraryActivity, level: str, consent: bool) -> None:
     """Sharing more widely needs the maker's consent (stored with its wording); narrowing is always allowed."""
     if act.source != "local" or not can_edit_text(actor, act):
-        _forbid("Only the teacher who made this activity (or the school admin) can change who it is shared with.")
+        _forbid("Only the teacher who made this activity (or the school) can change who it is shared with.")
     if level not in ("private", "school", "community"):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Share with 'private', 'school' or 'community'.")
     order = {s: i for i, s in enumerate(SHARE_STATES)}
@@ -817,7 +817,7 @@ def set_share(db: Session, actor: Actor, act: LibraryActivity, level: str, conse
 
 def set_default(db: Session, actor: Actor, stage: str, activity_id: Optional[str], confirm_partial: bool) -> Dict[str, Any]:
     if not actor.is_admin:
-        _forbid("Only the school admin can choose the default activity.")
+        _forbid("Only the school can choose the default activity.")
     row = db.query(StageActivityDefault).filter_by(school_id=actor.school_id, teacher_id=None, stage=stage).first()
     before = row.activity_id if row else None
     covers = True
@@ -1002,7 +1002,7 @@ def _apply(db: Session, actor: Actor, fetched: Dict[str, Dict[str, List[Dict[str
     counts: Dict[str, Dict[str, int]] = {}
     for stage, by_source in fetched.items():
         c = {"new": 0, "updated": 0, "removed": 0, "unchanged": 0}
-        changed: List[Dict[str, Any]] = []          # what the school admin is shown after the update
+        changed: List[Dict[str, Any]] = []          # what the school is shown after the update
         for source, records in by_source.items():
             if source == "portal_teacher" and not with_my_activities:
                 continue
@@ -1065,7 +1065,7 @@ def last_syncs(db: Session, school_id: str) -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Teachers read activities from here; the school admin's session keeps them up to date
+# Teachers read activities from here; the school's session keeps them up to date
 # ---------------------------------------------------------------------------
 
 AUTO_SYNC_AFTER_HOURS = 24
@@ -1105,7 +1105,7 @@ def stale_stages(db: Session) -> List[str]:
 
 
 def maybe_auto_sync(school_id: str, client_for=None) -> Optional[str]:
-    """Starts an automatic update of the stages not updated for a day, with the school admin's PARAKH session
+    """Starts an automatic update of the stages not updated for a day, with the school's PARAKH session
     (read-only, the same sync as the Update button). At most one automatic try per school a day; nothing
     happens without a session. Returns the job id when one was started."""
     import threading

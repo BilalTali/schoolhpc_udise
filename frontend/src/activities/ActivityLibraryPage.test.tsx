@@ -229,7 +229,7 @@ describe("Adding activities", () => {
     expect(screen.getAllByRole("button", { name: /^Copy/ })).toHaveLength(3);
     // activities come from the app's copy: no update from PARAKH for teachers, only when it was last updated
     expect(screen.queryByRole("button", { name: /Update Preparatory|Update all stages/ })).not.toBeInTheDocument();
-    expect(screen.getByText(/Your school admin keeps the PARAKH activities up to date/)).toBeInTheDocument();
+    expect(screen.getByText(/Your school keeps the PARAKH activities up to date/)).toBeInTheDocument();
   });
 
   it("the school admin sees what the automatic update changed", async () => {

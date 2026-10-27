@@ -228,7 +228,7 @@ def test_only_the_school_admin_fetches_from_parakh_and_teachers_get_the_copy(wor
     users, fake = world
     fake.records = [bank_record(1, "Middle", "SCCG 1, C 1.1")]
     res = client.post(f"{API}/activity-library/sync", json={"stage": "Middle"}, headers=users["t1"])
-    assert res.status_code == 403 and "school admin" in res.text
+    assert res.status_code == 403 and "school updates" in res.text
     job = sync(users["admin_a"], "Middle")
     assert job["status"] == "COMPLETED" and job["counts"]["Middle"]["new"] == 1
     assert by_code(items(users["t1"], "Middle"), "SCCG 1, C 1.1")["usable_in_excel"]      # teachers: from the app's copy

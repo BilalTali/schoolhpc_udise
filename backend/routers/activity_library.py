@@ -1,5 +1,5 @@
 """
-Activity Library endpoints (school admin and teachers; see services/activity_library.py for the rules).
+Activity Library endpoints (school and teachers; see services/activity_library.py for the rules).
 
   GET    /activity-library?stage=...&q&source&subject&covers_all&status&edited&upstream&mine&page&page_size
   GET    /activity-library/{id}                 one activity, with the original and a diff
@@ -171,7 +171,7 @@ def start_sync(payload: SyncRequest, background_tasks: BackgroundTasks, actor: l
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Each school's admin updates the activities from PARAKH.")
     client = _client(db, actor)                       # fails here (401) when there is no PARAKH session
     if not actor.is_admin:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Your school admin updates the activities from PARAKH (it also "
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Your school updates the activities from PARAKH (it also "
                             "happens automatically every day). You always get the latest copy here.")
     job, running = lib.start_sync(db, actor, stages)
     if not running:
@@ -251,7 +251,7 @@ def delete_activity(activity_id: str, actor: lib.Actor = Depends(_actor), db: Se
 @router.post("/bulk")
 def bulk(payload: BulkRequest, actor: lib.Actor = Depends(_actor), db: Session = Depends(get_db)):
     if not actor.is_admin:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only the school admin can turn activities on or off.")
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Only the school can turn activities on or off.")
     new_status = "active" if payload.action == "enable" else "disabled"
     changed = []
     for activity_id in dict.fromkeys(payload.ids):

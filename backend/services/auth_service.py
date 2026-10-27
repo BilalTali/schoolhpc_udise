@@ -182,7 +182,7 @@ def _load_user(db: Session, user_id: str, role: str) -> Dict[str, Any]:
     if role == "APP_ADMIN":
         admin = db.query(PlatformAdmin).filter(PlatformAdmin.id == user_id, PlatformAdmin.is_active == True).first()  # noqa: E712
         if not admin:
-            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Application admin account not found.")
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Admin account not found.")
         return {"user": admin, "role": role, "school_id": None}
     raise HTTPException(status.HTTP_403_FORBIDDEN, "Unknown user role.")
 
@@ -209,13 +209,13 @@ def get_current_user(request: Request, credentials: Optional[HTTPAuthorizationCr
 
 def require_school_admin(current_user: Dict[str, Any] = Depends(get_current_user)) -> School:
     if current_user.get("role") != "SCHOOL_ADMIN":
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access restricted to School Administrators.")
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access restricted to the school account.")
     return current_user["user"]
 
 
 def require_app_admin(current_user: Dict[str, Any] = Depends(get_current_user)) -> PlatformAdmin:
     if current_user.get("role") != "APP_ADMIN":
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access restricted to the application admin.")
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Access restricted to the admin.")
     return current_user["user"]
 
 

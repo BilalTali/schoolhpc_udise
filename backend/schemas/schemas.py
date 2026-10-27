@@ -111,7 +111,7 @@ class TeacherResponse(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    identifier: str = Field(..., description="UDISE code/email for School Admin, or username for Teacher")
+    identifier: str = Field(..., description="UDISE code/email for School, or username for Teacher")
     password: str = Field(...)
     role: str = Field("AUTO", description="'SCHOOL_ADMIN', 'TEACHER', or 'AUTO'")
     remember_me: bool = Field(False, description="Keep the browser signed in for 30 days instead of 1")
