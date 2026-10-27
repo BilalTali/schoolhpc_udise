@@ -20,6 +20,7 @@ from backend.hpc.portal import Portal, stage_code
 from backend.hpc.stages import activity_grid, get_stage
 from backend.hpc.stages.common import Lookups
 from backend.services import card_store, hpc_sessions
+from backend.services.safe_paths import inside
 
 LIST_KINDS = ("multi", "flags")
 _LOOKUP_TTL = 12 * 60 * 60                 # PARAKH's dropdown lists rarely change
@@ -75,9 +76,9 @@ def lookups_for(owner: str, client: Portal, stage: str) -> Lookups:
 # ---------------------------------------------------------------------------
 
 def _draft_path(teacher_id: str, session: str, stage: str, student_id: str) -> Path:
-    d = hpc_sessions.session_dir("teacher", teacher_id) / "drafts" / str(session)
-    d.mkdir(parents=True, exist_ok=True)
-    return d / f"{stage.lower()}_{student_id}.json"
+    path = inside(hpc_sessions.session_dir("teacher", teacher_id), "drafts", str(session), f"{stage.lower()}_{student_id}.json")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 def load_draft(teacher_id: str, session: str, stage: str, student_id: str) -> Optional[Dict[str, Any]]:
@@ -343,12 +344,17 @@ def _part_of(stage: str, lookups: Lookups, key: str):
 
 def class_list(client: Portal, teacher_id: str, stage: str, lookups: Lookups) -> List[Dict[str, Any]]:
     """The class as last fetched on the roster tab (kept by the app); PARAKH only when it was never fetched."""
-    path = hpc_sessions.session_dir("teacher", teacher_id) / f"roster_{stage.lower()}.json"
+    path = inside(hpc_sessions.session_dir("teacher", teacher_id), f"roster_{stage.lower()}.json")
     try:
         stored = json.loads(path.read_text(encoding="utf-8"))
     except (FileNotFoundError, ValueError):
         stored = []
     return [{"status": "", **s} for s in stored] or sync.roster(client, stage, lookups)
+
+
+def in_class(client: Portal, teacher_id: str, stage: str, lookups: Lookups) -> set:
+    """The student ids a teacher may keep drafts for: their class list (C-2)."""
+    return {str(s["student_id"]) for s in class_list(client, teacher_id, stage, lookups)}
 
 
 def bulk_read(client: Portal, owner: str, teacher_id: str, session: str, stage: str, key: str,
@@ -414,7 +420,11 @@ def levels_write(client: Portal, owner: str, teacher_id: str, session: str, stag
     lookups = lookups_for(owner, client, stage)
     allowed = {f.key for p in get_stage(stage).PARTS if p.code == "C" for f in p.fields(lookups) if is_common("C", f)}
     saved, problems = [], {}
+    mine = in_class(client, teacher_id, stage, lookups)
     for student_id, per_key in values.items():
+        if str(student_id) not in mine:
+            problems[str(student_id)] = "This student is not in your class list."
+            continue
         unknown = [k for k in per_key if k not in allowed]
         errs = validate_values(stage, lookups, {k: v for k, v in per_key.items() if k in allowed})
         if unknown or errs:
@@ -432,7 +442,11 @@ def bulk_write(client: Portal, owner: str, teacher_id: str, session: str, stage:
     _common_only(stage, lookups, key)
     _, f = _part_of(stage, lookups, key)
     saved, problems = [], {}
+    mine = in_class(client, teacher_id, stage, lookups)
     for student_id, value in values.items():
+        if str(student_id) not in mine:
+            problems[str(student_id)] = "This student is not in your class list."
+            continue
         err = validate_values(stage, lookups, {key: value}).get(key)
         if err:
             problems[student_id] = err

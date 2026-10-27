@@ -48,6 +48,13 @@ def _ctx(teacher: Teacher, stage: str, session: Optional[str], writing: bool = F
     return client, _stage(teacher, stage), hpc_cards.check_session(client, session, writing)
 
 
+def _own_student(client, teacher: Teacher, stage: str, student_id: str, lookups=None) -> None:
+    """Drafts are kept only for students in the teacher's class list (C-2)."""
+    lookups = lookups or _portal_call(hpc_cards.lookups_for, f"teacher_{teacher.id}", client, stage)
+    if student_id not in _portal_call(hpc_cards.in_class, client, teacher.id, stage, lookups):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "This student is not in your class list.")
+
+
 def _portal_call(fn, *args):
     try:
         return fn(*args)
@@ -125,6 +132,7 @@ def save_draft(stage: str, student_id: str, payload: DraftRequest, session: Opti
                teacher: Teacher = Depends(require_teacher)):
     client, stage, session = _ctx(teacher, stage, session, writing=True)
     lookups = _portal_call(hpc_cards.lookups_for, f"teacher_{teacher.id}", client, stage)
+    _own_student(client, teacher, stage, student_id, lookups)
     problems = hpc_cards.validate_values(stage, lookups, payload.values)
     if any(v == "Unknown field." for v in problems.values()):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, {"problems": problems})
@@ -136,6 +144,7 @@ def save_draft(stage: str, student_id: str, payload: DraftRequest, session: Opti
 def discard_draft(stage: str, student_id: str, session: Optional[str] = None,
                   teacher: Teacher = Depends(require_teacher)):
     client, stage, session = _ctx(teacher, stage, session, writing=True)
+    _own_student(client, teacher, stage, student_id)
     hpc_cards.delete_draft(teacher.id, session, stage, student_id)
     return {"success": True}
 

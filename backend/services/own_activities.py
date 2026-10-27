@@ -14,13 +14,14 @@ import threading
 from typing import Any, Dict, List
 
 from backend.config import DATA_DIR
+from backend.services.safe_paths import inside
 
 OWN_DIR = DATA_DIR / "own_activities"
 _lock = threading.Lock()
 
 
 def _path(owner: str):
-    return OWN_DIR / f"{owner}.json"
+    return inside(OWN_DIR, f"{owner}.json")
 
 
 def load(owner: str) -> Dict[str, str]:

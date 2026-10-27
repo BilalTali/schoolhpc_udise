@@ -107,9 +107,12 @@ def test_bulk_entry(teacher_client):
     client, _ = teacher_client
     read = client.get(f"{API}/teacher/hpc-cards/Preparatory/bulk", params={"field": "a1_mother_tongue"}).json()
     assert read["field"]["part"] == "A1" and read["rows"][0]["student_id"] == "1001" and read["rows"][0]["value"] == ""
+    too_long = client.put(f"{API}/teacher/hpc-cards/Preparatory/bulk",
+                          json={"field": "a1_mother_tongue", "values": {"1001": "x" * 40}}).json()
+    assert too_long["saved"] == [] and "allows 20" in too_long["problems"]["1001"]
     write = client.put(f"{API}/teacher/hpc-cards/Preparatory/bulk",
-                       json={"field": "a1_mother_tongue", "values": {"1001": "Urdu", "9999": "x" * 40}}).json()
-    assert write["saved"] == ["1001"] and "allows 20" in write["problems"]["9999"]
+                       json={"field": "a1_mother_tongue", "values": {"1001": "Urdu", "9999": "Urdu"}}).json()
+    assert write["saved"] == ["1001"] and "not in your class list" in write["problems"]["9999"]   # C-2
     again = client.get(f"{API}/teacher/hpc-cards/Preparatory/bulk", params={"field": "a1_mother_tongue"}).json()
     assert again["rows"][0]["value"] == "Urdu" and again["rows"][0]["in_draft"] is True
     assert client.get(f"{API}/teacher/hpc-cards/Preparatory/bulk", params={"field": "zzz"}).status_code == 404

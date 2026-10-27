@@ -19,6 +19,7 @@ from backend.schemas.schemas import (
     TeacherCreateRequest, TeacherResponse, TeacherUpdateRequest,
 )
 from backend.services import audit, hpc_sessions
+from backend.services.safe_paths import inside
 from backend.services.auth_service import hash_password, require_school_admin
 
 router = APIRouter(prefix="/school", tags=["School Administration"])
@@ -344,12 +345,21 @@ def end_school_session(admin: School = Depends(require_school_admin)):
     return hpc_sessions.end(KIND, admin.id)
 
 
+def _stage_name(stage: str) -> str:
+    """One of the three stages (any case), or 400 - never part of a path as typed (C-1)."""
+    try:
+        return stage_code(stage).capitalize()
+    except ValueError:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Unsupported stage. Use Foundational, Preparatory or Middle.")
+
+
 def _roster_file(school_id: str, stage: str):
-    return hpc_sessions.session_dir(KIND, school_id) / f"roster_{stage.lower()}.json"
+    return inside(hpc_sessions.session_dir(KIND, school_id), f"roster_{_stage_name(stage).lower()}.json")
 
 
 @router.get("/roster")
 def get_school_roster(stage: str = "Preparatory", admin: School = Depends(require_school_admin)):
+    stage = _stage_name(stage)
     path = _roster_file(admin.id, stage)
     students = json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
     synced = datetime.fromtimestamp(os.path.getmtime(path)).strftime("%d %b %Y, %I:%M %p") if path.exists() else None
@@ -358,6 +368,7 @@ def get_school_roster(stage: str = "Preparatory", admin: School = Depends(requir
 
 @router.post("/roster/sync")
 def sync_school_roster(stage: str = "Preparatory", admin: School = Depends(require_school_admin)):
+    stage = _stage_name(stage)
     client = hpc_sessions.portal_for(KIND, admin.id, admin.hpc_login_id, admin.hpc_password)
     try:
         students = sync.roster_with_details(client, stage, Lookups(client, stage_code(stage)))

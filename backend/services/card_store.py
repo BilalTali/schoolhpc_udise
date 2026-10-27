@@ -21,17 +21,18 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from backend.config import DATA_DIR
+from backend.services.safe_paths import inside
 
 CARDS_DIR = DATA_DIR / "cards"
 _lock = threading.RLock()                     # re-entrant: check_view is used while the lock is held
 
 
 def _dir(owner: str, session: str, stage: str) -> Path:
-    return CARDS_DIR / owner / str(session) / stage.lower()
+    return inside(CARDS_DIR, owner, str(session), stage.lower())
 
 
 def _path(owner: str, session: str, stage: str, student_id: str) -> Path:
-    return _dir(owner, session, stage) / f"{student_id}.json"
+    return inside(CARDS_DIR, owner, str(session), stage.lower(), f"{student_id}.json")
 
 
 def _load(path: Path) -> Dict[str, Any]:
@@ -95,7 +96,7 @@ def forget(owner: str, session: str, stage: str, student_id: Optional[str] = Non
 
 def forget_everywhere(owner: str, stage: str, student_id: str) -> None:
     """After a save: the student's copy is dropped in every academic session folder."""
-    base = CARDS_DIR / owner
+    base = inside(CARDS_DIR, owner)
     if base.exists():
         for session_dir in base.iterdir():
             forget(owner, session_dir.name, stage, student_id)

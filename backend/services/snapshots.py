@@ -15,12 +15,13 @@ from typing import Any, Dict, List
 
 from backend.config import DATA_DIR
 from backend.hpc.sync import StudentData
+from backend.services.safe_paths import inside
 
 SNAPSHOT_DIR = DATA_DIR / "snapshots"
 
 
 def _dir(owner: str, stage: str, student_id: str) -> Path:
-    d = SNAPSHOT_DIR / owner / stage.lower() / str(student_id)
+    d = inside(SNAPSHOT_DIR, owner, stage.lower(), str(student_id))
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -44,7 +45,7 @@ def hook(owner: str, stage: str, reason: str):
 
 
 def list_for(owner: str, stage: str, student_id: str) -> List[Dict[str, Any]]:
-    d = SNAPSHOT_DIR / owner / stage.lower() / str(student_id)
+    d = inside(SNAPSHOT_DIR, owner, stage.lower(), str(student_id))
     out = []
     for p in sorted(d.glob("*.json"), reverse=True) if d.exists() else []:
         body = json.loads(p.read_text(encoding="utf-8"))
@@ -70,6 +71,6 @@ def prune(max_age_days: int = 400, keep_last: int = 2) -> int:
 
 
 def load(owner: str, stage: str, student_id: str, file: str) -> StudentData:
-    path = SNAPSHOT_DIR / owner / stage.lower() / str(student_id) / Path(file).name
+    path = inside(SNAPSHOT_DIR, owner, stage.lower(), str(student_id), file)
     body = json.loads(path.read_text(encoding="utf-8"))
     return StudentData(str(body["student_id"]), body["record"], body["parts"])

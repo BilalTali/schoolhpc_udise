@@ -25,6 +25,7 @@ from backend.schemas.schemas import (
     UploadJobResponse, ValidationReportResponse,
 )
 from backend.services import audit, card_store, hpc_sessions, upload_jobs
+from backend.services.safe_paths import inside
 from backend.services.auth_service import require_teacher
 
 router = APIRouter(prefix="/teacher", tags=["Teacher"])
@@ -56,7 +57,7 @@ def _portal(teacher: Teacher):
 
 
 def _roster_file(teacher: Teacher, stage: str):
-    return hpc_sessions.session_dir(KIND, teacher.id) / f"roster_{stage.lower()}.json"
+    return inside(hpc_sessions.session_dir(KIND, teacher.id), f"roster_{stage.lower()}.json")
 
 
 def _workbook_path(teacher: Teacher):
@@ -278,7 +279,7 @@ def download_workbook(stage: Optional[str] = Query(None), teacher: Teacher = Dep
 # ---------------------------------------------------------------------------
 
 def _upload_path(teacher: Teacher, file_name: str):
-    return hpc_sessions.session_dir(KIND, teacher.id) / f"uploaded_{Path(file_name).name}"
+    return inside(hpc_sessions.session_dir(KIND, teacher.id), f"uploaded_{Path(file_name).name}")
 
 
 def _workbook_stages(teacher: Teacher, path) -> List[str]:

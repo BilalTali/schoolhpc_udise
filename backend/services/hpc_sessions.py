@@ -15,6 +15,7 @@ from fastapi import HTTPException, status
 
 from backend.config import AUTO_CAPTCHA, SESSIONS_DIR
 from backend.hpc import portal
+from backend.services.safe_paths import UnsafePath, inside
 
 PENDING_OTP: Dict[str, Dict[str, Any]] = {}     # "<kind>_<id>" -> pending login
 PENDING_CAPTCHA: Dict[str, Dict[str, Any]] = {}  # "<kind>_<id>" -> connection, captcha_id, login details
@@ -49,13 +50,15 @@ def _left(key: str) -> str:
 
 
 def session_dir(kind: str, entity_id: str) -> Path:
-    d = SESSIONS_DIR / f"{kind}_{entity_id}"
+    if kind not in ("school", "teacher"):
+        raise UnsafePath("That account kind is not allowed.")
+    d = inside(SESSIONS_DIR, f"{kind}_{entity_id}")
     d.mkdir(parents=True, exist_ok=True)
     return d
 
 
 def session_path(kind: str, entity_id: str) -> Path:
-    return session_dir(kind, entity_id) / "session.json"
+    return inside(session_dir(kind, entity_id), "session.json")
 
 
 def status_of(kind: str, entity_id: str) -> Dict[str, Any]:

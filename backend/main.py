@@ -6,8 +6,9 @@ API docs:                    http://127.0.0.1:8000/docs
 """
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from backend.database import SessionLocal, init_db
 from backend.models.entities import encrypt_stored_passwords
@@ -19,6 +20,7 @@ from backend.routers.hpc_cards import router as hpc_cards_router
 from backend.routers.schools import router as schools_router
 from backend.routers.teachers import router as teachers_router
 from backend.services.activity_library import recover_interrupted_syncs
+from backend.services.safe_paths import UnsafePath
 from backend.services.upload_jobs import recover_interrupted_jobs
 
 init_db()
@@ -49,6 +51,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.exception_handler(UnsafePath)
+async def unsafe_path(request: Request, exc: UnsafePath):
+    """An id, stage or file name that would reach outside its folder (C-1, C-2)."""
+    return JSONResponse(status_code=400, content={"detail": str(exc)})
+
 
 for router in (auth_router, schools_router, teachers_router, hpc_cards_router, activity_library_router,
                activities_grid_router, class_template_router):
