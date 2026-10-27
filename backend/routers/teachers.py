@@ -49,6 +49,9 @@ def _stage(teacher: Teacher, stage: Optional[str]) -> str:
     name = (stage or (stages[0] if stages else "")).strip().capitalize()
     if name not in SUPPORTED:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Unsupported stage '{stage}'. Use one of {', '.join(SUPPORTED)}.")
+    if stages and name not in stages:                 # only the teacher's own stages (L-3)
+        raise HTTPException(status.HTTP_403_FORBIDDEN,
+                            f"{name} is not one of your stages ({', '.join(stages)}). Ask your school admin to add it.")
     return name
 
 
