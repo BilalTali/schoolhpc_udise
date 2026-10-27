@@ -36,7 +36,10 @@ async def lifespan(app):
         print(f"[startup] {count} upload(s) were interrupted by a restart and marked FAILED.")
     if recover_interrupted_syncs():
         print("[startup] An activity sync was interrupted by a restart and marked FAILED.")
-    from backend.services import audit
+    from backend.services import audit, hpc_sessions
+    pruned = hpc_sessions.prune_uploads()             # uploaded workbooks older than HPC_UPLOAD_KEEP_DAYS (L-12)
+    if pruned:
+        print(f"[startup] Deleted {pruned} uploaded workbook(s) older than the kept days.")
     scrubbed = audit.scrub_sensitive()                # UDID and guardian names out of older audit rows (M-7)
     if scrubbed:
         print(f"[startup] Hid UDID / guardian name values in {scrubbed} older audit row(s).")

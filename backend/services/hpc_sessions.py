@@ -7,6 +7,7 @@ and verify_captcha() logs in (then verify_otp() if the portal asks for an OTP). 
 captcha came from is kept for a few minutes, because PARAKH ties the answer to it.
 With HPC_AUTO_CAPTCHA (unsupported) the app reads the captcha itself instead.
 """
+import json
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -61,8 +62,52 @@ def session_path(kind: str, entity_id: str) -> Path:
     return inside(session_dir(kind, entity_id), "session.json")
 
 
+def save_session(kind: str, entity_id: str, sess: portal.Session) -> None:
+    """Writes the PARAKH session encrypted with the app key (L-12): the file holds PARAKH tokens."""
+    from backend.services import secrets_box
+    path = session_path(kind, entity_id)
+    sess.saved_at = time.time()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(secrets_box.encrypt(json.dumps(sess.__dict__)), encoding="utf-8")
+    tmp.replace(path)
+
+
+def load_session(kind: str, entity_id: str) -> Optional[portal.Session]:
+    """The saved PARAKH session, or None (not connected). A file from before encryption is read and then saved
+    encrypted; one that cannot be decrypted (e.g. the key was replaced) counts as not connected - connect again."""
+    from backend.services import secrets_box
+    path = session_path(kind, entity_id)
+    if not path.exists():
+        return None
+    text = path.read_text(encoding="utf-8").strip()
+    plain = secrets_box.decrypt(text) if secrets_box.is_encrypted(text) else text
+    try:
+        sess = portal.Session(**json.loads(plain or ""))
+    except (ValueError, TypeError):
+        return None
+    if not secrets_box.is_encrypted(text):
+        save_session(kind, entity_id, sess)
+    return sess
+
+
+def prune_uploads() -> int:
+    """Deletes uploaded workbooks (and their import backups) older than UPLOAD_KEEP_DAYS (L-12)."""
+    from backend import config
+    if config.UPLOAD_KEEP_DAYS <= 0 or not SESSIONS_DIR.exists():
+        return 0
+    cutoff = time.time() - config.UPLOAD_KEEP_DAYS * 86400
+    removed = 0
+    for pattern in ("*/uploaded_*", "*/backups/*_uploaded_*"):
+        for p in SESSIONS_DIR.glob(pattern):
+            if p.is_file() and p.stat().st_mtime < cutoff:
+                p.unlink()
+                removed += 1
+    return removed
+
+
 def status_of(kind: str, entity_id: str) -> Dict[str, Any]:
-    sess = portal.Session.load(session_path(kind, entity_id))
+    sess = load_session(kind, entity_id)
     mode = "automatic (unsupported)" if AUTO_CAPTCHA else "typed"
     if not sess:
         return {"logged_in": False, "reason": "No HPC session yet. Click 'Start Session'.", "captcha_mode": mode}
@@ -180,7 +225,7 @@ def end(kind: str, entity_id: str) -> Dict[str, Any]:
 
 
 def _saved(kind: str, entity_id: str, sess: portal.Session) -> Dict[str, Any]:
-    sess.save(session_path(kind, entity_id))
+    save_session(kind, entity_id, sess)
     from backend.services import audit
     audit.record(f"{'teacher' if kind == 'teacher' else 'school_admin'}:{entity_id}", "connect_parakh", "settings",
                  entity_id, None, {"connected": True})
@@ -194,16 +239,15 @@ def portal_for(kind: str, entity_id: str, login_id: Optional[str] = None,
     An API client for this school/teacher. Renewed tokens are saved automatically. If the
     session cannot be renewed and saved credentials are given, it logs in again once.
     """
-    path = session_path(kind, entity_id)
-    sess = portal.Session.load(path)
+    sess = load_session(kind, entity_id)
     if not sess and login_id and password and AUTO_CAPTCHA:      # unsupported: logs in by itself
         result = start(kind, entity_id, login_id, password)
         if result.get("status") == "authenticated":
-            sess = portal.Session.load(path)
+            sess = load_session(kind, entity_id)
     if not sess:
         # 409, not 401: the person is signed in to this app; only the PARAKH connection is missing
         raise HTTPException(status.HTTP_409_CONFLICT, "Not connected to PARAKH. Connect to PARAKH first, then try again.")
-    client = portal.Portal(sess, on_refresh=lambda s: s.save(path))
+    client = portal.Portal(sess, on_refresh=lambda s: save_session(kind, entity_id, s))
     if login_id and password and AUTO_CAPTCHA:
         client.relogin = lambda: portal.login(login_id, password)
     return client

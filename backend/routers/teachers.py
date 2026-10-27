@@ -38,7 +38,7 @@ SUPPORTED = ("Foundational", "Preparatory", "Middle")
 def teacher_stages(teacher: Teacher) -> List[str]:
     """Stages assigned in this app plus the ones the portal lists for the teacher, in stage order."""
     names = {s.strip().lower() for s in teacher.stages}
-    sess = portal.Session.load(hpc_sessions.session_path(KIND, teacher.id))
+    sess = hpc_sessions.load_session(KIND, teacher.id)
     if sess:
         names |= {str(s).lower() for s in sess.staff.get("hpc_stage") or []}
     return [s for s in SUPPORTED if s.lower() in names]
@@ -264,7 +264,7 @@ def download_workbook(stage: Optional[str] = Query(None), teacher: Teacher = Dep
     path = _workbook_path(teacher)
     if not path.exists():
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Fetch the roster first (Sync Roster), then download.")
-    sess = portal.Session.load(hpc_sessions.session_path(KIND, teacher.id))
+    sess = hpc_sessions.load_session(KIND, teacher.id)
     if sess:                                          # latest Activities tab choices into the read-only column
         from backend.services import activity_grid
         session = str(sess.staff.get("school_cur_ay_code") or "")
