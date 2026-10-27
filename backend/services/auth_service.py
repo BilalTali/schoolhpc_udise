@@ -18,6 +18,7 @@ from fastapi import Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
+from backend import config
 from backend.config import (
     ACCESS_COOKIE_MINUTES, ACCESS_TOKEN_EXPIRE_MINUTES, COOKIE_SECURE, JWT_ALGORITHM, JWT_SECRET,
     REFRESH_DAYS_DEFAULT, REFRESH_DAYS_REMEMBER,
@@ -46,10 +47,23 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
         return False
 
 
-def create_access_token(data: Dict[str, Any], expires_delta: Optional[timedelta] = None) -> str:
-    """Bearer token returned in the login response (legacy flow)."""
+def bearer_enabled() -> bool:
+    """The legacy Bearer login works until config.BEARER_LAST_DAY (M-2)."""
+    return _now().date() <= config.BEARER_LAST_DAY
+
+
+def create_access_token(data: Dict[str, Any], expires_delta: Optional[timedelta] = None, epoch: int = 0) -> str:
+    """Bearer token returned in the login response (legacy flow): 24 hours, ended by logout or a password change."""
     expire = _now() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
-    return jwt.encode({**data, "exp": expire, "iat": _now()}, JWT_SECRET, algorithm=JWT_ALGORITHM)
+    return jwt.encode({**data, "ep": epoch, "exp": expire, "iat": _now()}, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+
+def end_all_sessions(db: Session, user) -> None:
+    """After a password change: every token of this account stops working - Bearer, cookie and refresh (M-2)."""
+    user.token_epoch = (user.token_epoch or 0) + 1
+    db.query(RefreshToken).filter(RefreshToken.user_id == user.id, RefreshToken.revoked_at.is_(None)) \
+        .update({"revoked_at": _now().replace(tzinfo=None)})
+    db.commit()
 
 
 def decode_token(token: str, expected_type: Optional[str] = None) -> Dict[str, Any]:
@@ -77,7 +91,8 @@ def _set_cookie(response: Response, name: str, value: str, max_age: int, path: s
 def issue_session(response: Response, db: Session, sub: str, role: str, remember: bool) -> Dict[str, Any]:
     """Sets the access and refresh cookies for a newly signed-in (or refreshed) user."""
     access_exp = _now() + timedelta(minutes=ACCESS_COOKIE_MINUTES)
-    access = jwt.encode({"sub": sub, "role": role, "typ": "access", "exp": access_exp, "iat": _now()},
+    epoch = _load_user(db, sub, role)["user"].token_epoch or 0
+    access = jwt.encode({"sub": sub, "role": role, "typ": "access", "ep": epoch, "exp": access_exp, "iat": _now()},
                         JWT_SECRET, algorithm=JWT_ALGORITHM)
     days = REFRESH_DAYS_REMEMBER if remember else REFRESH_DAYS_DEFAULT
     jti = str(uuid.uuid4())
@@ -120,6 +135,15 @@ def rotate_session(request: Request, response: Response, db: Session) -> Dict[st
 
 
 def end_session(request: Request, response: Response, db: Session) -> None:
+    bearer = request.headers.get("authorization", "")
+    if bearer.lower().startswith("bearer "):          # the old login: logging out ends its tokens (M-2)
+        try:
+            payload = decode_token(bearer[7:].strip())
+            user = _load_user(db, payload.get("sub", ""), payload.get("role", ""))["user"]
+            user.token_epoch = (user.token_epoch or 0) + 1
+            db.commit()
+        except HTTPException:
+            pass
     token = request.cookies.get(REFRESH_COOKIE)
     if token:
         try:
@@ -159,6 +183,8 @@ def _load_user(db: Session, user_id: str, role: str) -> Dict[str, Any]:
 def get_current_user(request: Request, credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
                      db: Session = Depends(get_db)) -> Dict[str, Any]:
     if credentials:
+        if not bearer_enabled():
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "This way of signing in has ended. Please sign in again.")
         payload = decode_token(credentials.credentials)
     elif request.cookies.get(ACCESS_COOKIE):
         payload = decode_token(request.cookies[ACCESS_COOKIE], expected_type="access")
@@ -168,7 +194,10 @@ def get_current_user(request: Request, credentials: Optional[HTTPAuthorizationCr
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Please sign in.")
     if not payload.get("sub") or not payload.get("role"):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Malformed token payload.")
-    return _load_user(db, payload["sub"], payload["role"])
+    current = _load_user(db, payload["sub"], payload["role"])
+    if payload.get("ep", 0) != (current["user"].token_epoch or 0):   # logged out, or the password changed (M-2)
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Your session has ended. Please sign in again.")
+    return current
 
 
 def require_school_admin(current_user: Dict[str, Any] = Depends(get_current_user)) -> School:

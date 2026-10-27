@@ -7,6 +7,7 @@ from backend.database import SessionLocal
 from backend.main import app
 from backend.models.library import AuditLog
 from backend.services import hpc_cards, hpc_sessions
+from backend.tests.conftest import session_headers  # noqa: E402
 
 API = "/api/v1"
 
@@ -15,11 +16,11 @@ def _teacher(client):
     client.post(f"{API}/auth/school/register", json={
         "udise_code": "33333333333", "school_name": "Audit School", "state": "JK", "district": "Budgam",
         "admin_name": "Admin", "admin_email": "audit@example.com", "password": "secret123"})
-    admin = client.post(f"{API}/auth/login", json={"identifier": "33333333333", "password": "secret123"}).json()
-    client.post(f"{API}/school/teachers", headers={"Authorization": f"Bearer {admin['access_token']}"}, json={
+    admin_headers, _ = session_headers("33333333333")
+    client.post(f"{API}/school/teachers", headers=admin_headers, json={
         "teacher_name": "Audit Teacher", "username": "auditteacher", "password": "secret123", "assigned_stages": ["Preparatory"]})
-    login = client.post(f"{API}/auth/login", json={"identifier": "auditteacher", "password": "secret123"}).json()
-    return {"Authorization": f"Bearer {login['access_token']}"}, login["user_id"]
+    headers, login = session_headers("auditteacher")
+    return headers, login["user_id"]
 
 
 def _rows(**filters):

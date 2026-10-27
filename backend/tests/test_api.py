@@ -2,6 +2,7 @@
 from fastapi.testclient import TestClient
 
 from backend.main import app
+from backend.tests.conftest import session_headers  # noqa: E402
 
 client = TestClient(app)
 API = "/api/v1"
@@ -13,16 +14,14 @@ def test_school_and_teacher_flow():
     assert client.post(f"{API}/auth/school/register", json=school).status_code == 201
     assert client.post(f"{API}/auth/school/register", json=school).status_code == 409      # one school = one registration
 
-    admin = client.post(f"{API}/auth/login", json={"identifier": "01234567890", "password": "secret123"}).json()
-    headers = {"Authorization": f"Bearer {admin['access_token']}"}
+    headers, _ = session_headers("01234567890")
     teacher = {"teacher_name": "Test Teacher", "username": "tteacher", "password": "secret123",
                "assigned_stages": ["Preparatory", "Middle"]}
     created = client.post(f"{API}/school/teachers", json=teacher, headers=headers)
     assert created.status_code == 201 and created.json()["assigned_stages"] == ["Preparatory", "Middle"]
     assert client.get(f"{API}/school/stats", headers=headers).json()["total_teachers"] == 1
 
-    login = client.post(f"{API}/auth/login", json={"identifier": "tteacher", "password": "secret123"}).json()
-    t_headers = {"Authorization": f"Bearer {login['access_token']}"}
+    t_headers, _ = session_headers("tteacher")
     status = client.get(f"{API}/teacher/hpc/status", headers=t_headers).json()
     assert status["logged_in"] is False and status["has_credentials"] is False
     # Without a portal session the roster cannot be fetched, and the API says why.

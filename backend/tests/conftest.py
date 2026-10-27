@@ -195,3 +195,14 @@ def cards_in_tmp(monkeypatch, tmp_path):
 @pytest.fixture
 def credit_cases():
     return json.loads((FIXTURES / "credit_cases.json").read_text(encoding="utf-8"))
+
+
+def session_headers(identifier: str, password: str = "secret123"):
+    """Signs in the way the web app does (cookie session, M-2) and returns (headers carrying that session,
+    the login answer). The headers work on any test client, so one client can act as several users."""
+    from fastapi.testclient import TestClient
+    from backend.main import app
+    c = TestClient(app)
+    r = c.post("/api/v1/auth/login", json={"identifier": identifier, "password": password})
+    assert r.status_code == 200, r.text
+    return {"Cookie": f"ta_access={c.cookies.get('ta_access')}", "X-Requested-With": "TeacherAssist"}, r.json()

@@ -12,7 +12,8 @@ from backend.schemas.schemas import (
 )
 from backend.services import login_limits
 from backend.services.auth_service import (
-    create_access_token, end_session, get_current_user, hash_password, issue_session, rotate_session, verify_password,
+    bearer_enabled, create_access_token, end_session, get_current_user, hash_password, issue_session, rotate_session,
+    verify_password,
 )
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
@@ -105,7 +106,7 @@ def login(payload: LoginRequest, request: Request, response: Response, db: Sessi
             "udise": school.udise_code,
             "school_id": school.id,
             "school_name": school.school_name
-        })
+        }, epoch=school.token_epoch or 0) if bearer_enabled() else ""
         return TokenResponse(
             access_token=token,
             role="SCHOOL_ADMIN",
@@ -137,7 +138,7 @@ def login(payload: LoginRequest, request: Request, response: Response, db: Sessi
             "username": teacher.username,
             "school_id": teacher.school_id,
             "school_name": school_obj.school_name if school_obj else "School"
-        })
+        }, epoch=teacher.token_epoch or 0) if bearer_enabled() else ""
         stages_list = [s.strip() for s in (teacher.assigned_stage or "").split(",") if s.strip()]
         grades_list = [g.strip() for g in (teacher.assigned_grade or "").split(",") if g.strip()]
         return TokenResponse(

@@ -3,6 +3,7 @@ Application settings. Override any of them with environment variables (or a .env
 in the project root, see .env.example).
 """
 import os
+from datetime import date
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -68,7 +69,9 @@ def _jwt_secret() -> str:
 
 JWT_SECRET = _jwt_secret()
 JWT_ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7          # legacy Bearer token in the login response
+ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24              # legacy Bearer token in the login response: 24 hours (M-2)
+# The legacy Bearer login ends after this day (M-2): no new Bearer tokens, and old ones are refused.
+BEARER_LAST_DAY = date.fromisoformat(os.getenv("HPC_BEARER_LAST_DAY", "2026-11-01"))
 ACCESS_COOKIE_MINUTES = 15                        # cookie session: short access token...
 REFRESH_DAYS_DEFAULT, REFRESH_DAYS_REMEMBER = 1, 30   # ...renewed by a refresh token
 COOKIE_SECURE = os.getenv("HPC_COOKIE_SECURE", "false").lower() == "true"   # set true behind HTTPS

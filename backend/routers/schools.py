@@ -20,7 +20,7 @@ from backend.schemas.schemas import (
 )
 from backend.services import audit, hpc_sessions
 from backend.services.safe_paths import inside
-from backend.services.auth_service import hash_password, require_school_admin
+from backend.services.auth_service import end_all_sessions, hash_password, require_school_admin
 
 router = APIRouter(prefix="/school", tags=["School Administration"])
 
@@ -167,6 +167,7 @@ def update_teacher(
         teacher.mobile_number = payload.mobile_number.strip() if payload.mobile_number else None
     if payload.password:                                   # 8+ characters, checked by the schema (H-8)
         teacher.hashed_password = hash_password(payload.password)
+        end_all_sessions(db, teacher)                      # the old password's sessions end (M-2)
 
     if payload.assigned_stages and len(payload.assigned_stages) > 0:
         teacher.assigned_stage = ", ".join(dict.fromkeys(s.strip() for s in payload.assigned_stages if s.strip()))

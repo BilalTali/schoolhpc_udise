@@ -20,7 +20,7 @@ from backend.models.settings import ClassSetting
 from backend.routers import class_template as ct_router
 from backend.routers import teachers as teachers_router
 from backend.services import class_settings, class_template, hpc_cards, hpc_sessions, upload_jobs
-from backend.tests.conftest import BANK_CONTENT, FakePortal, blank_student, filled_row, make_lookups
+from backend.tests.conftest import BANK_CONTENT, FakePortal, blank_student, filled_row, make_lookups, session_headers
 
 API = "/api/v1"
 PREP = get_stage("PREPARATORY")
@@ -48,11 +48,10 @@ def world(monkeypatch, tmp_path):
     client.post(f"{API}/auth/school/register", json={
         "udise_code": "55555555555", "school_name": "Template School", "state": "JK", "district": "Budgam",
         "admin_name": "Admin", "admin_email": "tpl@example.com", "password": "secret123"})
-    admin = client.post(f"{API}/auth/login", json={"identifier": "55555555555", "password": "secret123"}).json()
-    client.post(f"{API}/school/teachers", headers={"Authorization": f"Bearer {admin['access_token']}"}, json={
+    admin_headers, _ = session_headers("55555555555")
+    client.post(f"{API}/school/teachers", headers=admin_headers, json={
         "teacher_name": "Template Teacher", "username": "tplteacher", "password": "secret123", "assigned_stages": ["Preparatory"]})
-    login = client.post(f"{API}/auth/login", json={"identifier": "tplteacher", "password": "secret123"}).json()
-    client.headers["Authorization"] = f"Bearer {login['access_token']}"
+    client.headers.update(session_headers("tplteacher")[0])
     with SessionLocal() as db:
         t = db.query(Teacher).filter_by(username="tplteacher").first()
         teacher = SimpleNamespace(id=t.id, school_id=t.school_id)

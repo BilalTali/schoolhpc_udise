@@ -7,7 +7,7 @@ from backend.main import app
 from backend.models.entities import Teacher
 from backend.routers import hpc_cards as cards_router
 from backend.services import hpc_cards, secrets_box
-from backend.tests.conftest import FakePortal, blank_student, filled_row, make_lookups
+from backend.tests.conftest import FakePortal, blank_student, filled_row, make_lookups, session_headers
 
 API = "/api/v1"
 CSRF = {"X-Requested-With": "TeacherAssist"}
@@ -17,8 +17,7 @@ def _school_and_teacher(client: TestClient, udise: str, username: str):
     school = {"udise_code": udise, "school_name": "Card School", "state": "JK", "district": "Budgam",
               "admin_name": "Admin", "admin_email": f"{udise}@example.com", "password": "secret123"}
     assert client.post(f"{API}/auth/school/register", json=school).status_code in (201, 409)   # 409: earlier test made it
-    admin = client.post(f"{API}/auth/login", json={"identifier": udise, "password": "secret123"}).json()
-    headers = {"Authorization": f"Bearer {admin['access_token']}"}
+    headers, _ = session_headers(udise)
     client.post(f"{API}/school/teachers", headers=headers, json={
         "teacher_name": "Card Teacher", "username": username, "password": "secret123", "assigned_stages": ["Preparatory"]})
     return headers
@@ -26,16 +25,15 @@ def _school_and_teacher(client: TestClient, udise: str, username: str):
 
 @pytest.fixture
 def teacher_client(monkeypatch, tmp_path):
-    """A logged-in teacher (Bearer) whose portal is a fake with one Preparatory student."""
+    """A signed-in teacher (cookie session) whose portal is a fake with one Preparatory student."""
     client = TestClient(app)
     _school_and_teacher(client, "11111111111", "cardteacher")
-    login = client.post(f"{API}/auth/login", json={"identifier": "cardteacher", "password": "secret123"}).json()
     data = blank_student("PREPARATORY")
     portal = FakePortal({("PREPARATORY", "1001"): {"record": data.record, "parts": data.raw_parts}})
     monkeypatch.setattr(cards_router, "_portal", lambda teacher: portal)
     monkeypatch.setattr(hpc_cards, "lookups_for", lambda owner, client, stage: make_lookups("PREPARATORY", portal))
     monkeypatch.setattr(hpc_cards.hpc_sessions, "session_dir", lambda kind, i: tmp_path)
-    client.headers["Authorization"] = f"Bearer {login['access_token']}"
+    client.headers.update(session_headers("cardteacher")[0])
     from backend.database import SessionLocal
     from backend.models.library import LibraryActivity
     with SessionLocal() as db:                 # no library yet: activities come from PARAKH's own lists
@@ -174,7 +172,10 @@ def test_cookie_session_lifecycle():
     assert client.get(f"{API}/auth/me").status_code == 401
 
 
-def test_bearer_flow_still_works_and_refresh_token_is_not_an_access_token():
+def test_bearer_flow_still_works_and_refresh_token_is_not_an_access_token(monkeypatch):
+    from datetime import date
+    from backend import config
+    monkeypatch.setattr(config, "BEARER_LAST_DAY", date(2999, 1, 1))    # the old login, while it still exists (M-2)
     client = TestClient(app)
     _school_and_teacher(client, "33333333333", "bearerteacher")
     client.cookies.clear()
@@ -191,8 +192,7 @@ def test_passwords_are_encrypted_and_never_sent():
     admin_headers = _school_and_teacher(client, "44444444444", "secretteacher")
     teachers = client.get(f"{API}/school/teachers", headers=admin_headers).json()
     assert teachers and all("plain_password" not in t for t in teachers)
-    login = client.post(f"{API}/auth/login", json={"identifier": "secretteacher", "password": "secret123"}).json()
-    t_headers = {"Authorization": f"Bearer {login['access_token']}"}
+    t_headers, _ = session_headers("secretteacher")
     client.post(f"{API}/teacher/hpc/save-credentials", headers=t_headers,
                 json={"hpc_login_id": "T123", "hpc_password": "portal-pass"})
     status = client.get(f"{API}/teacher/hpc/status", headers=t_headers).json()

@@ -32,6 +32,9 @@ class School(Base):
     hpc_login_id = Column(String(100), nullable=True)
     hpc_password_encrypted = Column(String(255), nullable=True)
     is_active = Column(Boolean, default=True)
+    # sign-in tokens carry this number; logging out with the old Bearer token or changing the password moves
+    # it on, which ends every token issued before (M-2)
+    token_epoch = Column(Integer, nullable=True, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -64,6 +67,9 @@ class Teacher(Base):
     hpc_login_id = Column(String(100), nullable=True)
     hpc_password_encrypted = Column(String(255), nullable=True)
     is_active = Column(Boolean, default=True)
+    # sign-in tokens carry this number; logging out with the old Bearer token or changing the password moves
+    # it on, which ends every token issued before (M-2)
+    token_epoch = Column(Integer, nullable=True, default=0)
     last_login = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

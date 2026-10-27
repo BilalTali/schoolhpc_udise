@@ -11,6 +11,7 @@ from backend.main import app
 from backend.models.library import AuditLog, LibraryActivity
 from backend.routers import activity_library as router_mod
 from backend.services import activity_library as lib
+from backend.tests.conftest import session_headers  # noqa: E402
 
 client = TestClient(app)
 API = "/api/v1"
@@ -77,15 +78,13 @@ def world(monkeypatch):
         client.post(f"{API}/auth/school/register", json={
             "udise_code": udise, "school_name": f"School {school}", "state": "JK", "district": "Budgam",
             "admin_name": f"Admin {school}", "admin_email": f"{school}{tag}@example.com", "password": "secret123"})
-        token = client.post(f"{API}/auth/login", json={"identifier": udise, "password": "secret123"}).json()["access_token"]
-        users[f"admin_{school}"] = {"Authorization": f"Bearer {token}"}
+        users[f"admin_{school}"] = session_headers(udise)[0]
     for name in ("t1", "t2"):
         username = f"{name}{tag}"
         client.post(f"{API}/school/teachers", headers=users["admin_a"], json={
             "teacher_name": name.upper(), "username": username, "password": "secret123",
             "assigned_stages": ["Preparatory", "Middle"]})
-        token = client.post(f"{API}/auth/login", json={"identifier": username, "password": "secret123"}).json()["access_token"]
-        users[name] = {"Authorization": f"Bearer {token}"}
+        users[name] = session_headers(username)[0]
     fake = FakeBankPortal()
     monkeypatch.setattr(router_mod, "_client", lambda db, actor: fake)
     with SessionLocal() as db:                       # each test starts from an empty shared cache
