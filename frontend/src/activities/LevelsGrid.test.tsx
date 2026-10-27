@@ -89,6 +89,24 @@ describe("Part C levels grid", () => {
     await waitFor(() => expect(gets).toHaveLength(2));
   });
 
+  it("sets levels for the ticked students only: every subject at once, or one subject", async () => {
+    const { puts, user } = setup();
+    await user.click(await screen.findByRole("checkbox", { name: "Tick STUDENT TWO" }));
+    expect(screen.getByRole("heading", { name: "Set levels for 1 ticked student" })).toBeInTheDocument();
+    await user.selectOptions(screen.getByRole("combobox", { name: "Every subject, Awareness" }), "Beginner");
+    await user.selectOptions(screen.getByRole("combobox", { name: "Mathematics, Creativity, for the ticked students" }), "Advanced");
+    await user.click(screen.getByRole("button", { name: "Apply to 1 ticked student" }));
+    expect(screen.getByRole("combobox", { name: "STUDENT TWO, Language 1 (R1), Awareness" })).toHaveValue("Beginner");
+    expect(screen.getByRole("combobox", { name: "STUDENT TWO, Mathematics, Awareness" })).toHaveValue("Beginner");
+    expect(screen.getByRole("combobox", { name: "STUDENT TWO, Mathematics, Creativity" })).toHaveValue("Advanced");
+    expect(screen.getByRole("combobox", { name: "STUDENT TWO, Mathematics, Sensitivity" })).toHaveValue("");     // left as it was
+    expect(screen.getByRole("combobox", { name: "STUDENT ONE, Language 1 (R1), Awareness" })).toHaveValue("Advanced");  // not ticked
+    expect(screen.queryByRole("heading", { name: /Set levels for/ })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Save levels/ }));
+    await waitFor(() => expect(puts).toHaveLength(1));
+    expect(puts[0].values).toEqual({ "2": { c_PSLS1_awareness: "Beginner", c_PSLS3_awareness: "Beginner", c_PSLS3_creativity: "Advanced" } });
+  });
+
   it("has no axe violations", async () => {
     const { container } = setup();
     await screen.findByRole("combobox", { name: "STUDENT ONE, Language 1 (R1), Awareness" });

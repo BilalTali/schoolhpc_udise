@@ -26,6 +26,8 @@ export function LevelsGrid({ api, stage }: { api: Api; stage: string }) {
   const [offline, setOffline] = useState(false);              // PARAKH not connected
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error" | "warning"; text: string } | null>(null);
+  const [ticked, setTicked] = useState<Set<string>>(new Set());            // students to set levels for together
+  const [plan, setPlan] = useState<Record<string, string>>({});            // field key -> level to apply ("" = leave)
 
   const load = useCallback(async (refresh = false) => {
     setLoading(true);
@@ -81,6 +83,30 @@ export function LevelsGrid({ api, stage }: { api: Api; stage: string }) {
     setEdits(next);
   };
 
+  const abilities = useMemo(() => {
+    const out: string[] = [];
+    for (const sub of data?.subjects || []) for (const f of sub.fields) if (!out.includes(f.ability)) out.push(f.ability);
+    return out;
+  }, [data]);
+  const toggle = (sid: string) => setTicked((t) => { const n = new Set(t); if (n.has(sid)) n.delete(sid); else n.add(sid); return n; });
+  const everySubject = (ability: string, level: string) => setPlan((p) => {
+    const n = { ...p };
+    for (const sub of data?.subjects || []) for (const f of sub.fields) if (f.ability === ability) n[f.key] = level;
+    return n;
+  });
+  const planned = Object.values(plan).filter(Boolean).length;
+  const applyPlan = () => {
+    if (!data || !planned) return;
+    const next = { ...edits };
+    for (const sid of ticked) {
+      for (const [key, level] of Object.entries(plan)) if (level) next[sid] = { ...(next[sid] || {}), [key]: level };
+    }
+    setEdits(next);
+    setMessage({ type: "success", text: `Set ${planned} level${planned === 1 ? "" : "s"} for ${ticked.size} student${ticked.size === 1 ? "" : "s"}. Check them in the table, then press Save levels.` });
+    setTicked(new Set());
+    setPlan({});
+  };
+
   const save = async () => {
     if (!count) return;
     setSaving(true);
@@ -116,7 +142,8 @@ export function LevelsGrid({ api, stage }: { api: Api; stage: string }) {
           <RefreshCw size={14} aria-hidden="true" className={loading ? "spin" : ""} /> Read again from PARAKH
         </button>
       </div>
-      <p className="lib-muted">Most students are at the same level in most subjects. Fill the usual level for everyone, then change the few who differ, and save.
+      <p className="lib-muted">Most students are at the same level in most subjects. Fill the usual level for everyone, then tick the
+        students who are different (for example the Beginners), set their levels once, and save.
         {data?.read_at && <> Loaded from the app's copy, read from PARAKH on {new Date(data.read_at).toLocaleString()}.</>}</p>
 
       <div aria-live="polite">
@@ -155,12 +182,70 @@ export function LevelsGrid({ api, stage }: { api: Api; stage: string }) {
             </button>
           </div>
 
+          {ticked.size > 0 && (
+            <section className="lv-plan" aria-labelledby="lv-plan-title">
+              <div className="lv-plan-head">
+                <h3 id="lv-plan-title">Set levels for {ticked.size} ticked student{ticked.size === 1 ? "" : "s"}</h3>
+                <span className="lib-muted">Choose only what should change; "—" leaves a level as it is.</span>
+              </div>
+              <div className="lv-plan-scroll">
+                <table className="lv-plan-table">
+                  <thead><tr><th scope="col">Subject</th>{abilities.map((a) => <th key={a} scope="col">{a}</th>)}</tr></thead>
+                  <tbody>
+                    <tr className="lv-every">
+                      <th scope="row">Every subject</th>
+                      {abilities.map((a) => (
+                        <td key={a}>
+                          <select className="form-select" aria-label={`Every subject, ${a}`} defaultValue=""
+                                  onChange={(e) => everySubject(a, e.target.value)}>
+                            <option value="">—</option>
+                            {data.options.map((o) => <option key={o}>{o}</option>)}
+                          </select>
+                        </td>
+                      ))}
+                    </tr>
+                    {data.subjects.map((sub) => (
+                      <tr key={sub.code}>
+                        <th scope="row">{sub.name}</th>
+                        {abilities.map((a) => {
+                          const f = sub.fields.find((x) => x.ability === a);
+                          return (
+                            <td key={a}>
+                              {f && (
+                                <select className="form-select" aria-label={`${sub.name}, ${a}, for the ticked students`} value={plan[f.key] || ""}
+                                        onChange={(e) => setPlan((p) => ({ ...p, [f.key]: e.target.value }))}>
+                                  <option value="">—</option>
+                                  {data.options.map((o) => <option key={o}>{o}</option>)}
+                                </select>
+                              )}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="tp-row">
+                <button type="button" className="btn btn-primary" onClick={applyPlan} disabled={!planned}>
+                  Apply to {ticked.size} ticked student{ticked.size === 1 ? "" : "s"}
+                </button>
+                <button type="button" className="btn btn-outline" onClick={() => { setTicked(new Set()); setPlan({}); }}>Clear ticks</button>
+              </div>
+            </section>
+          )}
+
           <div className="grid-scroll" role="region" aria-label="Part C levels" tabIndex={0}>
             <table className="grid-table">
               <caption className="sr-only">Part C levels for each student, subject and ability.</caption>
               <thead>
                 <tr>
-                  <th scope="col" rowSpan={2} className="grid-sticky grid-student-head">Student</th>
+                  <th scope="col" rowSpan={2} className="grid-sticky grid-student-head">
+                    <input type="checkbox" aria-label="Tick every student"
+                           checked={data.rows.length > 0 && ticked.size === data.rows.length}
+                           onChange={() => setTicked(ticked.size === data.rows.length ? new Set() : new Set(data.rows.map((r) => r.student_id)))} />
+                    <span>Student</span>
+                  </th>
                   {data.subjects.map((s) => <th key={s.code} scope="colgroup" colSpan={s.fields.length} className="grid-subject-head">{s.name}</th>)}
                 </tr>
                 <tr>
@@ -171,6 +256,7 @@ export function LevelsGrid({ api, stage }: { api: Api; stage: string }) {
                 {data.rows.map((r) => (
                   <tr key={r.student_id} className={problems[r.student_id] ? "grid-row-todo" : ""}>
                     <th scope="row" className="grid-sticky grid-student">
+                      <input type="checkbox" checked={ticked.has(r.student_id)} onChange={() => toggle(r.student_id)} aria-label={`Tick ${r.student_name}`} />
                       <span className="grid-name">
                         <b>{r.student_name}</b>
                         <small>{[r.grade, r.section && `Sec ${r.section}`].filter(Boolean).join(" · ")}</small>

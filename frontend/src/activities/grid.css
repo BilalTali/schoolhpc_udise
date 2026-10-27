@@ -137,3 +137,15 @@
 .ul-ev-failed { color: #7F1D1D; }
 .ul-actions { display: flex; justify-content: flex-end; }
 @media (max-width: 760px) { .ul-grid { grid-template-columns: 1fr; } }
+
+/* Part C: set levels for the ticked students */
+.lv-plan { border: 1px solid var(--brand-200); background: var(--brand-50); border-radius: 14px; padding: 0.9rem 1rem; margin-bottom: 0.9rem; display: flex; flex-direction: column; gap: 0.6rem; }
+.lv-plan-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.4rem 1rem; }
+.lv-plan-head h3 { margin: 0; font-size: 1rem; }
+.lv-plan-scroll { overflow-x: auto; }
+.lv-plan-table { border-collapse: collapse; min-width: 32rem; }
+.lv-plan-table th, .lv-plan-table td { padding: 0.25rem 0.5rem; text-align: left; font-size: 0.86rem; }
+.lv-plan-table thead th { color: var(--muted); font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.04em; }
+.lv-plan-table tbody th { font-weight: 600; white-space: nowrap; }
+.lv-plan-table .form-select { min-width: 9.5rem; padding: 0.35rem 0.5rem; }
+.lv-every th, .lv-every td { border-bottom: 1px dashed var(--brand-200); padding-bottom: 0.5rem; }
