@@ -215,6 +215,7 @@ def test_old_layout_workbook_imports_after_preview(grid_client):
 
     url = f"{API}/teacher/activities-grid/Preparatory/import-upload"
     preview = client.post(url, json={"file_name": "old.xlsx"}).json()
+    assert "applied" in preview, preview
     assert preview["applied"] is False and preview["students"] == 1 and preview["cells"] == 8
     done = client.post(url, json={"file_name": "old.xlsx", "apply": True, "expected_cells": 8}).json()
     assert done["applied"] and list((tmp_path / "backups").iterdir())          # the original was backed up
