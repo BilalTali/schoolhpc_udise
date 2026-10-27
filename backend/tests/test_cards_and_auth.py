@@ -271,3 +271,19 @@ def test_submitting_a_card_reads_it_from_parakh_only_once(teacher_client, monkey
     status = client.post(f"{API}/teacher/hpc-cards/Preparatory/1001/submit").json()["status"]
     checks_after = 1 if status == "COMPLETED" else 0                                 # the record read after saving
     assert reads.count(None) == 1 + checks_after and len(reads) == 7 + checks_after  # record + 6 parts, read once
+
+
+def test_students_this_login_cannot_open_are_counted_by_class():
+    # PARAKH lists Grade 1 students to a login that is class teacher of Balvatika 3; it refuses their cards (403)
+    from types import SimpleNamespace
+    from backend.hpc import sync
+    from backend.hpc.portal import Portal
+    p = object.__new__(Portal)
+    p.session = SimpleNamespace(staff={"grade_section_mapping": [{"grd": 3, "sec": 1}]})
+    p.not_yours = {}
+    p.roster_page = lambda stage, page_no, page_size=100: {"records": [
+        {"id": 1, "grade_id": 4, "section_id": 1}, {"id": 2, "grade_id": 4, "section_id": 1},
+        {"id": 3, "grade_id": 3, "section_id": 1}]}
+    assert [r["id"] for r in p.roster("Foundational")] == [3]
+    lookups = SimpleNamespace(grades=[{"id": 4, "grade_caption": "Grade 1"}], section_name=lambda sid: "A")
+    assert sync.not_yours(p, "Foundational", lookups) == [{"grade": "Grade 1", "section": "A", "count": 2}]

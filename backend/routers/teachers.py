@@ -183,10 +183,20 @@ def _fetch_view(job: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     return view
 
 
+def _not_yours_note(stage: str, classes: List[Dict[str, Any]]) -> str:
+    """Why some students PARAKH lists are not in the app: this login is not their class teacher."""
+    what = ", ".join(f"{c['count']} in {c['grade']} {c['section']}".strip() for c in classes)
+    return (f"{stage}: PARAKH lists {what}, but this login is not the class teacher of that class, so PARAKH does not "
+            f"let it open their cards. Ask the school admin to make you class teacher of that class on PARAKH, then fetch again.")
+
+
 def _run_fetch(job: Dict[str, Any], teacher: Teacher, client, stages: List[str]) -> None:
     def roster_read(name, students):
         _roster_file(teacher, name).write_text(json.dumps(students, ensure_ascii=False, indent=1), encoding="utf-8")
+        hidden = getattr(client, "not_yours_classes", {}).get(name) or []
         with _fetch_lock:
+            if hidden:
+                job["notes"].append(_not_yours_note(name, hidden))
             job["total"] += len(students)
             job["rosters"][name] = len(students)
             job["stage_now"] = name
@@ -225,7 +235,7 @@ def sync_roster(stage: Optional[str] = Query(None), teacher: Teacher = Depends(r
         if running and running["status"] == "RUNNING":
             return _fetch_view(running)
         job = {"status": "RUNNING", "stages": stages, "stage_now": None, "rosters": {}, "done": 0, "total": 0,
-               "summary": "", "error": None, "started_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+               "summary": "", "notes": [], "error": None, "started_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
                "finished_at": None, "t0": time.time()}
         _fetch_jobs[teacher.id] = job
     threading.Thread(target=_run_fetch, args=(job, teacher, client, stages), daemon=True, name="fetch-roster").start()

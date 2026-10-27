@@ -195,6 +195,7 @@ class Portal:
         with Portal._pacers_lock:
             self._pacer = Portal._pacers.setdefault(login, [threading.Lock(), 0.0, 0.0])   # lock, next slot, last screen request
         self.background = False                  # background reads wait while a screen is loading
+        self.not_yours: Dict[str, List[Dict[str, Any]]] = {}   # stage -> roster records this login cannot open
         self.min_interval = 1.0 / max(PORTAL_MAX_PER_SECOND, 0.1)
         self.relogin: Optional[Callable[[], Session]] = None   # fallback when the refresh token is rejected too
         staff = session.staff
@@ -298,6 +299,7 @@ class Portal:
             if not new or len(page) < 100 or (total and len(records) >= int(total)):
                 break
             page_no += 1
+        self.not_yours[stage] = [r for r in records if not self.owns(r)]
         return [r for r in records if self.owns(r)]
 
     def student(self, stage: str, student_id: str, hpc_col: Optional[str] = None) -> Dict[str, Any]:

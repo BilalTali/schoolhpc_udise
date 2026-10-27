@@ -178,6 +178,17 @@ def roster_with_details(portal: Portal, stage: str, lookups: Lookups, workers: i
     return students
 
 
+def not_yours(portal: Portal, stage: str, lookups: Lookups) -> List[Dict[str, Any]]:
+    """Students PARAKH lists for the stage that this login may not open (their class is not one this
+    teacher is class teacher of), counted per class: [{"grade", "section", "count"}]."""
+    counts: Dict[tuple, int] = {}
+    for r in getattr(portal, "not_yours", {}).get(stage) or []:
+        key = (next((g["grade_caption"] for g in lookups.grades if g["id"] == r.get("grade_id")), str(r.get("grade_id"))),
+               lookups.section_name(r.get("section_id")))
+        counts[key] = counts.get(key, 0) + 1
+    return [{"grade": g, "section": s, "count": n} for (g, s), n in counts.items()]
+
+
 def roster(portal: Portal, stage: str, lookups: Lookups) -> List[Dict[str, Any]]:
     """The teacher's students for a stage, in the shape the workbook and the web app use."""
     out = []
@@ -208,6 +219,7 @@ def export_workbook(portal: Portal, stages: List[str], path,
     for stage in stages:
         lookups = Lookups(portal, stage_code(stage))
         students = roster(portal, stage, lookups)
+        portal.not_yours_classes = {**getattr(portal, "not_yours_classes", {}), stage: not_yours(portal, stage, lookups)}
         on_roster(stage, students)
         data = fetch_students(portal, stage, [s["student_id"] for s in students], on_each=lambda stage=stage: on_each(stage))
         on_students(stage, data)

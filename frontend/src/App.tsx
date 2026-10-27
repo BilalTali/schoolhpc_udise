@@ -960,7 +960,9 @@ export default function App() {
         if (job.status === "RUNNING") { follow(stage, listed); return; }
         loadTeacherRoster(stage);
         setStatusMsg(job.status === "COMPLETED"
-          ? { type: "success", text: `Fetched from PARAKH - ${job.summary}. Every screen now opens straight away.` }
+          ? job.notes?.length
+            ? { type: "warning", text: `Fetched from PARAKH - ${job.summary}. ${job.notes.join(" ")}` }
+            : { type: "success", text: `Fetched from PARAKH - ${job.summary}. Every screen now opens straight away.` }
           : { type: "error", text: `The fetch stopped: ${job.error || "PARAKH did not answer"}. The list below is what was read before.` });
       } catch {
         follow(stage, listed);                          // a missed check is tried again; the fetch goes on
@@ -2890,6 +2892,7 @@ interface FetchJob {
   total: number;
   seconds_left: number;
   summary: string;
+  notes?: string[];                 // e.g. students PARAKH lists that this login may not open
   error: string | null;
 }
 
