@@ -341,9 +341,17 @@ def submit_upload(file_name: str, background_tasks: BackgroundTasks, teacher: Te
     path = _upload_path(teacher, file_name)
     if not path.exists():
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Uploaded file not found. Upload and validate it first.")
+    return _start_job(teacher, db, background_tasks, file_name, path)
+
+
+def _start_job(teacher: Teacher, db: Session, background_tasks: BackgroundTasks, file_name: str, path,
+               only: Optional[set] = None) -> UploadJobResponse:
+    """Creates the job and its per-student rows, then saves in the background. only: just these students."""
     busy = HTTPException(status.HTTP_409_CONFLICT, "An upload is already running. Wait for it to finish.")
     stages = _workbook_stages(teacher, path)
     rows = workbook.read(path)
+    if only is not None:
+        rows = {sid: row for sid, row in rows.items() if sid in only}
     client = _portal(teacher)
     label = ", ".join(s[:4] for s in stages) if len(stages) > 1 else stages[0]       # fits the 30-char column
     with _submit_lock:
@@ -367,8 +375,31 @@ def submit_upload(file_name: str, background_tasks: BackgroundTasks, teacher: Te
                                  status="PENDING" if row.get(workbook.SYNC_KEY) else "SKIPPED"))
         db.commit()
     db.refresh(job)
-    background_tasks.add_task(upload_jobs.run_job, job.id, client, str(path), teacher.id)
+    if only is None:
+        background_tasks.add_task(upload_jobs.run_job, job.id, client, str(path), teacher.id)
+    else:
+        background_tasks.add_task(upload_jobs.run_job, job.id, client, str(path), teacher.id, set(only))
     return _job_response(job)
+
+
+@router.post("/upload/jobs/{job_id}/retry", response_model=UploadJobResponse)
+def retry_failed(job_id: str, background_tasks: BackgroundTasks, teacher: Teacher = Depends(require_teacher),
+                 db: Session = Depends(get_db)):
+    """A new job from the same uploaded file, for the students whose save FAILED (M-11). Students with a mistake
+    in the file (INVALID) need the file fixed and uploaded again; saved ones are left alone."""
+    job = _own_job(db, teacher, job_id)
+    if job.status in ("PENDING", "IN_PROGRESS"):
+        raise HTTPException(status.HTTP_409_CONFLICT, "This upload is still running. Wait for it to finish.")
+    failed = {r.admission_number for r in job.records if r.status == "FAILED"}
+    if not failed:
+        raise HTTPException(status.HTTP_409_CONFLICT, "No student in this upload failed to save, so there is nothing to retry.")
+    path = _upload_path(teacher, job.original_filename)
+    if not path.exists() or (job.file_hash and hashlib.sha256(path.read_bytes()).hexdigest() != job.file_hash):
+        raise HTTPException(status.HTTP_409_CONFLICT, "The uploaded file has changed (or was removed) since this upload. "
+                            "Upload the file again instead.")
+    from backend.services import audit
+    audit.record(f"teacher:{teacher.id}", "retry_failed", "upload_job", job.id, None, {"students": sorted(failed)})
+    return _start_job(teacher, db, background_tasks, job.original_filename, path, only=failed)
 
 
 @router.get("/upload/jobs", response_model=List[UploadJobResponse])

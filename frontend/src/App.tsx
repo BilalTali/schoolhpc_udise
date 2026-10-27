@@ -1087,7 +1087,7 @@ export default function App() {
     if (job.status === "COMPLETED") {
       setStatusMsg({ type: "success", text: `All ${job.success_count} students were saved to PARAKH.${skipped ? ` ${skipped} skipped (Sync = No).` : ""}` });
     } else if (job.status === "PARTIAL_SUCCESS") {
-      setStatusMsg({ type: "warning", text: `${job.success_count} saved, ${job.failed_count} not saved. Fix those rows (reasons below) and upload the file again.` });
+      setStatusMsg({ type: "warning", text: `${job.success_count} saved, ${job.failed_count} not saved. Those PARAKH did not take can be retried below; rows with a mistake need the file fixed and uploaded again.` });
     } else {
       setStatusMsg({ type: "error", text: "Nothing was saved. See the reasons below; check the PARAKH connection and try again." });
     }
@@ -2359,7 +2359,8 @@ export default function App() {
             )}
             {teacherTab === "upload" && (
               <div className="ui-panel">
-                {activeJobId && <UploadLive api={cardsApi} jobId={activeJobId} onFinished={afterUpload} />}
+                {activeJobId && <UploadLive api={cardsApi} jobId={activeJobId} onFinished={afterUpload}
+                                            onRetry={(id) => { setStatusMsg(null); setIsSubmitting(true); setActiveJobId(id); }} />}
                 <div className="panel-header">
                   <div className="panel-title"><Upload size={20} color="#FF671F" /><span>Upload the filled Excel file</span></div>
                 </div>

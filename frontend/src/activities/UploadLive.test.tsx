@@ -51,6 +51,27 @@ describe("Upload live view", () => {
     expect(screen.getByRole("button", { name: /Download the report/ })).toBeInTheDocument();
   });
 
+  it("retries only the students PARAKH did not take, and says which need the file fixed", async () => {
+    const finished = {
+      job_id: "job12345abc", total_students: 3, created_at: "2026-10-26T12:00:00", completed_at: "2026-10-26T12:00:30",
+      status: "PARTIAL_SUCCESS", success_count: 1, failed_count: 2, current: null, events: [],
+      students: [student("1", "STUDENT ONE", "SUCCESS"), student("2", "STUDENT TWO", "FAILED", "Part A1 saved; Part A2 failed: PARAKH did not answer"),
+                 student("3", "STUDENT THREE", "INVALID", "Part A1: Mother Tongue: required")],
+    };
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn((url: string, init?: RequestInit) => {
+      calls.push(`${init?.method || "GET"} ${url}`);
+      return url.endsWith("/retry") ? json({ job_id: "job99999new" }) : json(finished);
+    }));
+    const onRetry = vi.fn();
+    render(<UploadLive api={api} jobId="job12345abc" onFinished={vi.fn()} onRetry={onRetry} />);
+    const button = await screen.findByRole("button", { name: /Retry the 1 not saved because of PARAKH/ });
+    expect(screen.getByText(/1 need a fix in the file first/)).toBeInTheDocument();
+    button.click();
+    await waitFor(() => expect(onRetry).toHaveBeenCalledWith("job99999new"));
+    expect(calls).toContain("POST http://test/api/v1/teacher/upload/jobs/job12345abc/retry");
+  });
+
   it("has no axe violations", async () => {
     vi.stubGlobal("fetch", vi.fn(() => json(frames()[0])));
     const { container } = render(<UploadLive api={api} jobId="job12345abc" onFinished={vi.fn()} />);

@@ -272,9 +272,11 @@ def sync_workbook(portal: Portal, path, dry_run: bool = False, on_result=lambda 
                   extra_values=lambda stage, student_id: {}, resolver_for=lambda stage: None,
                   before_save_for=lambda stage: None, base_values=lambda stage, student_id: {},
                   exception_problems: Optional[List[str]] = None,
-                  on_step: Callable[[str, str], None] = lambda student_id, step: None) -> List[SyncResult]:
+                  on_step: Callable[[str, str], None] = lambda student_id, step: None,
+                  only: Optional[set] = None) -> List[SyncResult]:
     """Checks, then uploads every student marked Sync=Yes, stage by stage. Calls on_result after each student.
-    extra_values adds values kept outside the file (the Activities grid); resolver_for gives the activity list."""
+    extra_values adds values kept outside the file (the Activities grid); resolver_for gives the activity list.
+    only: just these students (a retry of the ones whose save failed); the others are left out entirely."""
     from backend.hpc import workbook
     rows = workbook.read(path, exception_problems)
     stages = workbook.detect_stages(path)
@@ -282,6 +284,8 @@ def sync_workbook(portal: Portal, path, dry_run: bool = False, on_result=lambda 
     lookups: Dict[str, Lookups] = {}
     results = []
     for sid, row in rows.items():
+        if only is not None and sid not in only:
+            continue
         stage = str(row.get(workbook.STAGE_KEY) or only_stage)
         name = str(row.get(workbook.NAME_KEY) or sid)
         if not row.get(workbook.SYNC_KEY):

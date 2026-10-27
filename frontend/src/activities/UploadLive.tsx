@@ -25,9 +25,13 @@ const POLL_MS = 1000;
 const RUNNING = ["PENDING", "IN_PROGRESS"];
 const time = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
-export function UploadLive({ api, jobId, onFinished }: { api: Api; jobId: string; onFinished: (job: LiveJob) => void }) {
+export function UploadLive({ api, jobId, onFinished, onRetry }: {
+  api: Api; jobId: string; onFinished: (job: LiveJob) => void; onRetry?: (newJobId: string) => void;
+}) {
   const [job, setJob] = useState<LiveJob | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [retrying, setRetrying] = useState(false);
+  const [retryError, setRetryError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const finished = useRef<string | null>(null);
   const onFinishedRef = useRef(onFinished);
@@ -72,6 +76,20 @@ export function UploadLive({ api, jobId, onFinished }: { api: Api; jobId: string
   const elapsed = Math.max(0, Math.round(((job.completed_at ? Date.parse(job.completed_at + (job.completed_at.endsWith("Z") ? "" : "Z")) : now)
     - Date.parse(job.created_at + (job.created_at.endsWith("Z") ? "" : "Z"))) / 1000));
   const perStudent = done ? elapsed / done : 0;
+  const failedSave = job.students.filter((s) => s.status === "FAILED").length;      // PARAKH problems: retry these
+  const fileMistakes = job.students.filter((s) => s.status === "INVALID").length;   // these need the file fixed
+  const retry = async () => {
+    setRetrying(true);
+    setRetryError(null);
+    try {
+      const next = await call<{ job_id: string }>(api, "POST", `/teacher/upload/jobs/${job.job_id}/retry`);
+      onRetry?.(next.job_id);
+    } catch (e: any) {
+      setRetryError(e.message);
+    } finally {
+      setRetrying(false);
+    }
+  };
   const left = running && perStudent ? Math.round(perStudent * (total - done)) : 0;
 
   return (
@@ -139,9 +157,19 @@ export function UploadLive({ api, jobId, onFinished }: { api: Api; jobId: string
 
       {!running && (
         <div className="ul-actions">
+          {onRetry && failedSave > 0 && (
+            <button type="button" className="btn btn-primary" onClick={retry} disabled={retrying}>
+              <RefreshCw size={14} aria-hidden="true" className={retrying ? "spin" : ""} />
+              {" "}Retry the {failedSave} not saved because of PARAKH
+            </button>
+          )}
           <button type="button" className="btn btn-outline" onClick={() => downloadReport(api, job.job_id)}>
             <Download size={14} aria-hidden="true" /> Download the report (CSV)
           </button>
+          {fileMistakes > 0 && (
+            <span className="lib-muted">{fileMistakes} need a fix in the file first (reasons above); then upload the file again.</span>
+          )}
+          {retryError && <span className="field-problem" role="alert">{retryError}</span>}
         </div>
       )}
     </section>

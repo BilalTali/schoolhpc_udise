@@ -130,7 +130,9 @@ def _live_event(job_id: str, student_id: str, name: str, text: str, kind: str = 
         del live["events"][:-LIVE_EVENTS]
 
 
-def run_job(job_id: str, client: Portal, path: str, teacher_id: Optional[str] = None) -> None:
+def run_job(job_id: str, client: Portal, path: str, teacher_id: Optional[str] = None,
+            only: Optional[set] = None) -> None:
+    """Saves the workbook's students to PARAKH. only: just these students (retry failed only, M-11)."""
     db = SessionLocal()
     job = db.get(UploadJob, job_id)
     try:
@@ -187,7 +189,7 @@ def run_job(job_id: str, client: Portal, path: str, teacher_id: Optional[str] = 
         owner = f"teacher_{teacher_id}" if teacher_id else "unknown"
         sync.sync_workbook(client, Path(path), on_result=record_and_tidy, **_grid_hooks(client, teacher_id),
                            before_save_for=lambda stage: snapshots.hook(owner, stage, f"workbook upload (job {job_id[:8]})"),
-                           on_step=step)
+                           on_step=step, only=only)
         done = [r for r in records.values() if r.status != "SKIPPED"]
         job.status = ("COMPLETED" if done and all(r.status == "SUCCESS" for r in done)
                       else "PARTIAL_SUCCESS" if any(r.status == "SUCCESS" for r in done) else "FAILED")
