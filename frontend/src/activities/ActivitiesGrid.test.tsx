@@ -110,8 +110,10 @@ describe("Activities grid", () => {
     expect(within(one).getByRole("radiogroup", { name: "STUDENT ONE, Mathematics, Awareness" })).toBeInTheDocument();
     expect(within(one).getAllByRole("radio", { name: "Beginner" })).toHaveLength(6);
     const three = screen.getByRole("rowheader", { name: /STUDENT THREE/ }).closest("tr")!;
-    expect(within(three).getByText("Locked")).toBeInTheDocument();
     expect(within(three).getByRole("combobox", { name: "STUDENT THREE, Mathematics, activity" })).toBeDisabled();
+    // the badge itself shows the way to edit: it opens the details with the Replace tick-box
+    within(three).getByRole("button", { name: /Locked – click to edit/ }).click();
+    expect(await screen.findByText(/tick this to edit/)).toBeInTheDocument();
   });
 
   it("saves a student's choices on its own after a short pause, and shows the result", async () => {

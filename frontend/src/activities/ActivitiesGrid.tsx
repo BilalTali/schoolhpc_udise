@@ -338,7 +338,12 @@ const GridRow = memo(function GridRow({ row, subjects, options, labels, ticked, 
           {row.ready
             ? <span className="lib-badge lib-badge-ok"><CheckCircle2 size={12} aria-hidden="true" /> Ready</span>
             : <span className="lib-badge lib-badge-warn"><AlertCircle size={12} aria-hidden="true" /> Needs work</span>}
-          {row.locked && <span className="lib-badge"><Lock size={11} aria-hidden="true" /> Locked</span>}
+          {row.locked && (
+            <button type="button" className="lib-badge" onClick={() => { if (!expanded) onExpand(sid); }}
+                    title="PARAKH has more than one activity for a subject. Open the details and tick 'Replace activities on PARAKH' to edit.">
+              <Lock size={11} aria-hidden="true" /> {row.replace ? "Unlocked: will replace" : "Locked – click to edit"}
+            </button>
+          )}
           <SaveBadge state={save} onReload={onReload} />
           <button type="button" className="portal-link-btn" aria-expanded={expanded} onClick={() => onExpand(sid)}>
             {expanded ? "Hide details" : "Details"}<span className="sr-only"> for {row.student_name}</span>
@@ -377,6 +382,7 @@ const GridRow = memo(function GridRow({ row, subjects, options, labels, ticked, 
                   <label className="lib-check">
                     <input type="checkbox" checked={row.replace} onChange={(e) => onChange(sid, REPLACE_KEY, e.target.checked ? "Yes" : "")} />
                     Replace activities on PARAKH with the ones chosen here
+                    {row.locked && !row.replace && <span className="lib-muted"> (tick this to edit: PARAKH has more than one activity for a subject)</span>}
                   </label>
                 )}
               </div>
