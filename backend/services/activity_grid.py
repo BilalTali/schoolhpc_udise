@@ -102,15 +102,22 @@ def load(client: Portal, teacher, stage: str, students: List[Dict[str, Any]], re
             for s in students]
     return {"stage": stage, "session": session,
             "subjects": [{"code": c, "name": names[c]} for c in subjects],
-            "options": [{"key": e["key"], "label": e["label"]} for e in entries],
+            "options": [{"key": e["key"], "label": e["label"], "subjects": e.get("subjects")} for e in entries],
             "labels": labels, "students": rows,
             "grades": sorted({f"{r['grade']} - {r['section']}".strip(" -") for r in rows}),
             "summary": {"ready": sum(r["ready"] for r in rows), "total": len(rows),
                         "locked": sum(r["locked"] for r in rows)}}
 
 
-def _check_values(stage: str, values: Dict[str, Any], allowed: set, current_keys: set) -> Dict[str, str]:
-    _, subjects, _ = _stage_info(stage)
+def subjects_for(scope: List[str], activity_subjects: Optional[List[str]]) -> List[str]:
+    """The subjects of scope an activity may be chosen for (all of them when its subjects are not known)."""
+    return [s for s in scope if activity_subjects is None or s in activity_subjects]
+
+
+def _check_values(stage: str, values: Dict[str, Any], allowed, current_keys: set) -> Dict[str, str]:
+    """allowed: activity key -> its subjects (None: any). A new choice must be an activity of that subject;
+    what the student already has stays allowed."""
+    _, subjects, names = _stage_info(stage)
     known = set(grid.grid_keys(subjects))
     problems = {}
     for k, v in values.items():
@@ -122,6 +129,10 @@ def _check_values(stage: str, values: Dict[str, Any], allowed: set, current_keys
             problems[k] = problem
         elif k.startswith("b_act_") and v and v not in allowed and v not in current_keys:
             problems[k] = "This activity is not offered in your Activity Library (it may be turned off)."
+        elif k.startswith("b_act_") and v and v not in current_keys and allowed[v] is not None \
+                and k[len("b_act_"):] not in allowed[v]:
+            problems[k] = (f"This activity is for {', '.join(names.get(s, s) for s in allowed[v])}, not "
+                           f"{names.get(k[len('b_act_'):], k)}. Choose one of this subject's activities.")
     return problems
 
 
@@ -133,7 +144,7 @@ def save(client: Portal, teacher, stage: str, student: Dict[str, Any], values: D
     raw = _portal_parts(client, teacher.id, stage, [student], False)[student["student_id"]]
     _, subjects, _ = _stage_info(stage)
     now = grid.current(subjects, _parts(stage, raw)["part_b"], grid.typed_keys(resolve))
-    problems = _check_values(stage, values, {e["key"] for e in entries}, set(now.values.values()))
+    problems = _check_values(stage, values, {e["key"]: e.get("subjects") for e in entries}, set(now.values.values()))
     if problems:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, {"problems": problems})
     clean = {k: ("" if v is None else str(v).strip()) for k, v in values.items()}
@@ -156,6 +167,13 @@ def quick_fill(client: Portal, teacher, stage: str, students: List[Dict[str, Any
     if not activity_key and not levels:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Choose an activity or at least one level to fill in.")
     scope = [s for s in subjects if not subject_codes or s in subject_codes]
+    if activity_key:                                  # an activity goes only under its own subjects
+        own = next((e.get("subjects") for e in entries if e["key"] == activity_key), None)
+        scope = subjects_for(scope, own)
+        if not scope:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                f"This activity is for {', '.join(names.get(s, s) for s in own or [])}. "
+                                "Choose that subject, or another activity.")
     raw = _portal_parts(client, teacher.id, stage, students, False)
 
     plans, skipped, cells, kept = [], [], 0, 0

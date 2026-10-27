@@ -37,6 +37,10 @@ export function QuickFill({ api, stage, data, selectedIds, onApplied }: {
     replace_filled: replace,
   });
   const changed = () => setPreview(null);
+  const chosenSubjects = (() => {                    // an activity is only filled in under its own subjects
+    const subs = data.options.find((o) => o.key === activity)?.subjects;
+    return subs ? data.subjects.filter((s) => subs.includes(s.code)).map((s) => s.name) : null;
+  })();
 
   const run = async (apply: boolean) => {
     setBusy(true);
@@ -69,8 +73,12 @@ export function QuickFill({ api, stage, data, selectedIds, onApplied }: {
           <span className="lib-filter-label">Activity</span>
           <select className="form-select" value={activity} onChange={(e) => { setActivity(e.target.value); changed(); }}>
             <option value="">— Only set levels —</option>
-            {data.options.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
+            {data.options.filter((o) => subjectMode !== "one" || !o.subjects || o.subjects.includes(subject))
+              .map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
           </select>
+          {chosenSubjects && (
+            <span className="lib-muted">Goes only under its subject{chosenSubjects.length === 1 ? "" : "s"}: {chosenSubjects.join(", ")}</span>
+          )}
         </label>
 
         <fieldset className="qf-field qf-fieldset">

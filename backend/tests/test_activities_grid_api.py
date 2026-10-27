@@ -72,7 +72,7 @@ def test_grid_shows_every_student_with_parakh_values_and_problems(grid_client):
     client, portal, _ = grid_client
     data, by_id = rows(client)
     assert [s["name"] for s in data["subjects"]][:2] == ["Language 1 (R1)", "Language 2 (R2)"]
-    assert data["options"] == [{"key": "P85", "label": "85: Conversation in pairs"}]
+    assert data["options"] == [{"key": "P85", "label": "85: Conversation in pairs", "subjects": None}]
     assert data["grades"] == ["Grade 5 - A"] and data["summary"] == {"ready": 2, "total": 3, "locked": 1}
 
     empty, done, locked = by_id["1001"], by_id["1002"], by_id["1003"]

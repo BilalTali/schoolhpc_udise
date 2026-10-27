@@ -29,7 +29,7 @@ function readiness(s: GridStudent): GridStudent {
   return { ...s, problems, ready: problems.length === 0, missing_subjects: missing };
 }
 
-function fakeGrid() {
+function fakeGrid(options?: GridData["options"]) {
   const full = Object.fromEntries(KEYS.map((k) => [k, k.startsWith("b_act_") ? "P85" : "Proficient"]));
   const state = {
     students: [
@@ -42,7 +42,7 @@ function fakeGrid() {
   const json = (status: number, body: unknown) => Promise.resolve(new Response(JSON.stringify(body), { status }));
   const data = (): GridData => ({
     stage: "Preparatory", session: "2627", subjects: SUBJECTS,
-    options: [{ key: "P85", label: "85: Pairs" }, { key: "P91", label: "91: Story" }], labels: { P85: "85: Pairs", P91: "91: Story" },
+    options: options || [{ key: "P85", label: "85: Pairs" }, { key: "P91", label: "91: Story" }], labels: { P85: "85: Pairs", P91: "91: Story" },
     students: state.students, grades: ["Grade 5 - A"],
     summary: { ready: state.students.filter((s) => s.ready).length, total: 3, locked: 1 },
   });
@@ -93,6 +93,19 @@ const puts = (fake: ReturnType<typeof fakeGrid>) => fake.state.calls.filter((c) 
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 describe("Activities grid", () => {
+  it("offers under each subject only that subject's activities, and marks an older choice from elsewhere", async () => {
+    const fake = fakeGrid([{ key: "P85", label: "85: Pairs", subjects: ["PSLS1"] }, { key: "P91", label: "91: Story", subjects: ["PSLS3"] }]);
+    vi.stubGlobal("fetch", vi.fn(fake.fetch));
+    render(<ActivitiesGrid api={api} stage="Preparatory" />);
+    const one = (await screen.findByRole("rowheader", { name: /STUDENT ONE/ })).closest("tr")!;
+    const names = (box: HTMLElement) => within(box).getAllByRole("option").map((o) => o.textContent);
+    expect(names(within(one).getByRole("combobox", { name: "STUDENT ONE, Language 1 (R1), activity" }))).toEqual(["— Choose —", "85: Pairs"]);
+    expect(names(within(one).getByRole("combobox", { name: "STUDENT ONE, Mathematics, activity" }))).toEqual(["— Choose —", "91: Story"]);
+    const two = screen.getByRole("rowheader", { name: /STUDENT TWO/ }).closest("tr")!;       // P85 everywhere from before
+    expect(names(within(two).getByRole("combobox", { name: "STUDENT TWO, Mathematics, activity" })))
+      .toEqual(["— Choose —", "85: Pairs (not for this subject)", "91: Story"]);
+  });
+
   it("opens the student named by 'Fix in Activities'", async () => {
     vi.stubGlobal("fetch", vi.fn(fakeGrid().fetch));
     render(<ActivitiesGrid api={api} stage="Preparatory" focusStudent="1" />);

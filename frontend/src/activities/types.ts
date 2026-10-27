@@ -63,6 +63,7 @@ export interface ActivityDetail extends Activity {
 export interface CodeOption {
   code: string;
   used_by: number;
+  subjects?: string[];          // the subjects PARAKH uses this code for
 }
 
 export const APPROACHES: { value: number; label: string }[] = [

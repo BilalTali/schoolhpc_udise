@@ -396,10 +396,14 @@ const GridRow = memo(function GridRow({ row, subjects, options, labels, ticked, 
 
 function Cells({ sid, name, subject, value, row, options, unknownLabel, disabled, onChange }: {
   sid: string; name: string; subject: { code: string; name: string }; value: string; row: GridStudent;
-  options: { key: string; label: string }[]; unknownLabel: string; disabled: boolean;
+  options: { key: string; label: string; subjects?: string[] | null }[]; unknownLabel: string; disabled: boolean;
   onChange: (sid: string, key: string, value: string) => void;
 }) {
   const ak = actKey(subject.code);
+  // only this subject's activities (R1 under R1, Mathematics under Mathematics); a choice made before that
+  // belongs elsewhere stays visible, marked, so nothing disappears silently
+  const mine = options.filter((o) => !o.subjects || o.subjects.includes(subject.code));
+  const elsewhere = value && !mine.some((o) => o.key === value) ? options.find((o) => o.key === value) : undefined;
   return (
     <>
       <td className={`grid-act ${value ? "" : "grid-empty"}`}>
@@ -407,7 +411,8 @@ function Cells({ sid, name, subject, value, row, options, unknownLabel, disabled
                 onChange={(e) => onChange(sid, ak, e.target.value)}>
           <option value="">— Choose —</option>
           {unknownLabel && <option value={value}>{unknownLabel} (kept from PARAKH)</option>}
-          {options.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
+          {elsewhere && <option value={elsewhere.key}>{elsewhere.label} (not for this subject)</option>}
+          {mine.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
         </select>
       </td>
       {ABILITY_KEYS.map((a) => {

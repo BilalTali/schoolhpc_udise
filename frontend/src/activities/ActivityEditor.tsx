@@ -58,7 +58,7 @@ export function ActivityEditor({ api, stage, subjects, activityId, consentText, 
   const [detail, setDetail] = useState<ActivityDetail | null>(null);
   const [form, setForm] = useState<Form | null>(creating ? {
     title: "", display_name: "", activity_text: "", assessment_text: "", rubric: emptyRubric(),
-    goals: [], competencies: [], subjects: subjects.map((s) => s.code), approaches: [], approach_other: "",
+    goals: [], competencies: [], subjects: [], approaches: [], approach_other: "",     // the teacher picks the subject first
   } : null);
   const [codes, setCodes] = useState<{ goals: CodeOption[]; competencies: CodeOption[] } | null>(null);
   const [baseline, setBaseline] = useState<string>(() => (creating ? JSON.stringify(form) : ""));   // what "no changes" means
@@ -343,9 +343,9 @@ export function ActivityEditor({ api, stage, subjects, activityId, consentText, 
           ))}
 
           <div className="lib-two">
-            <CodePicker id={ids.goals} label="Curricular goal code(s)" value={form.goals} options={codes?.goals}
+            <CodePicker id={ids.goals} label="Curricular goal code(s)" value={form.goals} options={forSubjects(codes?.goals, form.subjects)}
                         disabled={!editable || !isLocal} onChange={(v) => set("goals", v)} />
-            <CodePicker id={ids.cpt} label="Competency code(s)" value={form.competencies} options={codes?.competencies}
+            <CodePicker id={ids.cpt} label="Competency code(s)" value={form.competencies} options={forSubjects(codes?.competencies, form.subjects)}
                         disabled={!editable || !isLocal} onChange={(v) => set("competencies", v)} />
           </div>
 
@@ -449,6 +449,12 @@ export function ActivityEditor({ api, stage, subjects, activityId, consentText, 
 }
 
 /** Codes picked from the ones PARAKH's own activities use (a typo would put an unknown code on the card). */
+/** Only the codes PARAKH uses for the chosen subjects (R1 competencies for an R1 activity); none until one is chosen. */
+function forSubjects(options: CodeOption[] | undefined, chosen: string[]): CodeOption[] | undefined {
+  if (!options) return options;
+  return options.filter((o) => !o.subjects || o.subjects.length === 0 || o.subjects.some((s) => chosen.includes(s)));
+}
+
 function CodePicker({ id, label, value, options, disabled, onChange }: {
   id: string; label: string; value: string[]; options?: CodeOption[]; disabled: boolean; onChange: (v: string[]) => void;
 }) {

@@ -318,7 +318,8 @@ def test_edit_diff_and_reset(world):
     fake.records = [bank_record(1, "Preparatory", "L1CG 1, C 1.1")]
     sync(users["admin_a"])
     act = items(users["admin_a"])["items"][0]
-    assert act["edited"] is False and act["covers_all"] is True and act["portal_subject_names"] == ["Language 1 (R1)"]
+    # an activity belongs to the subject PARAKH lists it under (here R1 only)
+    assert act["edited"] is False and act["subjects"] == ["PSLS1"] and act["portal_subject_names"] == ["Language 1 (R1)"]
 
     url = f"{API}/activity-library/{act['id']}"
     res = client.patch(url, headers=users["admin_a"], json={
@@ -354,7 +355,8 @@ def test_coverage_badge_and_filter(world):
     users, fake = world
     fake.records = [bank_record(1, "Preparatory", "A"), bank_record(2, "Preparatory", "B")]
     sync(users["admin_a"])
-    a = by_code(items(users["admin_a"]), "A")
+    a, b = by_code(items(users["admin_a"]), "A"), by_code(items(users["admin_a"]), "B")
+    client.patch(f"{API}/activity-library/{b['id']}", headers=users["admin_a"], json={"subjects": ["PSLS1", "PSLS2", "PSLS3", "PSLS4", "PSLS5", "PSLS6", "PSLS7"]})   # widened on purpose
     d = client.patch(f"{API}/activity-library/{a['id']}", headers=users["admin_a"],
                      json={"subjects": ["PSLS1", "PSLS2", "PSLS4", "PSLS6", "PSLS7"]}).json()
     assert d["covers_all"] is False and d["missing_subjects"] == ["Mathematics", "Art Education"]
@@ -373,6 +375,7 @@ def test_default_must_cover_all_subjects(world):
     sync(users["admin_a"])
     a, b, c = (by_code(items(users["admin_a"]), x) for x in "ABC")
     client.patch(f"{API}/activity-library/{a['id']}", headers=users["admin_a"], json={"subjects": ["PSLS1"]})
+    client.patch(f"{API}/activity-library/{b['id']}", headers=users["admin_a"], json={"subjects": ["PSLS1", "PSLS2", "PSLS3", "PSLS4", "PSLS5", "PSLS6", "PSLS7"]})   # widened on purpose
 
     url = f"{API}/activity-library/defaults/Preparatory"
     res = client.put(url, headers=users["admin_a"], json={"activity_id": a["id"]})
@@ -553,7 +556,7 @@ def test_activity_made_here_is_usable_once_finished_and_codes_come_from_parakh(w
     fake.records = [bank_record(1, "Preparatory", "A")]
     sync(users["admin_a"])
     codes = client.get(f"{API}/activity-library/codes/Preparatory", headers=users["t1"]).json()
-    assert codes["goals"] == [{"code": "CG1", "used_by": 1}] and codes["competencies"][0]["code"] == "C1.1"
+    assert codes["goals"] == [{"code": "CG1", "used_by": 1, "subjects": ["PSLS1"]}] and codes["competencies"][0]["code"] == "C1.1"
 
     rubric = {a: {"beginner": f"{a} b", "proficient": f"{a} p", "advanced": f"{a} a"}
               for a in ("awareness", "sensitivity", "creativity")}

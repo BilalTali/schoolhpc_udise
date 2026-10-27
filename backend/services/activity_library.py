@@ -256,8 +256,10 @@ def view(act: LibraryActivity, setting: Optional[SchoolActivitySetting], actor: 
     if act.source == "local":
         subjects = list(act.subjects or [])
     else:
-        # portal activities can be used for every subject
-        subjects = list(my_edits.get("subjects") or school_edits.get("subjects") or all_codes)
+        # a PARAKH activity belongs to the subject(s) PARAKH lists it under (each bank activity has one);
+        # the school admin - or a teacher, for their own copy - can widen that on purpose
+        listed = [c for c in all_codes if c in (act.portal_subjects or [])]
+        subjects = list(my_edits.get("subjects") or school_edits.get("subjects") or listed or all_codes)
     subjects = [c for c in all_codes if c in subjects]
     missing = [names[c] for c in all_codes if c not in subjects]
     texts = _texts(content)
@@ -440,7 +442,8 @@ def library_entries(db: Session, actor: Actor, stage: str) -> Dict[str, Dict[str
         out[_key(v)] = {"portal_id": a.portal_id, "caption": caption, "label": v["label"],
                         "content": effective_content(a, settings.get(a.id), mine.get(a.id)),
                         "is_global": a.source == "portal_global", "modified": v["modified"],
-                        "usable": v["usable_in_excel"], "reason": v["not_usable_reason"], "key": _key(v)}
+                        "usable": v["usable_in_excel"], "reason": v["not_usable_reason"], "key": _key(v),
+                        "subjects": v["subjects"]}
     return out
 
 
@@ -481,7 +484,8 @@ def dropdown_entries(db: Session, actor: Actor, stage: str) -> List[Dict[str, st
     for v in list_views(db, actor, stage):
         if v["usable_in_excel"]:
             key = _key(v)
-            out.append({"key": key, "label": f"{v['label']} (#{key})", "activity_id": v["id"]})
+            out.append({"key": key, "label": f"{v['label']} (#{key})", "activity_id": v["id"],
+                        "subjects": v["subjects"]})
     return out
 
 
@@ -538,29 +542,45 @@ def known_codes(db: Session, actor: Actor, stage: str) -> Dict[str, List[Dict[st
     list of its own we can read), with how many activities use each - what a new activity may pick from."""
     goals: Dict[str, int] = {}
     competencies: Dict[str, int] = {}
+    used_for: Dict[str, set] = {}                    # code -> the subjects of the PARAKH activities using it
     for a in _visible_query(db, actor, stage):
         if a.source == "local":
             continue
-        for code in (a.content or {}).get("gl") or []:
-            goals[str(code)] = goals.get(str(code), 0) + 1
-        for code in (a.content or {}).get("cpt") or []:
-            competencies[str(code)] = competencies.get(str(code), 0) + 1
-    as_list = lambda d: [{"code": c, "used_by": n} for c, n in sorted(d.items(), key=lambda kv: _code_key(kv[0]))]
+        for field, counts in (("gl", goals), ("cpt", competencies)):
+            for code in (a.content or {}).get(field) or []:
+                counts[str(code)] = counts.get(str(code), 0) + 1
+                used_for.setdefault(str(code), set()).update(a.portal_subjects or [])
+    order = [s["code"] for s in stage_subjects(stage)]
+    as_list = lambda d: [{"code": c, "used_by": n, "subjects": [s for s in order if s in used_for.get(c, ())]}
+                         for c, n in sorted(d.items(), key=lambda kv: _code_key(kv[0]))]
     return {"goals": as_list(goals), "competencies": as_list(competencies)}
 
 
-def _check_codes(db: Session, actor: Actor, stage: str, clean: Dict[str, Any]) -> None:
-    """Goal and competency codes must be ones PARAKH uses, or the card would carry a code it does not know."""
-    if "goals" not in clean and "competencies" not in clean:
+def _check_codes(db: Session, actor: Actor, stage: str, clean: Dict[str, Any],
+                 act: Optional[LibraryActivity] = None) -> None:
+    """Goal and competency codes must be ones PARAKH uses, or the card would carry a code it does not know - and
+    ones PARAKH uses for the activity's own subjects (an R1 activity takes R1 competencies, not Mathematics ones)."""
+    if "goals" not in clean and "competencies" not in clean and "subjects" not in clean:
         return
     known = known_codes(db, actor, stage)
+    names = _subject_names(stage)
+    content = _texts((act.content if act is not None else None) or {})
+    subjects = clean.get("subjects") or (list(act.subjects or []) if act is not None else [])
     for field, label in (("goals", "Curricular goal"), ("competencies", "Competency")):
-        allowed = {c["code"] for c in known[field]}
-        unknown = [c for c in clean.get(field) or [] if allowed and c not in allowed]
+        codes = clean[field] if field in clean else (content[field] if act is not None and act.source == "local" else [])
+        allowed = {c["code"]: c["subjects"] for c in known[field]}
+        unknown = [c for c in codes if allowed and c not in allowed]
         if unknown:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
                                 f"{label} code(s) not used by any PARAKH activity for {stage}: {', '.join(unknown)}. "
                                 "Pick from the list.")
+        if subjects:
+            wrong = [c for c in codes if allowed.get(c) and not set(allowed[c]) & set(subjects)]
+            if wrong:
+                used = sorted({names.get(s, s) for c in wrong for s in allowed[c]})
+                raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                                    f"{label} code(s) {', '.join(wrong)} are used for {', '.join(used)}, not for "
+                                    f"{', '.join(names.get(s, s) for s in subjects)}. Pick codes of this activity's subjects.")
 
 
 def create_local(db: Session, actor: Actor, stage: str, title: str, changes: Dict[str, Any],
@@ -589,7 +609,7 @@ def update(db: Session, actor: Actor, act: LibraryActivity, changes: Dict[str, A
     new_status = changes.pop("status", None)
     title = changes.pop("title", None)
     clean = _clean_changes(act.stage, changes)
-    _check_codes(db, actor, act.stage, clean)
+    _check_codes(db, actor, act.stage, clean, act)
     if (clean or title is not None) and not can_edit_text(actor, act):
         _forbid("Only the school admin, or the teacher who made this activity, can change it.")
     if (display_name is not None or new_status is not None) and not actor.is_admin:
@@ -671,8 +691,10 @@ def _store_edits(act: LibraryActivity, edits: Dict[str, Any], base: Optional[Dic
             diff = {a: lv for a, lv in diff.items() if lv}
             if diff:
                 out["rubric"] = diff
-        elif key == "subjects":
-            if sorted(value) != sorted(s["code"] for s in stage_subjects(act.stage)):
+        elif key == "subjects":                      # the base is the subject(s) PARAKH lists it under
+            codes = [s["code"] for s in stage_subjects(act.stage)]
+            listed = [c for c in codes if c in (act.portal_subjects or [])] or codes
+            if sorted(value) != sorted(listed):
                 out["subjects"] = value
         elif original.get(key) != value:
             out[key] = value

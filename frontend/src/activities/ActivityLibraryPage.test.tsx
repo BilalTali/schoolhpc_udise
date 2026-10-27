@@ -157,15 +157,17 @@ describe("Managing activities (school admin)", () => {
 });
 
 describe("Adding activities", () => {
-  it("needs a name, defaults to every subject, and a teacher must agree before sharing", async () => {
+  it("needs a name and its subject, and a teacher must agree before sharing", async () => {
     const { fake, user } = setup({ isAdmin: false });
     await user.click((await screen.findAllByRole("button", { name: /Add your own activity/ }))[0]);
     const dialog = await screen.findByRole("dialog", { name: "New Preparatory activity" });
     const add = within(dialog).getByRole("button", { name: "Add activity" });
     expect(add).toBeDisabled();
-    expect(within(dialog).getAllByRole("checkbox").filter((c) => (c as HTMLInputElement).checked)).toHaveLength(7);
+    expect(within(dialog).getAllByRole("checkbox").filter((c) => (c as HTMLInputElement).checked)).toHaveLength(0);
 
     await user.type(within(dialog).getByLabelText(/Activity name/), "Story circle");
+    expect(add).toBeDisabled();                                   // the subject comes first: none is ticked for you
+    await user.click(within(dialog).getByRole("checkbox", { name: "Language 1 (R1)" }));
     expect(add).toBeEnabled();
     await user.click(within(dialog).getByRole("radio", { name: /My school/ }));
     expect(add).toBeDisabled();
@@ -175,7 +177,7 @@ describe("Adding activities", () => {
     await waitFor(() => expect(calls(fake, "POST", "/activity-library")).toHaveLength(1));
     const body = calls(fake, "POST", "/activity-library")[0].body;
     expect(body).toMatchObject({ stage: "Preparatory", title: "Story circle", share: "school", consent: true });
-    expect(body.subjects).toHaveLength(7);
+    expect(body.subjects).toEqual(["PSLS1"]);
     expect(await screen.findByText(/"Story circle" was added\. Before it can be chosen for students it still needs: Curricular goal, Competency/)).toBeInTheDocument();
   });
 
@@ -184,6 +186,7 @@ describe("Adding activities", () => {
     await user.click((await screen.findAllByRole("button", { name: /Add your own activity/ }))[0]);
     const dialog = await screen.findByRole("dialog", { name: "New Preparatory activity" });
     await user.type(within(dialog).getByLabelText(/Activity name/), "Story circle");
+    await user.click(within(dialog).getByRole("checkbox", { name: "Language 1 (R1)" }));
     await user.selectOptions(await within(dialog).findByLabelText("Curricular goal code(s)"), "CG1");
     expect(within(dialog).getByRole("list", { name: /Curricular goal code\(s\) chosen/ })).toHaveTextContent("CG1");
     expect(within(dialog).getByLabelText("Curricular goal code(s)")).not.toHaveTextContent(/^CG1 \(/);   // not offered twice
