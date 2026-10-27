@@ -284,8 +284,30 @@ def _upload_path(teacher: Teacher, file_name: str):
     return inside(hpc_sessions.session_dir(KIND, teacher.id), f"uploaded_{Path(file_name).name}")
 
 
+def _save_upload(file: UploadFile, path) -> None:
+    """Writes the upload, stopping (and keeping nothing) once it is larger than the limit (M-6)."""
+    from backend import config
+    size = 0
+    try:
+        with open(path, "wb") as out:
+            while chunk := file.file.read(1024 * 1024):
+                size += len(chunk)
+                if size > config.MAX_UPLOAD_BYTES:
+                    raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                                        f"The file is larger than {config.MAX_UPLOAD_BYTES // (1024 * 1024)} MB. "
+                                        "Upload the class workbook from this app.")
+                out.write(chunk)
+    except HTTPException:
+        path.unlink(missing_ok=True)
+        raise
+
+
 def _workbook_stages(teacher: Teacher, path) -> List[str]:
-    stages = workbook.detect_stages(path)
+    try:
+        stages = workbook.detect_stages(path)
+    except Exception:                                  # not an Excel file at all, or a damaged one (M-6)
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "This file could not be opened as an Excel workbook. "
+                            "It may be damaged - download the class workbook from this app again.")
     if not stages:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "This is not a workbook from this app. "
                             "Use 'Sync Roster' and then 'Download Excel' to get one.")
@@ -298,11 +320,10 @@ def _workbook_stages(teacher: Teacher, path) -> List[str]:
 @router.post("/upload/validate", response_model=ValidationReportResponse)
 def validate_upload(file: UploadFile = File(...), teacher: Teacher = Depends(require_teacher)):
     """Saves the uploaded workbook and checks every student against the portal (nothing is written)."""
-    if not file.filename.endswith(".xlsx"):
+    if not file.filename.lower().endswith(".xlsx"):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Only .xlsx files are supported.")
     path = _upload_path(teacher, file.filename)
-    with open(path, "wb") as out:
-        shutil.copyfileobj(file.file, out)
+    _save_upload(file, path)
     _workbook_stages(teacher, path)
     try:
         report = upload_jobs.check_workbook(_portal(teacher), path, teacher.id)

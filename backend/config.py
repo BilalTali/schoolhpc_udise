@@ -78,6 +78,9 @@ COOKIE_SECURE = os.getenv("HPC_COOKIE_SECURE", "false").lower() == "true"   # se
 # and to be removed before any paid launch (PARAKH has not approved automated logins).
 AUTO_CAPTCHA = os.getenv("HPC_AUTO_CAPTCHA", "false").lower() == "true"
 
+# Largest workbook a teacher may upload (M-6).
+MAX_UPLOAD_BYTES = int(float(os.getenv("HPC_MAX_UPLOAD_MB", "20")) * 1024 * 1024)
+
 # At most this many requests per second to PARAKH from one portal login (M-3: 1.5 unless .env says otherwise).
 DEFAULT_PORTAL_MAX_PER_SECOND = 1.5
 PORTAL_MAX_PER_SECOND = float(os.getenv("HPC_PORTAL_MAX_PER_SECOND", str(DEFAULT_PORTAL_MAX_PER_SECOND)))
