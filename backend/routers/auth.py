@@ -30,15 +30,16 @@ def register_school(payload: SchoolRegisterRequest, db: Session = Depends(get_db
     if existing_udise:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"A school with UDISE Code '{payload.udise_code}' is already registered (School: {existing_udise.school_name}). Each school can register only once."
+            detail="This UDISE code is already registered. Each school can register only once - ask your school's "
+                   "admin to sign in, or contact support."      # never another school's name (L-2)
         )
 
     # 2. Enforce admin email uniqueness
-    existing_email = db.query(School).filter(School.admin_email == payload.admin_email).first()
+    existing_email = db.query(School).filter(School.admin_email == payload.admin_email.strip().lower()).first()
     if existing_email:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"An account with admin email '{payload.admin_email}' already exists."
+            detail="An account with this admin email already exists."
         )
 
     # 3. Create School entity with hashed password
