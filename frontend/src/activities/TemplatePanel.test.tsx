@@ -20,12 +20,14 @@ function job(students: ReturnType<typeof student>[], status = "COMPLETED") {
 }
 
 function fakeTemplate(initial: { job: unknown; settings_complete: boolean; settings_missing?: string[] }) {
-  const state = { ...initial, settings_missing: initial.settings_missing || [], calls: [] as { method: string; path: string }[], afterPost: null as unknown };
+  const state = { ...initial, settings_missing: initial.settings_missing || [], calls: [] as { method: string; path: string }[], afterPost: null as unknown,
+                  precheck: { stage: "Preparatory", students: 2, complete: 2, items: [] } as unknown };
   const fetchImpl = async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input));
     const path = url.pathname.replace("/api/v1", "") + url.search;
     const method = init?.method || "GET";
     state.calls.push({ method, path });
+    if (path === "/teacher/template/Preparatory/precheck") return json(200, state.precheck);
     if (path === "/teacher/template/Preparatory/check" && method === "GET")
       return json(200, { job: state.job, settings_complete: state.settings_complete, settings_missing: state.settings_missing });
     if (path === "/teacher/template/Preparatory/check" && method === "POST") {
@@ -119,6 +121,29 @@ describe("Template panel", () => {
     fake.state.job = job([student("1", true), student("2", false), student("3", true)]);
     expect(await screen.findByText(/Ready as of/, {}, { timeout: 3000 })).toHaveTextContent("2 of 3");
     expect(fake.state.calls.filter((c) => c.method !== "GET")).toEqual([{ method: "POST", path: "/teacher/template/Preparatory/check" }]);
+    expect(fake.state.calls.some((c) => c.path === "/teacher/template/Preparatory/precheck")).toBe(true);   // looked first
+  });
+
+  it("before checking it lists every empty answer with where to fix it, and starts only when asked", async () => {
+    const { user, fake } = setup({ job: null, settings_complete: true });
+    await screen.findByText("Check the class first.");
+    fake.state.precheck = { stage: "Preparatory", students: 3, complete: 1, items: [
+      { where: "Excel file - sheet 'Preparatory', column 'Mathematics: summative marks obtained'", part: "D - HPC Credit",
+        question: "Mathematics: summative marks obtained",
+        students: [{ student_id: "2", student_name: "STUDENT 2", grade: "Grade 5", section: "A" }] },
+      { where: "Activities (tab 2) - Part B answers", part: "B - Activity", question: "Self-assessment: I am proud of my work",
+        students: [{ student_id: "3", student_name: "STUDENT 3", grade: "Grade 4", section: "B" }] }] };
+    fake.state.afterPost = job([student("1", true)], "RUNNING");
+    await user.click(screen.getByRole("button", { name: "Check the class" }));
+    const found = await screen.findByRole("region", { name: "Preparatory: before the check" });
+    expect(found).toHaveTextContent("1 of 3 students have every required answer. 2 answers are empty");
+    expect(found).toHaveTextContent("Excel file - sheet 'Preparatory', column 'Mathematics: summative marks obtained'");
+    expect(found).toHaveTextContent("Activities (tab 2) - Part B answers");
+    expect(found).toHaveTextContent("Grade 4 Sec B - STUDENT 3 (ID 3)");
+    expect(fake.state.calls.some((c) => c.method === "POST")).toBe(false);      // nothing started yet
+    await user.click(within(found).getByRole("button", { name: "Start the check anyway" }));
+    await waitFor(() => expect(fake.state.calls.filter((c) => c.method === "POST")).toHaveLength(1));
+    expect(screen.queryByRole("region", { name: "Preparatory: before the check" })).not.toBeInTheDocument();
   });
 
   it("has no axe violations", async () => {

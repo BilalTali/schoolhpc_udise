@@ -7,14 +7,17 @@ a server-side DRAFT per teacher, academic session and student - nothing goes to 
 until the teacher submits, which runs the same sync as a workbook upload.
 """
 import json
+import random
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from backend.hpc import sync
 from backend.hpc.fields import Field
+from backend.hpc.suggestions import FILL_ONLY, has_suggestions, mixable, multi_mix, record_kind, suggestions_for
 from backend.hpc.portal import Portal, stage_code
 from backend.hpc.stages import activity_grid, get_stage
 from backend.hpc.stages.common import Lookups
@@ -25,6 +28,7 @@ LIST_KINDS = ("multi", "flags")
 _LOOKUP_TTL = 12 * 60 * 60                 # PARAKH's dropdown lists rarely change
 _lookup_cache: Dict[Tuple[str, str], Tuple[float, Lookups]] = {}
 _lock = threading.Lock()
+_dob_seen: Dict[tuple, str] = {}           # (owner, session, stage, student) -> date of birth read from PARAKH
 
 
 # ---------------------------------------------------------------------------
@@ -57,6 +61,13 @@ def check_session(client: Portal, session: Optional[str], writing: bool) -> str:
 # ---------------------------------------------------------------------------
 # Lookups (dropdown lists) are slow to load, so they are cached per teacher and stage
 # ---------------------------------------------------------------------------
+
+def cached_lookups(owner: str, stage: str) -> Optional[Lookups]:
+    """The lists already loaded for this teacher and stage (e.g. by the upload check), without asking PARAKH."""
+    with _lock:
+        hit = _lookup_cache.get((owner, stage_code(stage)))
+    return hit[1] if hit and time.time() - hit[0] < _LOOKUP_TTL else None
+
 
 def lookups_for(owner: str, client: Portal, stage: str) -> Lookups:
     key = (owner, stage_code(stage))
@@ -142,7 +153,13 @@ def delete_draft(teacher_id: str, session: str, stage: str, student_id: str) -> 
 
 def field_meta(f: Field) -> Dict[str, Any]:
     return {"key": f.key, "label": f.label, "kind": f.kind, "options": list(f.options),
-            "max_len": f.max_len, "required": f.required, "multiple": f.kind in LIST_KINDS}
+            "max_len": f.max_len, "required": f.required, "multiple": f.kind in LIST_KINDS,
+            "suggestions": suggestions_for(f.key, f.max_len, f.label) if not f.options else [],
+            "mixable": mixable(f.key, f.label),  # "Mix" may hand answers out at random (not for facts like mother tongue)
+            "from_records": record_kind(f.label),   # name / age / friend: "Mix all" fills it from the app's records
+            # a several-option question Mix may fill: which options, and how many each student gets
+            "mix_pool": multi_mix(f.key, f.options)[0] if f.kind in LIST_KINDS else [],
+            "mix_pick": multi_mix(f.key, f.options)[1] if f.kind in LIST_KINDS else 0}
 
 
 def to_api_value(f: Field, value: Any) -> Any:
@@ -161,17 +178,23 @@ def to_cell_value(f: Field, value: Any) -> Any:
     return value
 
 
-# Bulk entry covers answers where most of the class picks the same option and only a few differ:
-# mother tongue, plus every pick-from-a-list question in A3/A4 (feelings, peer and parent answers,
-# resources, support) and the Part C levels. Not Part B (set on the Activities tab), not names or
-# relations (they differ per student), not class settings (medium, rural/urban, declaration).
-COMMON_TEXT = ("a1_mother_tongue",)
+# Bulk entry covers answers where most of the class picks the same option and only a few differ: every
+# pick-from-a-list question in A3/A4 (feelings, peer and parent answers, resources, support) and the Part C levels,
+# and every text answer the app has ready phrases for (backend/hpc/suggestions.py: mother tongue, the "all about
+# me" favourites and goals, ambition, home support, Part C remarks ...). Not names, ages, friends or relations
+# (they differ per student) - except name, age and Foundational friends, which "Mix all" takes from the app's records
+# - and where the student lives (FILL_ONLY: "Apply to all" with the village); not class settings, not marks.
+# Part B's answers (self-assessment, reflection, strengths, "I learnt" ...) are all class-wide, text included -
+# shown on the Activities tab, next to the activities they belong to (the Excel file leaves Part B out, and
+# PARAKH counts an activity finished only when they are filled).
 COMMON_PARTS = ("A3", "A4", "C")
 COMMON_KINDS = ("choice", "inlist", "multi", "flags")
 
 
 def is_common(part_code: str, f: Field) -> bool:
-    return f.key in COMMON_TEXT or (part_code in COMMON_PARTS and f.kind in COMMON_KINDS)
+    return part_code == "B" or (part_code == "A2" and f.kind == "choice") \
+        or (f.kind == "text" and (has_suggestions(f.key, f.label) or bool(record_kind(f.label)) or f.label in FILL_ONLY)) \
+        or (part_code in COMMON_PARTS and f.kind in COMMON_KINDS)
 
 
 def _common_fields(stage: str, lookups: Lookups) -> Dict[str, Field]:
@@ -356,6 +379,175 @@ def in_class(client: Portal, teacher_id: str, stage: str, lookups: Lookups) -> s
     return {str(s["student_id"]) for s in class_list(client, teacher_id, stage, lookups)}
 
 
+def _blank(value: Any) -> bool:
+    return (isinstance(value, list) and not value) or str(value if value is not None else "").strip() in ("", "[]")
+
+
+def part_progress(client: Portal, owner: str, teacher_id: str, session: str, stage: str, part_code: str) -> Dict[str, Any]:
+    """For each class-wide field of a part: how many students have an answer (the draft's, else PARAKH's as
+    stored), so the screen can mark a question done or say how many are left."""
+    lookups = lookups_for(owner, client, stage)
+    part = next((p for p in get_stage(stage).PARTS if p.code == part_code), None)
+    if part is None:
+        from fastapi import HTTPException, status
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Unknown part '{part_code}'.")
+    fields = [f for f in part.fields(lookups) if is_common(part.code, f)]
+    students = class_list(client, teacher_id, stage, lookups)
+    raw, _ = card_store.class_parts(client, owner, session, stage, [s["student_id"] for s in students], [part.col], False)
+    filled = {f.key: 0 for f in fields}
+    for s in students:
+        fd = part.load(raw[s["student_id"]][part.col])
+        draft = (load_draft(teacher_id, session, stage, s["student_id"]) or {}).get("values") or {}
+        for f in fields:
+            if not _blank(draft[f.key] if f.key in draft else f.read(fd)):
+                filled[f.key] += 1
+    return {"total": len(students),
+            "fields": {f.key: {"filled": filled[f.key], "required": f.required} for f in fields}}
+
+
+def bulk_mix(client: Portal, owner: str, teacher_id: str, session: str, stage: str, keys: List[str], replace: bool,
+             apply: bool) -> Dict[str, Any]:
+    """Every listed class-wide question at once: each student gets one of the question's suggestions (text) or
+    options (a single-choice question), handed out at random so each is used about equally. Only empty answers
+    unless replace. Part B's several-option assessment lists get a few options each (suggestions.MULTI_MIX); facts
+    about a student (mother tongue, resources at home ...) are not mixed - except those the app's records answer:
+    name (the class list), age (the date of birth on PARAKH) and, in Foundational, five classmates as friends.
+    A student never gets the same phrase twice in one go (Preparatory's five "things about me"). Without apply it
+    only counts; with apply each student's answers are saved in one draft save."""
+    lookups = lookups_for(owner, client, stage)
+    index = _common_fields(stage, lookups)
+    part_of = {f.key: p for p in get_stage(stage).PARTS for f in p.fields(lookups)}
+    mixed, skipped = {}, []
+    for key in keys:
+        f = index.get(key)
+        if f is None:
+            skipped.append({"key": key, "label": key, "reason": "not a class-wide question"})
+            continue
+        pick = 1
+        if record_kind(f.label):
+            mixed[key] = (f, [], 1)                      # from the records, worked out per student below
+            continue
+        if f.kind in LIST_KINDS:
+            pool, pick = multi_mix(f.key, f.options)
+        else:
+            pool = suggestions_for(f.key, f.max_len, f.label) if not f.options else list(f.options)
+        if f.label in FILL_ONLY:
+            skipped.append({"key": key, "label": f.label, "reason": "where each student lives - type it and use 'Apply to all'"})
+        elif not mixable(f.key, f.label):
+            skipped.append({"key": key, "label": f.label, "reason": "a fact about each student - fill it yourself"})
+        elif f.kind in LIST_KINDS and not pool:
+            skipped.append({"key": key, "label": f.label, "reason": "several options can be ticked - fill it yourself"})
+        elif len(pool) < 2:
+            skipped.append({"key": key, "label": f.label, "reason": "nothing to mix"})
+        else:
+            mixed[key] = (f, pool, pick)
+    students = class_list(client, teacher_id, stage, lookups)
+    wants_age = any(record_kind(f.label) == "age" for f, _, _ in mixed.values())
+    a1 = next((p for p in get_stage(stage).PARTS if p.code == "A1"), None)
+    cols = sorted({part_of[k].col for k in mixed} | ({a1.col} if wants_age and a1 else set()))
+    raw, _ = card_store.class_parts(client, owner, session, stage, [s["student_id"] for s in students], cols, False) \
+        if cols else ({s["student_id"]: {} for s in students}, None)
+    rng = random.Random()
+    rounds: Dict[str, List[str]] = {k: [] for k in mixed}
+
+    def draw(key: str) -> str:                           # a shuffled round of the pool, again and again
+        if not rounds[key]:
+            rounds[key] = list(mixed[key][1])
+            rng.shuffle(rounds[key])
+        return rounds[key].pop()
+
+    classmates: Dict[tuple, List[str]] = {}
+    for s in students:                                    # first names, per grade and section
+        first = (s.get("student_name") or "").split()
+        if first:
+            classmates.setdefault((s.get("grade"), s.get("section")), []).append(first[0].title())
+
+    def from_records(f: Field, s: Dict[str, Any], loaded: Dict[str, Any], taken: List[str]) -> Any:
+        kind = record_kind(f.label)
+        name = " ".join(w.title() for w in (s.get("student_name") or "").split())
+        if kind == "name":
+            return name if not f.max_len or len(name) <= f.max_len else name.split()[0][:f.max_len]
+        if kind == "age":
+            dob = dobs.get(s["student_id"], "")
+            try:
+                born = datetime.strptime(dob[:10], "%Y-%m-%d").date()
+            except ValueError:
+                return ""
+            today = datetime.now(timezone.utc).date()
+            return str(today.year - born.year - ((today.month, today.day) < (born.month, born.day)))
+        if kind == "friend":
+            mine = name.split()[0] if name else ""
+            pool = [n for n in classmates.get((s.get("grade"), s.get("section")), []) if n != mine and n not in taken]
+            return rng.choice(pool)[:f.max_len or None] if pool else ""
+        return ""
+
+    def next_value(key: str, taken: List[str]):
+        f, _, pick = mixed[key]
+        if f.kind not in LIST_KINDS:
+            value = draw(key)
+            for _ in range(len(mixed[key][1])):           # not the same phrase twice for one student
+                if value not in taken:
+                    break
+                value = draw(key)
+            return value
+        chosen: List[str] = []
+        while len(chosen) < pick:                         # several different options for one student
+            option = draw(key)
+            if option not in chosen:
+                chosen.append(option)
+        return [o for o in f.options if o in chosen]      # in the question's own order
+
+    # dates of birth: Part A1 when PARAKH has it, else the class list (kept since its last fetch), else the
+    # student's record - read in parallel, once
+    dobs: Dict[str, str] = {}
+    if wants_age and a1 is not None:
+        missing = []
+        for s in students:
+            sid = s["student_id"]
+            gen = (a1.load(raw[sid].get(a1.col)) or {}).get("gen") or []
+            dobs[sid] = str(gen[4] if len(gen) > 4 and gen[4]
+                            else s.get("dob") or _dob_seen.get((owner, session, stage, sid), ""))   # class list, then memory
+            if not dobs[sid]:
+                missing.append(sid)
+
+        def record_dob(sid: str) -> str:
+            try:
+                return str((client.student(stage, sid).get("stu_info") or {}).get("dob") or "")
+            except Exception:
+                return ""                                 # no age for this student; the others still get theirs
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            for sid, dob in zip(missing, pool.map(record_dob, missing)):
+                dobs[sid] = dob
+                if dob:
+                    _dob_seen[(owner, session, stage, sid)] = dob
+
+    parts_by_col = {part_of[k].col: part_of[k] for k in mixed}
+    changes: Dict[str, Dict[str, Any]] = {}
+    filled = {k: 0 for k in mixed}
+    for s in students:
+        draft = (load_draft(teacher_id, session, stage, s["student_id"]) or {}).get("values") or {}
+        loaded = {c: part.load(raw[s["student_id"]].get(c)) for c, part in parts_by_col.items()}
+        if wants_age and a1 is not None:
+            loaded[a1.col] = a1.load(raw[s["student_id"]].get(a1.col))
+        taken: List[str] = []                             # what this student already got in this go
+        for key, (f, _, _) in mixed.items():
+            current = draft[key] if key in draft else to_api_value(f, f.read(loaded[part_of[key].col]))
+            if not replace and not _blank(current):
+                continue
+            value = from_records(f, s, loaded, taken) if record_kind(f.label) else next_value(key, taken)
+            if _blank(value):
+                continue                                  # no record for it (no date of birth ...)
+            changes.setdefault(s["student_id"], {})[key] = value
+            taken.append(value if isinstance(value, str) else "")
+            filled[key] += 1
+    if apply:
+        for sid, values in changes.items():
+            save_draft(teacher_id, session, stage, sid, values)
+    return {"applied": apply, "students": len(changes), "cells": sum(filled.values()),
+            "fields": [{"key": k, "label": mixed[k][0].label, "filled": filled[k]} for k in mixed],
+            "skipped": skipped}
+
+
 def bulk_read(client: Portal, owner: str, teacher_id: str, session: str, stage: str, key: str,
               refresh: bool = False) -> Dict[str, Any]:
     lookups = lookups_for(owner, client, stage)
@@ -375,8 +567,15 @@ def bulk_read(client: Portal, owner: str, teacher_id: str, session: str, stage: 
                 "portal_value": to_api_value(f, portal_value), "in_draft": in_draft}
 
     check = card_store.start_check(client, owner, session, stage, [s["student_id"] for s in students], [part.col])
-    return {"field": {**field_meta(f), "part": part.code, "part_title": part.title},
-            "rows": [value_for(s) for s in students], "read_at": read_at, "check": check}
+    meta = {**field_meta(f), "part": part.code, "part_title": part.title}
+    if f.label in FILL_ONLY:                         # where students live: the school's town and district to start from
+        places = []
+        for s in students:
+            for place in (s.get("school_place") or "", (s.get("school_place") or "").split(",")[0].strip()):
+                if place and (not f.max_len or len(place) <= f.max_len) and place not in places:
+                    places.append(place)
+        meta["suggestions"] = places
+    return {"field": meta, "rows": [value_for(s) for s in students], "read_at": read_at, "check": check}
 
 
 def levels_read(client: Portal, owner: str, teacher_id: str, session: str, stage: str,
@@ -385,7 +584,7 @@ def levels_read(client: Portal, owner: str, teacher_id: str, session: str, stage
     student's values (the draft's where there is one, else PARAKH's as stored)."""
     lookups = lookups_for(owner, client, stage)
     part = next(p for p in get_stage(stage).PARTS if p.code == "C")
-    fields = [f for f in part.fields(lookups) if is_common("C", f)]
+    fields = [f for f in part.fields(lookups) if is_common("C", f) and f.kind != "text"]   # levels; remarks: bulk entry
     subjects: Dict[str, Dict[str, Any]] = {}
     for f in fields:
         name, _, ability = f.label.partition(":")
@@ -417,7 +616,8 @@ def levels_write(client: Portal, owner: str, teacher_id: str, session: str, stag
                  values: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
     """Saves Part C levels for many students into their drafts. Only Part C level fields are accepted."""
     lookups = lookups_for(owner, client, stage)
-    allowed = {f.key for p in get_stage(stage).PARTS if p.code == "C" for f in p.fields(lookups) if is_common("C", f)}
+    allowed = {f.key for p in get_stage(stage).PARTS if p.code == "C" for f in p.fields(lookups)
+               if is_common("C", f) and f.kind != "text"}
     saved, problems = [], {}
     mine = in_class(client, teacher_id, stage, lookups)
     for student_id, per_key in values.items():

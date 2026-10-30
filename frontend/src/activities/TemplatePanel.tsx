@@ -3,8 +3,10 @@ import { AlertCircle, CheckCircle2, Download, FileSpreadsheet, RefreshCw } from 
 import { ApiError, apiFetch, call } from "../api";
 import type { Api } from "../api";
 import { useConfirm } from "./useConfirm";
+import { PrecheckView } from "./Precheck";
+import type { PrecheckResult } from "./Precheck";
 
-// "Download template (Part B complete students only)": checks the class (reads PARAKH only), then
+// "Download template (Part B complete students only)": checks the class (from the cards the app keeps), then
 // offers the Excel with just the students whose Part B passes the real save's checks.
 
 interface CheckStudent {
@@ -45,6 +47,11 @@ export function TemplatePanel({ api, stage, total, onFix, onOpenSettings }: {
   const [busy, setBusy] = useState(false);
   const [tick, setTick] = useState(0);              // bumped to poll again while a check runs
   const [confirmUi, confirm] = useConfirm();
+  const [pre, setPre] = useState<PrecheckResult | null>(null);   // empty answers found before the check
+  const [preBusy, setPreBusy] = useState(false);
+  const [picking, setPicking] = useState(false);              // "Download chosen students": the list is open
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [find, setFind] = useState("");
   const timer = useRef<number | undefined>(undefined);
   const alive = useRef(true);
 
@@ -66,8 +73,11 @@ export function TemplatePanel({ api, stage, total, onFix, onOpenSettings }: {
     return () => { alive.current = false; window.clearTimeout(timer.current); };
   }, [refresh, tick]);
 
-  const check = async () => {
+  // "Check": first every empty required answer from what the app holds, with where to fix it; the check itself
+  // starts when there is nothing missing, or when the teacher starts it anyway
+  const startCheck = async () => {
     setError(null);
+    setPre(null);
     try {
       await call(api, "POST", `/teacher/template/${stage}/check`);
       refresh();
@@ -75,10 +85,23 @@ export function TemplatePanel({ api, stage, total, onFix, onOpenSettings }: {
       setError(e.message);
     }
   };
+  const check = async () => {
+    setError(null);
+    setPreBusy(true);
+    try {
+      const result = await call<PrecheckResult>(api, "GET", `/teacher/template/${stage}/precheck`);
+      if (result.items.length) setPre(result);
+      else await startCheck();
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setPreBusy(false);
+    }
+  };
 
-  const download = async (all: boolean) => {
+  const download = async (all: boolean, ids?: string[]) => {
     const job = status?.job;
-    if (all && job) {
+    if (all && job && !ids) {
       const notReady = job.students.filter((s) => !s.ready).length;
       const ok = await confirm({ title: "Download with every student?", confirmLabel: "Download all",
         message: `${notReady} student${notReady === 1 ? " is" : "s are"} not ready. They will be marked in the Problems column, and on upload they will be skipped until their Part B is complete.` });
@@ -87,7 +110,9 @@ export function TemplatePanel({ api, stage, total, onFix, onOpenSettings }: {
     setBusy(true);
     setError(null);
     try {
-      const res = await apiFetch(`/teacher/template/${stage}/download?include=${all ? "all" : "ready"}${all ? "&confirmed=true" : ""}`, {}, api.base);
+      const query = ids ? `students=${encodeURIComponent(ids.join(","))}`
+        : `include=${all ? "all" : "ready"}${all ? "&confirmed=true" : ""}`;
+      const res = await apiFetch(`/teacher/template/${stage}/download?${query}`, {}, api.base);
       if (res.status === 401) api.onUnauthorized();
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -96,7 +121,7 @@ export function TemplatePanel({ api, stage, total, onFix, onOpenSettings }: {
       const url = URL.createObjectURL(await res.blob());
       const a = document.createElement("a");
       a.href = url;
-      a.download = `HPC_${stage}_template${all ? "_all" : ""}.xlsx`;
+      a.download = `HPC_${stage}_template${ids ? "_chosen" : all ? "_all" : ""}.xlsx`;
       a.click();
       URL.revokeObjectURL(url);
     } catch (e: any) {
@@ -110,14 +135,13 @@ export function TemplatePanel({ api, stage, total, onFix, onOpenSettings }: {
   const running = job?.status === "RUNNING";
   const settingsOk = !!status?.settings_complete;
   const notReady = job?.status === "COMPLETED" ? job.students.filter((s) => !s.ready) : [];
-  const minutes = Math.max(1, Math.round((total * 7) / 1.5 / 60));
   const why = !settingsOk ? "Finish the class settings first." : !job || job.status !== "COMPLETED" ? "Check the class first."
     : job.ready === 0 ? "No student's Part B is complete yet - see the list below." : "";
 
   return (
     <section className="tp" aria-labelledby="tp-title">
       <h3 id="tp-title" className="lib-section-title"><FileSpreadsheet size={18} aria-hidden="true" /> Download the Excel template</h3>
-      <p className="lib-muted">The file has only the students whose Part B is complete, so the upload does not fail on students who are not ready. Part B and the class settings go in as locked sheets; you fill A1, A2{stage !== "Foundational" ? ", A3" : ""}{stage === "Middle" ? ", A4" : ""}, C{stage !== "Foundational" ? " and the marks obtained" : ""}.</p>
+      <p className="lib-muted">The file has only the students whose Part B is complete, so the upload does not fail on students who are not ready. Part B goes in as a locked sheet; the class settings can be changed on the Settings sheet (the upload uses them and saves them here); you fill A1, A2{stage !== "Foundational" ? ", A3" : ""}{stage === "Middle" ? ", A4" : ""}, C{stage !== "Foundational" ? " and the marks obtained" : ""}.</p>
 
       {status && !settingsOk && (
         <div className="alert-box alert-warning lib-inline-alert">
@@ -128,13 +152,15 @@ export function TemplatePanel({ api, stage, total, onFix, onOpenSettings }: {
       )}
 
       <div className="tp-row">
-        <button type="button" className="btn btn-outline" onClick={check} disabled={running}>
-          <RefreshCw size={14} aria-hidden="true" className={running ? "spin" : ""} /> {job ? "Check the class again" : "Check the class"}
+        <button type="button" className="btn btn-outline" onClick={check} disabled={running || preBusy}>
+          <RefreshCw size={14} aria-hidden="true" className={running || preBusy ? "spin" : ""} />
+          {preBusy ? " Looking for empty answers…" : job ? " Check the class again" : " Check the class"}
         </button>
-        <span className="lib-muted">Reads each student's card from PARAKH (nothing is saved) – about {minutes} minute{minutes === 1 ? "" : "s"} for {total} students.</span>
+        <span className="lib-muted">Uses the cards the app already keeps, so it takes seconds; only a student not read yet is read from PARAKH. Nothing is saved – the upload checks every student against PARAKH again.</span>
       </div>
 
       <div aria-live="polite">
+        {pre && <PrecheckView result={pre} onStart={startCheck} onClose={() => setPre(null)} />}
         {running && job && (
           <div className="lib-sync-progress">
             <div className="lib-sync-step">Checking {job.done} of {job.total} students{job.seconds_left ? ` · about ${Math.ceil(job.seconds_left / 60)} min left` : ""}</div>
@@ -160,8 +186,42 @@ export function TemplatePanel({ api, stage, total, onFix, onOpenSettings }: {
                 disabled={!settingsOk || job?.status !== "COMPLETED" || busy}>
           Download template (all students)…
         </button>
+        <button type="button" className="btn btn-outline" onClick={() => setPicking((p) => !p)} aria-expanded={picking}
+                disabled={!settingsOk || job?.status !== "COMPLETED" || busy}>
+          Download chosen students…
+        </button>
         {why && <span id="tp-why" className="lib-muted">{why}</span>}
       </div>
+
+      {picking && job?.status === "COMPLETED" && (
+        <div className="tp-pick" role="group" aria-label="Choose the students for the file">
+          <div className="tp-pick-bar">
+            <input type="search" className="form-input" placeholder="Find a name or ID" value={find}
+                   onChange={(e) => setFind(e.target.value)} aria-label="Find a student" />
+            <button type="button" className="btn btn-green" disabled={!picked.size || busy}
+                    onClick={() => download(false, [...picked])}>
+              <Download size={15} aria-hidden="true" /> Download {picked.size} chosen
+            </button>
+            {picked.size > 0 && <button type="button" className="btn btn-outline" onClick={() => setPicked(new Set())}>Clear</button>}
+          </div>
+          <ul>
+            {job.students.filter((s) => `${s.student_name || ""} ${s.student_id}`.toLowerCase().includes(find.trim().toLowerCase()))
+              .map((s) => (
+                <li key={s.student_id}>
+                  <label>
+                    <input type="checkbox" checked={picked.has(s.student_id)}
+                           onChange={(e) => setPicked((prev) => {
+                             const next = new Set(prev);
+                             if (e.target.checked) next.add(s.student_id); else next.delete(s.student_id);
+                             return next;
+                           })} />
+                    {" "}<b>{s.student_name || "Student"}</b> · ID {s.student_id}{!s.ready && <span className="lib-muted"> · Part B not complete</span>}
+                  </label>
+                </li>
+              ))}
+          </ul>
+        </div>
+      )}
 
       {notReady.length > 0 && (
         <details className="tp-list" open={notReady.length <= 8}>

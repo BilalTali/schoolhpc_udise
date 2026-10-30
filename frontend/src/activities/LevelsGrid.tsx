@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertCircle, CheckCircle2, RefreshCw, Save } from "lucide-react";
 import { call } from "../api";
 import type { Api } from "../api";
 import { useCardCheck } from "./useCardCheck";
-import { ConnectPrompt } from "./ConnectPrompt";
+import { ConnectPrompt, ReadingFromParakh } from "./ConnectPrompt";
 import { Modal } from "./Dialog";
 import { needsParakh } from "./parakhConnect";
 
@@ -39,8 +39,10 @@ export function LevelsGrid({ api, stage }: { api: Api; stage: string }) {
       setEdits({});
       setProblems({});
     } catch (e: any) {
-      if (needsParakh(e)) setOffline(true);
-      else setMessage({ type: "error", text: e.message });
+      if (needsParakh(e)) {
+        setOffline(true);           // nothing shown yet: the connect prompt; already shown: say why it did not refresh
+        setMessage({ type: "error", text: "The PARAKH connection has ended. Press 'Connect' at the top right, then 'Read again from PARAKH'." });
+      } else setMessage({ type: "error", text: e.message });
     } finally {
       setLoading(false);
     }
@@ -75,7 +77,9 @@ export function LevelsGrid({ api, stage }: { api: Api; stage: string }) {
     return () => window.removeEventListener("beforeunload", warn);
   }, [count]);
 
-  const set = (sid: string, key: string, v: string) => setEdits((e) => ({ ...e, [sid]: { ...(e[sid] || {}), [key]: v } }));
+  // stable, so a row only draws again when its own levels change (Middle: 35 students x 33 levels)
+  const set = useCallback((sid: string, key: string, v: string) =>
+    setEdits((e) => ({ ...e, [sid]: { ...(e[sid] || {}), [key]: v } })), []);
   const fillEmpty = () => {
     if (!fill || !data) return;
     const next = { ...edits };
@@ -84,13 +88,37 @@ export function LevelsGrid({ api, stage }: { api: Api; stage: string }) {
     }
     setEdits(next);
   };
+  // mixed levels: for each subject and ability, Beginner / Proficient / Advanced handed out at random, each about
+  // equally often (a shuffled round, again and again); empty levels only unless every level is redone. Saved with
+  // "Save levels", like any other change here.
+  const mixLevels = (everyLevel: boolean) => {
+    if (!data || !data.options.length) return;
+    const next = { ...edits };
+    for (const k of keys) {
+      let round: string[] = [];
+      for (const r of data.rows) {
+        if (!everyLevel && valueOf(r.student_id, k, r.values[k] || "")) continue;
+        if (!round.length) {
+          round = [...data.options];
+          for (let i = round.length - 1; i > 0; i--) {             // Fisher-Yates
+            const j = Math.floor(Math.random() * (i + 1));
+            [round[i], round[j]] = [round[j], round[i]];
+          }
+        }
+        next[r.student_id] = { ...(next[r.student_id] || {}), [k]: round.pop()! };
+      }
+    }
+    setEdits(next);
+    setMessage({ type: "success", text: `Mixed ${everyLevel ? "every" : "the empty"} level${everyLevel ? "" : "s"}. Check them in the table, then press Save levels.` });
+  };
 
   const abilities = useMemo(() => {
     const out: string[] = [];
     for (const sub of data?.subjects || []) for (const f of sub.fields) if (!out.includes(f.ability)) out.push(f.ability);
     return out;
   }, [data]);
-  const toggle = (sid: string) => setTicked((t) => { const n = new Set(t); if (n.has(sid)) n.delete(sid); else n.add(sid); return n; });
+  const toggle = useCallback((sid: string) =>
+    setTicked((t) => { const n = new Set(t); if (n.has(sid)) n.delete(sid); else n.add(sid); return n; }), []);
   const everySubject = (ability: string, level: string) => setPlan((p) => {
     const n = { ...p };
     for (const sub of data?.subjects || []) for (const f of sub.fields) if (f.ability === ability) n[f.key] = level;
@@ -167,7 +195,7 @@ export function LevelsGrid({ api, stage }: { api: Api; stage: string }) {
       </div>
 
       {!data ? (
-        loading && <div className="lib-skeleton" aria-busy="true" aria-label="Reading Part C levels"><div className="lib-skeleton-row"><span /><span /><span /></div></div>
+        loading && <ReadingFromParakh what="every student's Part C levels" />
       ) : (
         <>
           <div className="tp-row">
@@ -178,6 +206,10 @@ export function LevelsGrid({ api, stage }: { api: Api; stage: string }) {
               </select>
             </label>
             <button type="button" className="btn btn-outline" onClick={fillEmpty} disabled={!fill || !empty}>Fill {empty} empty</button>
+            <button type="button" className="btn btn-outline" onClick={() => mixLevels(false)} disabled={!empty}
+                    title="Beginner, Proficient and Advanced at random, each about equally often">Mix {empty} empty</button>
+            <button type="button" className="btn btn-outline" onClick={() => mixLevels(true)}
+                    title="Redoes every level with Beginner, Proficient and Advanced at random">Mix all levels</button>
             <span className="lib-muted">{count ? `${count} unsaved change${count === 1 ? "" : "s"}` : "No unsaved changes"}</span>
             {ticked.size > 0 && (
               <span className="lv-ticked" role="status">
@@ -263,30 +295,9 @@ export function LevelsGrid({ api, stage }: { api: Api; stage: string }) {
               </thead>
               <tbody>
                 {data.rows.map((r) => (
-                  <tr key={r.student_id} className={problems[r.student_id] ? "grid-row-todo" : ""}>
-                    <th scope="row" className="grid-sticky grid-student">
-                      <input type="checkbox" checked={ticked.has(r.student_id)} onChange={() => toggle(r.student_id)} aria-label={`Tick ${r.student_name}`} />
-                      <span className="grid-name">
-                        <b>{r.student_name}</b>
-                        <small>{[r.grade, r.section && `Sec ${r.section}`].filter(Boolean).join(" · ")}</small>
-                        {problems[r.student_id] && <small className="field-problem">{problems[r.student_id]}</small>}
-                      </span>
-                    </th>
-                    {data.subjects.flatMap((s) => s.fields.map((f) => {
-                      const v = valueOf(r.student_id, f.key, r.values[f.key] || "");
-                      const edited = v !== (r.values[f.key] || "");
-                      return (
-                        <td key={f.key} className={edited ? "row-edited" : ""}>
-                          <select className="form-select grid-level-select" value={v}
-                                  aria-label={`${r.student_name}, ${s.name}, ${f.ability}`}
-                                  onChange={(e) => set(r.student_id, f.key, e.target.value)}>
-                            <option value="">—</option>
-                            {data.options.map((o) => <option key={o} value={o}>{o[0]}</option>)}
-                          </select>
-                        </td>
-                      );
-                    }))}
-                  </tr>
+                  <LevelRow key={r.student_id} row={r} subjects={data.subjects} options={data.options}
+                            rowEdits={edits[r.student_id]} ticked={ticked.has(r.student_id)} problem={problems[r.student_id]}
+                            onSet={set} onToggle={toggle} />
                 ))}
               </tbody>
             </table>
@@ -297,3 +308,44 @@ export function LevelsGrid({ api, stage }: { api: Api; stage: string }) {
     </div>
   );
 }
+
+
+// One student's row. Drawn again only when its own levels, tick or problem change - not when another student's
+// level is changed (props are the same objects then).
+const LevelRow = memo(function LevelRow({ row: r, subjects, options, rowEdits, ticked, problem, onSet, onToggle }: {
+  row: LevelsData["rows"][number];
+  subjects: LevelsData["subjects"];
+  options: string[];
+  rowEdits: Record<string, string> | undefined;
+  ticked: boolean;
+  problem: string | undefined;
+  onSet: (sid: string, key: string, v: string) => void;
+  onToggle: (sid: string) => void;
+}) {
+  return (
+    <tr className={problem ? "grid-row-todo" : ""}>
+      <th scope="row" className="grid-sticky grid-student">
+        <input type="checkbox" checked={ticked} onChange={() => onToggle(r.student_id)} aria-label={`Tick ${r.student_name}`} />
+        <span className="grid-name">
+          <b>{r.student_name}</b>
+          <small>{[r.grade, r.section && `Sec ${r.section}`].filter(Boolean).join(" · ")}</small>
+          {problem && <small className="field-problem">{problem}</small>}
+        </span>
+      </th>
+      {subjects.flatMap((s) => s.fields.map((f) => {
+        const saved = r.values[f.key] || "";
+        const v = rowEdits?.[f.key] ?? saved;
+        return (
+          <td key={f.key} className={v !== saved ? "row-edited" : ""}>
+            <select className="form-select grid-level-select" value={v}
+                    aria-label={`${r.student_name}, ${s.name}, ${f.ability}`}
+                    onChange={(e) => onSet(r.student_id, f.key, e.target.value)}>
+              <option value="">—</option>
+              {options.map((o) => <option key={o} value={o}>{o[0]}</option>)}
+            </select>
+          </td>
+        );
+      }))}
+    </tr>
+  );
+});

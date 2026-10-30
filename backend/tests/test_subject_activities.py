@@ -64,14 +64,14 @@ def test_a_new_activity_uses_competencies_of_the_subjects_chosen_for_it(world):
 
 
 def test_the_activities_grid_offers_and_accepts_only_the_subjects_activities():
-    entries = [{"key": "P1", "label": "Story telling", "subjects": ["PSLS1"]},
-               {"key": "P2", "label": "Counting game", "subjects": ["PSLS3"]}]
-    allowed = {e["key"]: e["subjects"] for e in entries}
-    problems = activity_grid._check_values("Preparatory", {"b_act_PSLS3": "P1", "b_act_PSLS1": "P1"}, allowed, set())
+    entries = [{"key": "P1", "label": "Story telling", "subjects": ["PSLS1"], "grade_id": 7},
+               {"key": "P2", "label": "Counting game", "subjects": ["PSLS3"], "grade_id": 7}]
+    allowed = {e["key"]: e for e in entries}
+    problems = activity_grid._check_values("Preparatory", {"b_act_PSLS3": "P1", "b_act_PSLS1": "P1"}, allowed, set(), 7)
     assert "b_act_PSLS1" not in problems
     assert "Language 1 (R1)" in problems["b_act_PSLS3"] and "Mathematics" in problems["b_act_PSLS3"]
     # a choice the student already has stays allowed (nothing on PARAKH is undone by this rule)
-    assert activity_grid._check_values("Preparatory", {"b_act_PSLS3": "P1"}, allowed, {"P1"}) == {}
+    assert activity_grid._check_values("Preparatory", {"b_act_PSLS3": "P1"}, allowed, {"P1"}, 7) == {}
     assert activity_grid.subjects_for(["PSLS1", "PSLS3", "PSLS4"], ["PSLS3"]) == ["PSLS3"]
     assert activity_grid.subjects_for(["PSLS1"], None) == ["PSLS1"]           # no subjects known: as before
 
@@ -101,11 +101,34 @@ def test_defaults_fill_only_empty_subjects_and_never_override_a_choice():
     assert (values[grid.act_key("PSLS3")], source[grid.act_key("PSLS3")]) == ("P9", "portal")
 
 
-def test_a_subject_without_activities_of_its_own_can_take_any_activity():
-    allowed = {"P1": ["PSLS1"], "P2": ["PSLS3"]}
-    assert activity_grid._check_values("Preparatory", {"b_act_PSLS7": "P1"}, allowed, set()) == {}    # Other Learning Activities
-    assert "b_act_PSLS3" in activity_grid._check_values("Preparatory", {"b_act_PSLS3": "P1"}, allowed, set())
-    assert activity_grid.subjects_for(["PSLS1", "PSLS3", "PSLS7"], ["PSLS1"], {"PSLS1", "PSLS3"}) == ["PSLS1", "PSLS7"]
+def test_a_subject_takes_only_its_own_activities_even_when_it_has_none():
+    allowed = {"P1": {"subjects": ["PSLS1"], "grade_id": 7}, "P2": {"subjects": ["PSLS3"], "grade_id": 7}}
+    assert "b_act_PSLS7" in activity_grid._check_values("Preparatory", {"b_act_PSLS7": "P1"}, allowed, set(), 7)
+    assert activity_grid.subjects_for(["PSLS1", "PSLS3", "PSLS7"], ["PSLS1"]) == ["PSLS1"]
+
+
+def test_an_activity_is_only_for_its_own_grade():
+    allowed = {"P1": {"subjects": ["PSLS1"], "grade_id": 7}, "L9": {"subjects": ["PSLS1"], "grade_id": None},
+               "P85": {"subjects": None, "grade_id": None}}           # PARAKH's own lists: nothing known, not checked
+    assert activity_grid._check_values("Preparatory", {"b_act_PSLS1": "P1"}, allowed, set(), 7) == {}
+    wrong = activity_grid._check_values("Preparatory", {"b_act_PSLS1": "P1"}, allowed, set(), 8)
+    assert "for Grade 4, not Grade 5" in wrong["b_act_PSLS1"]
+    assert "no grade yet" in activity_grid._check_values("Preparatory", {"b_act_PSLS1": "L9"}, allowed, set(), 8)["b_act_PSLS1"]
+    assert activity_grid._check_values("Preparatory", {"b_act_PSLS1": "P85"}, allowed, set(), 8) == {}
+    assert activity_grid._check_values("Preparatory", {"b_act_PSLS1": "P1"}, allowed, {"P1"}, 8) == {}   # already on PARAKH
+    assert activity_grid.grade_id_of("Preparatory", {"grade": "Grade 5"}) == 8                      # older class lists
+    assert activity_grid.grade_id_of("Preparatory", {"grade": "Grade 5", "grade_id": 8}) == 8
+
+
+def test_default_activities_are_per_grade():
+    from backend.hpc.stages import activity_grid as grid
+
+    def resolve(key):
+        return None
+    resolve.defaults, resolve.defaults_by_grade = {"PSLS1": "P1"}, {7: {"PSLS1": "P1"}, 8: {}}
+    assert grid.defaults_for(resolve, 7) == {"PSLS1": "P1"} and grid.defaults_for(resolve, "8") == {}
+    assert grid.defaults_for(resolve, None) == {}                       # grade not known: nothing filled in
+    assert grid.defaults_for(lambda key: None, 7) is None                  # PARAKH's own lists: no defaults
 
 
 def test_a_new_activity_is_made_for_a_grade_and_a_subject_without_parakh_codes_takes_typed_ncf_codes(world):
@@ -124,3 +147,66 @@ def test_a_new_activity_is_made_for_a_grade_and_a_subject_without_parakh_codes_t
                        json={**body, "title": "Wrong grade", "grade_id": 9}).status_code == 422     # Grade 6 is Middle
     assert client.post(f"{API}/activity-library", headers=users["t1"],
                        json={**body, "title": "Bad code", "competencies": ["not a code!"]}).status_code == 422
+
+
+def test_activities_are_shown_by_name_and_code():
+    from backend.services import activity_library as lib
+    name = activity_grid.short_name                 # the grid: the library's label without the workbook key
+    assert name("Important Idea Circle (L2CG1,C-1.1) (#Ld3d2f493-d277-11f1-ae20-a44cc81641cb)") == "Important Idea Circle (L2CG1,C-1.1)"
+    assert name("TWCG4,C-4.1 (#P123)") == "TWCG4,C-4.1" and name("85: Conversation in pairs") == "Conversation in pairs"
+    # the name: after the codes in a title made here, else the title the activity's text gives
+    assert lib.activity_name("L2CG1,C-1.1 Important Idea Circle", "") == "Important Idea Circle"
+    assert lib.activity_name("Dance and Movement C-4.2 My Village Dance", "") == "My Village Dance"
+    assert lib.activity_name("FSCG1,C-1.2", "Text for Activity: Children wash hands.\n\nMagic Hands Wash\nChildren learn") \
+        == "Magic Hands Wash"
+    assert lib.activity_name("", "Activity Title: “Shape Detectives: Observe, Compare, Explain”\nStep 1") \
+        == "Shape Detectives: Observe, Compare, Explain"
+    assert lib.activity_name("", "Suggested Activity:\n“Safe or Unsafe?”\nIn this discussion") == "Safe or Unsafe?"
+    assert lib.activity_name("", "Task: \"The Double-Take Performance\"\nStudents") == "The Double-Take Performance"
+    assert lib._label("Important Idea Circle", "L2CG1,C-1.1 Important Idea Circle") == "Important Idea Circle (L2CG1,C-1.1)"
+    assert lib._label("Safe or Unsafe?", "CG 1-C1.6") == "Safe or Unsafe? (CG 1-C1.6)" and lib._label("", "TWCG4,C-4.1") == "TWCG4,C-4.1"
+    # no title in the text: no name (the code alone is shown; the school can give it a display name)
+    assert lib.activity_name("TWCG4,C-4.1", "Sequence of the Activity:\n1. Step 1- The teacher provides an overview") == ""
+
+
+def test_part_b_text_answers_offer_suggestions_that_fit():
+    from backend.hpc.stages import get_stage
+    from backend.services import hpc_cards
+    for stage in ("FOUNDATIONAL", "PREPARATORY", "MIDDLE"):
+        part_b = next(p for p in get_stage(stage).PARTS if p.code == "B")
+        for f in part_b.fields(None):
+            meta = hpc_cards.field_meta(f)
+            assert all(not f.max_len or len(s) <= f.max_len for s in meta["suggestions"]), f.key
+            if f.options:
+                assert meta["suggestions"] == []                # pick lists have their options
+    middle = {f.key: hpc_cards.field_meta(f) for f in next(p for p in get_stage("MIDDLE").PARTS if p.code == "B").fields(None)}
+    assert middle["b_learnt"]["suggestions"] and middle["b_interesting"]["suggestions"]
+    assert all(len(s) <= 60 for s in middle["b_interesting"]["suggestions"])
+
+
+def test_missing_part_b_answers_are_named_on_the_grid_row():
+    blank = {"part_b": None, "part_c": None}
+    parts = activity_grid._parts("Foundational", blank)
+    missing = activity_grid.answers_missing("Foundational", parts, {})
+    assert missing == ["Self: I liked doing this work", "Self: I found this work easy"]
+    assert activity_grid.answers_missing("Foundational", parts, {"b_sa_liked": "Yes", "b_sa_easy": "Yes"}) == []
+
+
+def test_mix_hands_out_only_safe_options_for_several_option_questions():
+    from backend.hpc.stages import get_stage
+    from backend.hpc.suggestions import multi_mix
+    fields = {f.key: f for f in next(p for p in get_stage("MIDDLE").PARTS if p.code == "B").fields(None)}
+    strengths, pick = multi_mix("b_strengths", fields["b_strengths"].options)
+    assert pick == 2 and "Any Other" not in strengths and "Collaboration" in strengths
+    barriers, pick = multi_mix("b_barriers", fields["b_barriers"].options)
+    assert pick == 1 and set(barriers) == {"Lack of Attention", "Lack of Preparation", "Undefined Goals"}
+    assert not {"Domestic Issues", "Severe illness or injury", "Inappropriate behavior in classroom", "None"} & set(barriers)
+    grid, pick = multi_mix("b_grid_awareness", fields["b_grid_awareness"].options)
+    assert pick == 2 and grid == list(fields["b_grid_awareness"].options)
+    assert multi_mix("a3_resources", ["Books", "TV", "Radio"]) == ([], 0)      # facts are never mixed
+    prep_a3 = {f.key: f for f in next(p for p in get_stage("PREPARATORY").PARTS if p.code == "A3").fields(None)}
+    support, pick = multi_mix("a3_support", prep_a3["a3_support"].options)
+    assert pick == 2 and "Numbers and Math" in support and "Other subject area" not in support
+    mid_a4 = {f.key: f for f in next(p for p in get_stage("MIDDLE").PARTS if p.code == "A4").fields(None)}
+    support, pick = multi_mix("a4_support", mid_a4["a4_support"].options)
+    assert pick == 2 and "Maths" in support and not {"Any other", "Managing difficult emotions"} & set(support)

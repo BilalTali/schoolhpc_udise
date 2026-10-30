@@ -5,7 +5,7 @@ import { ApiError, call } from "../api";
 import type { Api } from "../api";
 import { Modal } from "./Dialog";
 import { useConfirm } from "./useConfirm";
-import { CoverageBadge, SourceBadge } from "./Badges";
+import { PlaceBadges, SourceBadge } from "./Badges";
 import { ABILITIES, APPROACHES, LEVELS, SOURCE_LABEL, formatWhen } from "./types";
 import type { ActivityDetail, CodeOption, Rubric, ShareLevel, Subject } from "./types";
 
@@ -248,7 +248,7 @@ export function ActivityEditor({ api, stage, subjects, activityId, consentText, 
 
   return (
     <Modal wide title={title} onClose={close} footer={footer}
-           subtitle={detail && <span className="lib-badges"><SourceBadge source={detail.source} /><CoverageBadge activity={detail} />
+           subtitle={detail && <span className="lib-badges"><SourceBadge source={detail.source} /><PlaceBadges activity={detail} />
              {detail.edited_by_school && <span className="lib-badge lib-badge-edited">Changed by your school</span>}
              {detail.edited_by_me && <span className="lib-badge lib-badge-edited">Your version</span>}</span>}>
       {loadError ? (

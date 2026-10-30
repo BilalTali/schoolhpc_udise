@@ -36,7 +36,8 @@ def make_part_a1(stage_key: str) -> Part:
             Field("a1_mother_tongue", "Mother Tongue", ("gen", 16), max_len=lim["mother_tongue"], required=True),
             Field("a1_medium", "Medium of Instruction", ("gen", 17), "choice", lk.options(lk.medium), required=True),
             Field("a1_rural_urban", "Rural/Urban", ("gen", 18), "choice", lk.options(lk.location), required=True),
-            Field("a1_guardian_relation", "Mother/Father/Guardian", ("gen", 23), "choice", GUARDIAN, required=True),
+            Field("a1_guardian_relation", "Mother/Father/Guardian", ("gen", 23), "choice", GUARDIAN, required=True,
+                  default="Father"),                    # the PARAKH page pre-selects Father
             Field("a1_guardian_name", "Mother/Father/Guardian Name", ("gen", 24), max_len=lim["guardian_name"], required=True),
             Field("a1_udid", "UDID (if any)", ("gen", 21), max_len=lim["udid"]),
             *series("a1_working", "Working days", ("attn", "1"), MONTHS, kind="int"),

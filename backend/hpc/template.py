@@ -237,7 +237,7 @@ def _stage_sheets(wb, sec: Dict[str, Any], names: Dict[str, str], list_range, su
     _highlights(ws, columns, FIRST_DATA_ROW, last_row, max_cells, {str(n): subject for n, subject in marks_subjects},
                 list_range, names)
     ws.freeze_panes = f"D{FIRST_DATA_ROW}"
-    _protect(ws)
+    # not protected: the teacher may edit, add or delete anything here
 
     _exceptions_sheet(wb, students, exception_choices(stage, marks_subjects), list_range, names["exceptions"])
     _part_b_sheet(wb, stage, students, part_b, names["part_b"])
@@ -296,8 +296,9 @@ def _width(f) -> int:
 
 
 def _protect(ws):
-    """Locked cells (IDs, names, the hidden key row) cannot be changed; the teacher's cells were unlocked above.
-    Formatting stays allowed - wrap text, row heights, column widths, colours. No password: a guide, not a secret."""
+    """For the sheets that are only to read (How to use, Part B, the summary): locked, formatting still allowed.
+    The class sheets and Settings are not protected at all - the teacher may change, add or delete anything there
+    (the upload checks it all). No password: a guide, not a secret."""
     ws.protection.sheet = True
     ws.protection.formatCells = False
     ws.protection.formatColumns = False
@@ -330,7 +331,8 @@ def _how_to(ws, stages):
         + (" and the marks obtained." if stages != ["Foundational"] else "."),
         "Click a cell to see a short hint. For a list, pick from the dropdown or just type the first letters "
         "(n = No, y = Yes, prof = Proficient, adv = Advanced); the upload turns them into the full answer.",
-        "Grey cells and the grey sheets (Part B, Settings, Class summary) come from the web app and are not read back.",
+        "Grey cells and the grey sheets (Part B, Class summary) come from the web app and are not read back. On the Settings "
+        "sheet you may change the white cells (working days, max marks ...): the upload uses them for every student.",
         "A student who is different from the class settings (working days, medium, rural/urban, max marks)? "
         + ("Add a row on the 'Exceptions' sheet." if len(stages) == 1 else "Add a row on that stage's Exceptions sheet."),
         "Set Sync to 'No' for anyone you do not want to upload yet.",
@@ -377,7 +379,8 @@ def _settings_sheet(wb, stage, settings, marks_subjects, summary, sheet_name=SET
     ws.sheet_properties.tabColor = "64748B"
     ws["A1"] = f"Class settings - {stage}"
     ws["A1"].font = Font(name=FONT, bold=True, size=16, color=INK)
-    ws["A2"] = f"From the web app (change them there). Saved: {summary.get('settings_saved_at') or '-'}"
+    ws["A2"] = (f"Change the white cells here or in the web app; on upload this sheet is used for every student of the "
+                f"stage and becomes the app's class settings. From the web app: {summary.get('settings_saved_at') or '-'}")
     ws["A2"].font = Font(name=FONT, italic=True, color=MUTED)
     rows = [("Medium of Instruction", settings.get("medium", "")), ("Rural/Urban", settings.get("rural_urban", ""))]
     days = settings.get("working_days") or [None] * 12
@@ -399,10 +402,11 @@ def _settings_sheet(wb, stage, settings, marks_subjects, summary, sheet_name=SET
         else:
             cell = ws.cell(row=i, column=2, value=value)
             cell.font = Font(name=FONT, color=INK)
+            cell.protection = Protection(locked=False)    # the teacher may change a setting here (read back on upload)
         stripe = LOCKED_FILL if (i - first) % 2 == 0 else None
         for c in (name, cell):
             c.border = CELL_BORDER
-            if stripe is not None:
+            if stripe is not None and c is name:
                 c.fill = stripe
         cell.alignment = Alignment(horizontal="center", vertical="center")
         ws.row_dimensions[i].height = 20
@@ -411,8 +415,40 @@ def _settings_sheet(wb, stage, settings, marks_subjects, summary, sheet_name=SET
             max_cells[n] = f"'{sheet_name}'!$B${i}"
     ws.column_dimensions["A"].width = 44
     ws.column_dimensions["B"].width = 20
-    _protect(ws)
+    # not protected: the teacher may edit, add or delete anything here
     return ws, max_cells, total_cell
+
+
+def read_settings(wb, stages: List[str]) -> Dict[str, Dict[str, Any]]:
+    """{stage: class settings as the Settings sheet holds them} - the values the teacher may change there, in the
+    shape class_settings.validate takes. A stage without its Settings sheet is left out (the app's are used)."""
+    from backend.services.class_settings import marks_subjects
+    combined = len(stages) > 1
+    out: Dict[str, Dict[str, Any]] = {}
+    for stage in stages:
+        name = sheet_names(stage, combined)["settings"]
+        if name not in wb.sheetnames:
+            continue
+        subjects = {subject: n for n, subject in marks_subjects(stage)}
+        values: Dict[str, Any] = {"working_days": [None] * 12, "max_marks": {}}
+        for label, value in wb[name].iter_rows(min_row=4, max_col=2, values_only=True):
+            label = str(label or "").strip()
+            if isinstance(value, str):
+                value = value.strip()
+            if isinstance(value, float) and value.is_integer():
+                value = int(value)                      # Excel gives 22.0
+            if label == "Medium of Instruction":
+                values["medium"] = value or ""
+            elif label == "Rural/Urban":
+                values["rural_urban"] = value or ""
+            elif label == "Declaration":
+                values["declaration"] = value or ""
+            elif label.startswith("Working days - ") and label[len("Working days - "):] in MONTH_LABELS:
+                values["working_days"][MONTH_LABELS.index(label[len("Working days - "):])] = None if value in ("", None) else value
+            elif label.startswith("Max marks - ") and label[len("Max marks - "):] in subjects:
+                values["max_marks"][subjects[label[len("Max marks - "):]]] = None if value in ("", None) else value
+        out[stage] = values
+    return out
 
 
 def _exceptions_sheet(wb, students, choices, list_range, name=EXCEPTIONS_SHEET):

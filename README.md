@@ -22,11 +22,22 @@ Requirements: Python 3.11+, Node 18+, MySQL (XAMPP) running.
 pip install -r requirements.txt
 cd frontend && npm install && cd ..
 
-# terminal 1 - API on http://127.0.0.1:8000  (docs at /docs)
-python -m uvicorn backend.main:app --reload
+# everyday use - one server for the API and the web app, on http://127.0.0.1:8000
+cd frontend && npm run build && cd ..
+python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
+```
 
-# terminal 2 - web app on http://localhost:5173
-cd frontend && npm run dev
+Run it **without** `--reload` for real work: with it, the server restarts whenever a source file changes and
+waits for a running upload first, refusing every other request (sign-in too) until that upload ends. Keep it to
+**one** server process (no `--workers`): checks, live upload views and PARAKH's lists are kept in its memory.
+`HPC_WORKER_THREADS` (default 200) is how many requests and running uploads it handles at once. After changing
+the web app, run `npm run build` again (the server serves `frontend/dist`).
+
+For development (both reload on every change):
+
+```bash
+python -m uvicorn backend.main:app --reload          # API on http://127.0.0.1:8000  (docs at /docs)
+cd frontend && npm run dev                            # web app on http://localhost:5173
 ```
 
 Settings (database URL, secret) can go in `.env` - see `.env.example`.

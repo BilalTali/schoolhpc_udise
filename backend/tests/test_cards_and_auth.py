@@ -114,20 +114,52 @@ def test_bulk_entry(teacher_client):
     again = client.get(f"{API}/teacher/hpc-cards/Preparatory/bulk", params={"field": "a1_mother_tongue"}).json()
     assert again["rows"][0]["value"] == "Urdu" and again["rows"][0]["in_draft"] is True
     assert client.get(f"{API}/teacher/hpc-cards/Preparatory/bulk", params={"field": "zzz"}).status_code == 404
-    # Bulk entry is only for class-wide answers; names, relations and Part B are not offered.
-    for key in ("a1_guardian_relation", "a1_guardian_name", "a2_name", "b_self_1", "d_declaration", "a1_medium"):
+    # Bulk entry is only for class-wide answers; names, relations and class settings are not offered.
+    for key in ("a1_guardian_relation", "a1_guardian_name", "a3_peer1_name", "d_declaration", "a1_medium"):
         assert client.get(f"{API}/teacher/hpc-cards/Preparatory/bulk", params={"field": key}).status_code == 404, key
     assert client.put(f"{API}/teacher/hpc-cards/Preparatory/bulk",
-                      json={"field": "a2_name", "values": {"1001": "x"}}).status_code == 404
+                      json={"field": "a1_guardian_name", "values": {"1001": "x"}}).status_code == 404
     common = client.get(f"{API}/teacher/hpc-cards/Preparatory/fields", params={"common": True}).json()["parts"]
-    assert [p["code"] for p in common] == ["A1", "A3", "C"]
+    assert [p["code"] for p in common] == ["A1", "A2", "A3", "B", "C"]
     keys = {f["key"] for p in common for f in p["fields"]}
+    meta = {f["key"]: f for p in common for f in p["fields"]}
     assert {"a1_mother_tongue", "a3_feel_1", "a3_peer2_6", "a3_parent_11", "a3_resources", "a3_support",
             "c_PSLS1_awareness", "c_PSLS7_creativity"} <= keys
-    assert not keys & {"a1_guardian_relation", "a1_interests", "a3_peer1_name", "a3_resources_other", "c_PSLS1_remark"}
-    assert len(keys) == 1 + 7 + 12 + 1 + 11 + 1 + 21
+    # text answers with ready phrases are class-wide too: favourites, goals, each subject's remark ...
+    assert {"a2_fav_food", "a2_fav_festival", "a2_grow_up", "a2_idol", "c_PSLS1_remark", "c_PSLS7_remark"} <= keys
+    assert all(len(x) <= meta["a2_idol"]["max_len"] for x in meta["a2_idol"]["suggestions"])
+    # never: what differs per student (names, age, friends, relations), "other" boxes, marks
+    assert not keys & {"a1_guardian_relation", "a1_guardian_name", "a1_interests", "a3_peer1_name",
+                       "a3_resources_other", "d_1_obtained"}
+    # name and age are class-wide too: "Mix all" fills them from the class list and the date of birth
+    assert meta["a2_name"]["from_records"] == "name" and meta["a2_age"]["from_records"] == "age"
+    # Preparatory's "Things about me" (the hand) has its own short phrases, not Middle's "I live with my"
+    assert "I can draw" in meta["a2_about_1"]["suggestions"] and "My parents" not in meta["a2_about_1"]["suggestions"]
+    assert meta["a2_about_1"]["mixable"] is True
+    # mother tongue: suggestions to pick from, but never handed out at random
+    assert "Kashmiri" in meta["a1_mother_tongue"]["suggestions"] and meta["a1_mother_tongue"]["mixable"] is False
+    assert meta["c_PSLS1_remark"]["mixable"] is True and meta["c_PSLS1_remark"]["suggestions"]
+    part_b = {f["key"] for p in common if p["code"] == "B" for f in p["fields"]}
+    assert {"b_self_1", "b_self_8", "b_observation", "b_challenges"} <= part_b         # every Part B answer, text too
+    # the Part C levels grid holds only the levels; the remarks are bulk entry's
+    levels = client.get(f"{API}/teacher/hpc-cards/Preparatory/levels").json()
+    assert all(not f["key"].endswith("_remark") for subj in levels["subjects"] for f in subj["fields"])
     level = client.get(f"{API}/teacher/hpc-cards/Preparatory/bulk", params={"field": "c_PSLS3_awareness"}).json()
     assert level["field"]["part"] == "C" and level["field"]["options"] == ["Beginner", "Proficient", "Advanced"]
+
+    # Part B's self-assessment for the whole class (the Activities tab and the Excel file do not hold it);
+    # the class check and the upload take it from the draft, like the grid's choices
+    sa = client.get(f"{API}/teacher/hpc-cards/Preparatory/bulk", params={"field": "b_self_5"}).json()
+    assert sa["field"]["part"] == "B" and sa["field"]["required"] is True and sa["field"]["options"]
+    answer = sa["field"]["options"][0]
+    done = client.put(f"{API}/teacher/hpc-cards/Preparatory/bulk", json={"field": "b_self_5", "values": {"1001": answer}}).json()
+    assert done["saved"] == ["1001"]
+    again = client.get(f"{API}/teacher/hpc-cards/Preparatory/bulk", params={"field": "b_self_5"}).json()
+    assert again["rows"][0]["value"] == answer and again["rows"][0]["in_draft"] is True
+    # how many students have each Part B answer: the screen marks a question done or says how many are left
+    progress = client.get(f"{API}/teacher/hpc-cards/Preparatory/progress", params={"part": "B"}).json()
+    assert progress["total"] >= 1 and progress["fields"]["b_self_5"] == {"filled": 1, "required": True}
+    assert client.get(f"{API}/teacher/hpc-cards/Preparatory/progress", params={"part": "Z"}).status_code == 404
 
 
 def test_unknown_session_and_stage(teacher_client):
@@ -290,3 +322,42 @@ def test_students_this_login_cannot_open_are_counted_by_class():
     assert [r["id"] for r in p.roster("Foundational")] == [3]
     lookups = SimpleNamespace(grades=[{"id": 4, "grade_caption": "Grade 1"}], section_name=lambda sid: "A")
     assert sync.not_yours(p, "Foundational", lookups) == [{"grade": "Grade 1", "section": "A", "count": 2}]
+
+
+def test_mix_every_question_at_once(teacher_client):
+    """One click: every question on the screen gets mixed answers (only empty ones unless replace), one save."""
+    client, _ = teacher_client
+    url = f"{API}/teacher/hpc-cards/Preparatory/bulk-mix"
+    fields = ["a3_feel_1", "a3_feel_2", "a2_fav_festival", "a1_mother_tongue", "a3_resources", "b_self_1"]
+    preview = client.post(url, json={"fields": fields}).json()
+    assert preview["applied"] is False and preview["students"] >= 1
+    assert {f["key"] for f in preview["fields"]} == {"a3_feel_1", "a3_feel_2", "a2_fav_festival", "b_self_1"}
+    reasons = {s["key"]: s["reason"] for s in preview["skipped"]}
+    assert "fact about each student" in reasons["a1_mother_tongue"] and "several options" in reasons["a3_resources"]
+    before = client.get(f"{API}/teacher/hpc-cards/Preparatory/bulk", params={"field": "a3_feel_1"}).json()
+    assert before["rows"][0]["in_draft"] is False                              # the preview saved nothing
+
+    done = client.post(url, json={"fields": fields, "apply": True}).json()
+    assert done["applied"] is True and done["cells"] == preview["cells"]
+    row = client.get(f"{API}/teacher/hpc-cards/Preparatory/bulk", params={"field": "a3_feel_1"}).json()
+    assert row["rows"][0]["in_draft"] is True and row["rows"][0]["value"] in row["field"]["options"]
+    festival = client.get(f"{API}/teacher/hpc-cards/Preparatory/bulk", params={"field": "a2_fav_festival"}).json()
+    assert festival["rows"][0]["value"] in festival["field"]["suggestions"]
+    # everything is filled now: only-empty fills nothing more; replace fills them all again
+    assert client.post(url, json={"fields": fields}).json()["cells"] == 0
+    assert client.post(url, json={"fields": fields, "replace": True}).json()["cells"] == done["cells"]
+
+
+def test_mix_all_fills_name_and_age_from_records_and_never_repeats_a_phrase(teacher_client):
+    client, _ = teacher_client
+    url = f"{API}/teacher/hpc-cards/Preparatory/bulk-mix"
+    hand = [f"a2_about_{i}" for i in range(1, 6)]
+    done = client.post(url, json={"fields": ["a2_name", "a2_age", *hand], "apply": True}).json()
+    assert {f["key"] for f in done["fields"] if f["filled"]} >= {"a2_name", "a2_age", *hand}
+    rows = {k: client.get(f"{API}/teacher/hpc-cards/Preparatory/bulk", params={"field": k}).json()["rows"][0]
+            for k in ["a2_name", "a2_age", *hand]}
+    assert rows["a2_name"]["value"] == "Test Student"                       # the class list's name
+    assert rows["a2_age"]["value"].isdigit() and 5 <= int(rows["a2_age"]["value"]) <= 20      # from the date of birth
+    things = [rows[k]["value"] for k in hand]
+    assert len(set(things)) == 5                                              # never the same phrase twice
+

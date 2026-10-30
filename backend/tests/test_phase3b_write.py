@@ -141,7 +141,7 @@ def library(modified, owner="teacher_t1"):
             return None
         return {"portal_id": 85, "caption": CAPTION, "content": EDITED if modified else BANK_CONTENT, "is_global": True,
                 "usable": True, "modified": modified, "key": "P85"}
-    resolve.typed = {CAPTION: "P85"} if modified else {}
+    resolve.typed = {CAPTION: "P85"}                     # every library activity is known by its name
     resolve.owned = own_activities.load(owner)
     resolve.remember = lambda fd: own_activities.remember(owner, fd, resolve.typed)
     return resolve
@@ -166,13 +166,13 @@ def test_part_b_plan_shows_the_manual_copy_and_sends_nothing(part_b_setup, capsy
     fake, args, _ = part_b_setup
     assert w.part_b_plan(args) == 0
     out = capsys.readouterr().out
-    assert "On PARAKH now:" in out and "from the bank #85 (global)" in out
+    assert "On PARAKH now:" in out and "from the bank" not in out
     assert "The app would send:" in out and "MANUAL (no bank number), is_modified=True, library P85" in out
     assert "act_bank_map: []" in out and "Would send ONE request: part_b, current part 'mc'" in out
     assert "Nothing was sent" in out and fake.saved == []
 
 
-def test_step2_edited_activity_goes_on_as_manual_and_step4_takes_it_back_to_the_bank(part_b_setup, capsys):
+def test_step2_edited_activity_goes_on_as_manual_and_step4_gives_it_the_bank_texts_again(part_b_setup, capsys):
     fake, args, state = part_b_setup
     original = copy.deepcopy(fake.students[("PREPARATORY", "1001")])
     assert w.part_b_save(args) == 0
@@ -191,15 +191,15 @@ def test_step2_edited_activity_goes_on_as_manual_and_step4_takes_it_back_to_the_
     others = {k: v for k, v in fake.students[("PREPARATORY", "1001")]["parts"].items() if k != "part_b"}
     assert others == {k: v for k, v in original["parts"].items() if k != "part_b"}
 
-    # step 4: the teacher removes their version -> the same card activity is the bank one again
+    # step 4: the teacher removes their version -> the same card activity, still manual, with the bank's texts
     state["modified"] = False
     fake.saved.clear()
     del fake._request, fake.refresh           # each step is its own run (fresh connection, fresh guard)
     assert w.part_b_save(args) == 0
     back = stored_b(fake)[0]
-    assert back["id"] == act["id"] and back["dt"]["act_bank_id"] == 85 and back["dt"]["is_global"] is True
-    assert back["is_modified"] is False and back["dt"]["desc"] == BANK_CONTENT["desc"]
-    assert len(fake.saved) == 1 and own_activities.load("teacher_t1") == {}
+    assert back["id"] == act["id"] and back["dt"]["act_bank_id"] is None and "is_global" not in back["dt"]
+    assert back["is_modified"] is True and back["dt"]["desc"] == BANK_CONTENT["desc"]
+    assert len(fake.saved) == 1 and own_activities.load("teacher_t1") == {act["id"]: "P85"}
 
 
 def test_part_b_is_not_sent_when_nothing_would_change(part_b_setup):

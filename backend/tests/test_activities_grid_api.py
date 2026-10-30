@@ -72,7 +72,8 @@ def test_grid_shows_every_student_with_parakh_values_and_problems(grid_client):
     client, portal, _ = grid_client
     data, by_id = rows(client)
     assert [s["name"] for s in data["subjects"]][:2] == ["Language 1 (R1)", "Language 2 (R2)"]
-    assert data["options"] == [{"key": "P85", "label": "85: Conversation in pairs", "subjects": None, "grade": ""}]
+    assert data["options"] == [{"key": "P85", "label": "Conversation in pairs", "subjects": None,
+                                "grade_id": None, "grade": ""}]
     assert data["grades"] == ["Grade 5 - A"] and data["summary"] == {"ready": 2, "total": 3, "locked": 1}
 
     empty, done, locked = by_id["1001"], by_id["1002"], by_id["1003"]
@@ -95,7 +96,10 @@ def test_autosave_with_versions_and_validation(grid_client):
     levels = {f"b_lvl_{s}_{a}": "Proficient" for s in SUBJ for a in ("awareness", "sensitivity", "creativity")}
     assert client.put(url, json={"values": levels, "base_version": 0}).status_code == 409    # another window saved
     row = client.put(url, json={"values": levels, "base_version": 1}).json()
-    assert row["ready"] and row["source"]["b_lvl_PSLS1_awareness"] == "draft"
+    # activities and levels are complete; 1001 has no Part B answers yet (on PARAKH or in the app), so the row
+    # still says so - PARAKH would count the activities unfinished
+    assert row["problems"] == ["Part B answers not filled: " + ", ".join(row["missing_answers"])] and row["missing_answers"]
+    assert row["source"]["b_lvl_PSLS1_awareness"] == "draft"
 
     bad = client.put(url, json={"values": {"b_lvl_PSLS1_awareness": "Expert", "b_act_PSLS1": "P999", "zzz": "1"}})
     assert bad.status_code == 422
@@ -121,7 +125,8 @@ def test_quick_fill_whole_grade_preview_then_apply_keeps_filled_cells(grid_clien
     done = client.post(url, json={**body, "apply": True, "expected_cells": 28}).json()
     assert done["applied"] and done["cells"] == 28
     _, by_id = rows(client)
-    assert by_id["1001"]["ready"] and by_id["1002"]["values"]["b_lvl_PSLS1_awareness"] == "Proficient"
+    assert by_id["1001"]["problems"] == ["Part B answers not filled: " + ", ".join(by_id["1001"]["missing_answers"])]
+    assert by_id["1002"]["ready"] and by_id["1002"]["values"]["b_lvl_PSLS1_awareness"] == "Proficient"   # has answers
 
     # one subject only, replacing what is there
     one = client.post(url, json={"activity_key": "", "subjects": ["PSLS3"], "students": ["1002"],
@@ -131,6 +136,48 @@ def test_quick_fill_whole_grade_preview_then_apply_keeps_filled_cells(grid_clien
     assert by_id["1002"]["values"]["b_lvl_PSLS3_creativity"] == "Advanced"
     assert "Update: Bank 85" in " ".join(by_id["1002"]["notes"]) or "Add" in " ".join(by_id["1002"]["notes"])
     assert client.post(url, json={"activity_key": "", "levels": {}}).status_code == 422
+
+
+def test_quick_fill_gives_each_subject_its_own_activity_for_the_students_grade(grid_client, monkeypatch):
+    client, _, _ = grid_client
+    real = activity_grid._context
+
+    def with_defaults(*args):                       # a library with Grade 5 activities for R1 and Mathematics only
+        entries, labels, resolve = real(*args)
+
+        def library(key):
+            return resolve(key)
+        library.defaults_by_grade = {8: {"PSLS1": "P85", "PSLS3": "P85"}}
+        return entries, labels, library
+    monkeypatch.setattr(activity_grid, "_context", with_defaults)
+    url = f"{API}/teacher/activities-grid/Preparatory/quick-fill"
+    body = {"activity_key": "each_subject", "students": ["1001"],
+            "levels": {"awareness": "Proficient", "sensitivity": "Proficient", "creativity": "Proficient"}}
+    preview = client.post(url, json=body).json()
+    # the two filled-in defaults count as empty, so they are fixed as choices; 21 levels; nothing for the rest
+    assert preview["cells"] == 2 + 21 and preview["students"] == 1
+    assert "Grade 5: Language 2 (R2)" in preview["no_activity"] and "Grade 5: Mathematics" not in preview["no_activity"]
+    client.post(url, json={**body, "apply": True, "expected_cells": 23})
+    _, by_id = rows(client)
+    values = by_id["1001"]["values"]
+    assert values["b_act_PSLS1"] == "P85" and values["b_act_PSLS3"] == "P85" and values["b_act_PSLS2"] == ""
+    assert by_id["1001"]["source"]["b_act_PSLS1"] == "draft" and values["b_lvl_PSLS4_creativity"] == "Proficient"
+
+
+def test_quick_fill_can_replace_older_activities_on_parakh(grid_client):
+    client, _, _ = grid_client
+    url = f"{API}/teacher/activities-grid/Preparatory/quick-fill"
+    body = {"activity_key": "P85", "students": ["1003"], "replace_filled": True,
+            "levels": {"awareness": "Beginner", "sensitivity": "Beginner", "creativity": "Beginner"}}
+    # 1003's activities on PARAKH share a subject: skipped, and named as having older activities
+    plain = client.post(url, json=body).json()
+    assert plain["students"] == 0 and [s["student_id"] for s in plain["skipped"]] == ["1003"]
+    assert plain["older_on_parakh"] != []
+    # with the option: filled, and 'Replace activities on PARAKH' ticked for them, so the save can go ahead
+    done = client.post(url, json={**body, "replace_on_parakh": True, "apply": True}).json()
+    assert done["students"] == 1 and done["older_on_parakh"] == [] and done["skipped"] == []
+    _, by_id = rows(client)
+    assert by_id["1003"]["replace"] is True and by_id["1003"]["values"]["b_lvl_PSLS4_awareness"] == "Beginner"
 
 
 def test_locked_student_needs_replace_and_then_saves(grid_client):
@@ -225,3 +272,24 @@ def test_old_layout_workbook_imports_after_preview(grid_client):
     assert v["b_lvl_PSLS3_awareness"] == "Advanced" and v["b_lvl_PSLS3_sensitivity"] == "Beginner"
     report = upload_jobs.check_workbook(portal, tmp_path / "uploaded_old.xlsx")
     assert any("old Activity columns" in w["message"] for w in report["warnings"])
+
+
+def test_quick_fill_mixed_levels_apply_exactly_what_the_preview_showed(grid_client):
+    client, _, _ = grid_client
+    url = f"{API}/teacher/activities-grid/Preparatory/quick-fill"
+    body = {"activity_key": "", "students": ["1001", "1002"], "replace_filled": True,
+            "levels": {"awareness": "Mixed", "sensitivity": "Proficient", "creativity": "Mixed"}}
+    preview = client.post(url, json=body).json()
+    seed = preview["mix_seed"]
+    assert seed and preview["cells"] > 0
+    again = client.post(url, json={**body, "mix_seed": seed}).json()            # the same seed, the same deal
+    assert again["cells"] == preview["cells"]
+    done = client.post(url, json={**body, "apply": True, "expected_cells": preview["cells"], "mix_seed": seed}).json()
+    assert done["applied"] and done["cells"] == preview["cells"]
+    _, by_id = rows(client)
+    awareness = [by_id[s]["values"][f"b_lvl_{subj}_awareness"] for s in ("1001", "1002") for subj in SUBJ]
+    assert set(awareness) <= {"Beginner", "Proficient", "Advanced"} and len(set(awareness)) > 1   # mixed
+    assert all(by_id[s]["values"][f"b_lvl_{subj}_sensitivity"] == "Proficient" for s in ("1001", "1002") for subj in SUBJ)
+    for subj in SUBJ:                                    # two students, a shuffled round: never the same twice
+        assert by_id["1001"]["values"][f"b_lvl_{subj}_awareness"] != by_id["1002"]["values"][f"b_lvl_{subj}_awareness"]
+    assert client.post(url, json={**body, "levels": {"awareness": "Random"}}).status_code == 422

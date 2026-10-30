@@ -35,7 +35,7 @@ def test_preparatory_a1_attendance_and_portal_values():
     assert (a1["cond_class"], a1["med_inst"], a1["location_id"]) == ("grd5", 3, 1)
 
 
-def test_part_b_copies_bank_activity_and_finishes_it():
+def test_part_b_puts_a_bank_activity_on_as_a_manual_one_and_finishes_it():
     payloads, _ = sync.build_payloads("PREPARATORY", blank_student("PREPARATORY"), filled_row("PREPARATORY"),
                                       make_lookups("PREPARATORY"))
     b = payloads[3]
@@ -44,7 +44,8 @@ def test_part_b_copies_bank_activity_and_finishes_it():
     assert act["dt"]["gl"] == ["L1CG1"] and act["dt"]["awr"][3] == "proficient" and act["dt"]["sen"][3] == "advance"
     assert act["dt"]["domain"] == [f"PSLS{i}" for i in range(1, 8)]
     assert act["id"] == "1001_88899091929394_1"
-    assert b["act_bank_map"] == [{"id": act["id"], "bank_id": "85", "is_modified": False, "is_global": True}]
+    assert act["dt"]["act_bank_id"] is None and "is_global" not in act["dt"] and act["is_modified"] is True
+    assert b["act_bank_map"] == [] and "global_activity_bank_id" not in b
 
 
 def test_middle_teacher_feedback_follows_rubric_levels():
@@ -113,3 +114,39 @@ def test_foundational_part_c_needs_every_domain_level():
     row["c_FSDOM3_sen"] = ""
     _, errors = sync.build_payloads("FOUNDATIONAL", blank_student("FOUNDATIONAL"), row, make_lookups("FOUNDATIONAL"))
     assert any("Cognitive Development: Sensitivity level: required" in e for e in errors)
+
+
+@pytest.mark.parametrize("stage", ["FOUNDATIONAL", "PREPARATORY", "MIDDLE"])
+@pytest.mark.parametrize("present", ["", 0])
+def test_months_without_working_days_are_accepted(stage, present):
+    """Schools have months with no working days (holidays): 0 working days, days present 0 or left blank."""
+    row = filled_row(stage)
+    for m in (2, 3, 9):                                       # May, June, December
+        row[f"a1_working_{m}"], row[f"a1_present_{m}"] = 0, present
+    payloads, errors = sync.build_payloads(stage, blank_student(stage), row, make_lookups(stage))
+    assert errors == []
+    a1 = next(p for p in payloads if p["hpc_col"] == "part_a1")["formdata"]
+    a1 = json.loads(a1) if isinstance(a1, str) else a1
+    assert a1["attn"]["1"][1] == 0 and a1["attn"]["3"][1] in (0, "")
+
+
+@pytest.mark.parametrize("stage", ["FOUNDATIONAL", "PREPARATORY", "MIDDLE"])
+def test_mother_father_guardian_is_father_unless_chosen(stage):
+    """Like the PARAKH page, which pre-selects Father: a blank answer is Father, not a missing one."""
+    a1 = next(p for p in get_stage(stage).PARTS if p.code == "A1")
+    relation = next(f for f in a1.fields(make_lookups(stage)) if f.key == "a1_guardian_relation")
+    assert relation.read(None) == "Father"                                     # nothing on the card yet
+    for given, stored in (("", "FATHER"), ("Mother", "MOTHER")):
+        row = {**filled_row(stage), "a1_guardian_relation": given}
+        payloads, errors = sync.build_payloads(stage, blank_student(stage), row, make_lookups(stage))
+        assert not [e for e in errors if "Mother/Father/Guardian:" in e]
+        fd = next(p for p in payloads if p["hpc_col"] == "part_a1")["formdata"]
+        fd = json.loads(fd) if isinstance(fd, str) else fd
+        assert fd["gen"][23] == stored
+
+
+def test_the_class_list_keeps_the_date_of_birth_for_ages():
+    """Read with gender and admission number from the same record, so "All about me" ages need no PARAKH call."""
+    student = {"student_id": "1001"}
+    sync.add_details(student, blank_student("PREPARATORY").record)
+    assert student["dob"] == "2015-01-01" and student["gender"] == "Male" and student["admission_number"] == "A1"

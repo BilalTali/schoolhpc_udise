@@ -34,7 +34,7 @@ def test_other_requests_are_answered_while_an_upload_is_checked(monkeypatch, tmp
     monkeypatch.setattr(teachers, "_portal", lambda teacher: FakePortal({("PREPARATORY", "1001"): {"record": stu.record,
                                                                                                     "parts": stu.raw_parts}}))
 
-    def slow_check(client, path, teacher_id=None):              # like PARAKH answering slowly
+    def slow_check(client, path, teacher_id=None, full=True):   # like PARAKH answering slowly
         time.sleep(2)
         return {"is_valid": True, "total_records": 1, "detected_stage": "Preparatory", "error_count": 0, "warning_count": 0,
                 "errors": [], "warnings": [], "seeder_working_days": "", "seeder_max_marks": "", "ready_students": []}

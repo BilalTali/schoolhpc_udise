@@ -98,7 +98,7 @@ def prune_uploads() -> int:
         return 0
     cutoff = time.time() - config.UPLOAD_KEEP_DAYS * 86400
     removed = 0
-    for pattern in ("*/uploaded_*", "*/backups/*_uploaded_*"):
+    for pattern in ("*/uploaded_*", "*/job_*.xlsx", "*/checked_*.json", "*/backups/*_uploaded_*"):
         for p in SESSIONS_DIR.glob(pattern):
             if p.is_file() and p.stat().st_mtime < cutoff:
                 p.unlink()

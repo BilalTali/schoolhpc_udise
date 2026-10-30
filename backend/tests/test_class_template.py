@@ -19,7 +19,7 @@ from backend.models.library import LibraryActivity
 from backend.models.settings import ClassSetting
 from backend.routers import class_template as ct_router
 from backend.routers import teachers as teachers_router
-from backend.services import class_settings, class_template, hpc_cards, hpc_sessions, upload_jobs
+from backend.services import card_store, class_settings, class_template, hpc_cards, hpc_sessions, upload_jobs
 from backend.tests.conftest import BANK_CONTENT, FakePortal, blank_student, filled_row, make_lookups, session_headers
 
 API = "/api/v1"
@@ -112,9 +112,11 @@ def test_settings_validation_completeness_and_versions(world):
     problems = bad.json()["detail"]["problems"]
     assert "medium" in problems and problems["working_days.1"] == "May: between 0 and 31."
 
-    saved = client.put(url, json={"values": {**SETTINGS, "working_days": [0] + [22] * 11}, "version": 0}).json()
-    assert saved["complete"] is True and saved["version"] == 1
-    assert saved["warnings"]["working_days.0"].startswith("April: 0 working days is unusual")
+    # a month with no working days is normal (holidays): saved, without a warning; a very full month is checked
+    saved = client.put(url, json={"values": {**SETTINGS, "working_days": [0, 28] + [22] * 10}, "version": 0}).json()
+    assert saved["complete"] is True and saved["version"] == 1 and saved["values"]["working_days"][0] == 0
+    assert "working_days.0" not in saved["warnings"]
+    assert saved["warnings"]["working_days.1"].startswith("May: 28 working days is unusual")
     assert client.put(url, json={"values": SETTINGS, "version": 0}).status_code == 409          # stale window
     assert class_settings.row_values("Preparatory", SETTINGS)["d_3_max"] == 50
 
@@ -153,8 +155,10 @@ def test_zero_ready_and_all_ready(world):
     hpc_cards.save_draft(teacher.id, portal.ay, "Preparatory", "3004", {"b_replace": "Yes", **grid(skip=tuple(SUBJ))})
     for sid in ("3001", "3002", "3003"):
         hpc_cards.delete_draft(teacher.id, portal.ay, "Preparatory", sid)
-    portal.students[("PREPARATORY", "3004")]["parts"]["part_b"] = None
+    portal.students[("PREPARATORY", "3004")]["parts"]["part_b"] = None     # changed on PARAKH itself ...
     hpc_cards.delete_draft(teacher.id, portal.ay, "Preparatory", "3004")
+    assert run_check(client)["ready"] == 1                    # ... the check uses the kept card (seconds, no PARAKH)
+    card_store.forget(f"teacher_{teacher.id}", portal.ay, "Preparatory")   # "Read again from PARAKH"
     assert run_check(client)["ready"] == 0
     zero = client.get(f"{API}/teacher/template/Preparatory/download")
     assert zero.status_code == 409 and "No student's Part B is complete" in zero.json()["detail"]
@@ -199,7 +203,7 @@ def test_template_layout_only_ready_students_locked_sheets_ids_only(world):
     assert "a1_working_1" not in keys and "a1_medium" not in keys and "d_1_max" not in keys and "d_declaration" not in keys
     assert "d_1_obtained" in keys and "a1_present_1" in keys and "c_PSLS1_awareness" in keys
     assert not any(str(k or "").startswith("b_") for k in keys)                 # nothing of Part B to type
-    assert ws.protection.sheet is True and ws["D4"].protection.locked is False and ws["A4"].protection.locked is True
+    assert ws.protection.sheet is False                                     # the class sheet: everything editable
     assert ws.row_dimensions[3].hidden and ws.freeze_panes == "D4"
     assert ws["D2"].value != "To fill or check (when the file was made)" and keys[3]          # no problems column
     r3001 = next(r for r in range(4, ws.max_row + 1) if ws.cell(row=r, column=1).value == "3001")
@@ -213,7 +217,7 @@ def test_template_layout_only_ready_students_locked_sheets_ids_only(world):
     first = next(r for r in b.iter_rows(min_row=3, values_only=True) if r[0] == "3001")
     assert "85: Conversation in pairs" in first[2] and first[3] == "A/A/A"
     s = wb["Settings"]
-    assert s["B4"].value == "English" and s.protection.sheet is True
+    assert s["B4"].value == "English" and s.protection.sheet is False
 
     summary = wb["Class summary"]
     text = json.dumps([[c.value for c in r] for r in summary.iter_rows()], default=str)
@@ -241,38 +245,6 @@ def test_exceptions_are_read_back_and_bad_rows_reported(world):
     assert rows["3001"]["a1_working_1"] == 20 and rows["3001"]["a1_medium"] == "Hindi"
     assert "a1_working_2" not in rows["3001"]                                  # settings come from the dashboard
     assert len(problems) == 2 and "9999" in problems[0] and "Shoe size" in problems[1]
-
-
-def test_upload_rechecks_and_skips_a_student_who_became_unready(world):
-    client, portal, lookups, teacher, tmp_path = world
-    client.put(f"{API}/teacher/settings/Preparatory", json={"values": SETTINGS})
-    for sid in ("3001", "3002"):
-        hpc_cards.save_draft(teacher.id, portal.ay, "Preparatory", sid, {**grid(), **ANSWERS})
-    run_check(client)
-    path = tmp_path / "dl.xlsx"
-    path.write_bytes(client.get(f"{API}/teacher/template/Preparatory/download").content)
-    wb = load_workbook(path)
-    ws = wb["Preparatory"]
-    keys = [c.value for c in ws[3]]
-    fill = {k: v for k, v in filled_row("PREPARATORY").items() if k in keys and not k.startswith("b_")}
-    for r in range(4, ws.max_row + 1):
-        for k, v in fill.items():
-            ws.cell(row=r, column=keys.index(k) + 1, value=v)
-    wb["Exceptions"]["A2"], wb["Exceptions"]["B2"], wb["Exceptions"]["C2"] = "3001", "Working days - April", 20
-    wb.save(path)
-
-    hpc_cards.save_draft(teacher.id, portal.ay, "Preparatory", "3002", {"b_act_PSLS5": ""})   # Art taken off after download
-    report = upload_jobs.check_workbook(portal, path, teacher.id)
-    assert report["total_records"] == 2                                      # 3001 and 3004 ready, 3002 skipped
-    [skipped] = report["errors"]
-    assert skipped["field"].endswith("Part B - Activity")
-    assert skipped["message"].startswith("no longer ready since the file was made") and "Art Education" in skipped["message"]
-    changes = [w for w in report["warnings"] if w["severity"] == "INFO" and "3001" in w["field"]]
-    message = changes[0]["message"]
-    assert message.startswith("Will change on PARAKH: A1 (") and "Part B activities" in message
-    assert "Mother Tongue" in message and "Kashmiri" not in message           # field names only, never values
-    assert upload_jobs.change_summary(["A1: Working days - Apr"]) == "A1 (1 field). First: Working days - Apr"
-    assert portal.saved == []                                               # the check never writes
 
 
 def test_problems_are_live_cell_colours(world):
@@ -331,7 +303,7 @@ def test_excel_functions_stay_usable_and_long_text_wraps(world):
     path = tmp_path / "dl.xlsx"
     path.write_bytes(client.get(f"{API}/teacher/template/Preparatory/download").content)
     ws = load_workbook(path)["Preparatory"]
-    assert ws.protection.sheet and not ws.protection.formatCells and not ws.protection.formatRows
+    assert not ws.protection.sheet                                            # editable: change, add or delete rows
     keys = [c.value for c in ws[3]]
     remark = ws.cell(row=4, column=keys.index("c_PSLS1_remark") + 1)
     assert remark.alignment.wrap_text and ws.row_dimensions[4].height is None      # the row grows to fit
@@ -381,3 +353,184 @@ def test_one_file_for_several_stages_reads_back_by_stage(tmp_path):
     assert sorted(workbook.detect_stages(path)) == ["Middle", "Preparatory"]
     info = template.info(load_workbook(path))
     assert info["stages"] == ["Preparatory", "Middle"] and sorted(info["included"]) == ["5001", "5002", "6001"]
+
+
+def test_precheck_lists_empty_answers_with_where_to_fix_them(world):
+    client, portal, lookups, teacher, _ = world
+    res = client.get(f"{API}/teacher/template/Preparatory/precheck")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["stage"] == "Preparatory" and body["students"] >= 1 and body["complete"] <= body["students"]
+    places = {i["where"] for i in body["items"]}
+    # nothing chosen yet: the Activities grid and its Part B answers say so, each with the students
+    assert any(w.startswith("Activities (tab 2)") for w in places)
+    assert all(i["students"] and {"student_id", "student_name", "grade", "section"} <= set(i["students"][0]) for i in body["items"])
+    assert all(w.startswith(("Activities", "Common answers", "Class settings", "Excel file")) for w in places)
+    assert portal.saved == []                                                      # reading only
+    hpc_cards.save_draft(teacher.id, portal.ay, "Preparatory", "3001", {**grid(), **ANSWERS})
+    again = client.get(f"{API}/teacher/template/Preparatory/precheck").json()
+    names = {s["student_id"] for i in again["items"] if i["where"].startswith("Activities") for s in i["students"]}
+    assert "3001" not in names                                                     # its activities and answers are done
+
+
+def test_precheck_also_lists_answers_parakh_would_refuse(world):
+    client, portal, lookups, teacher, _ = world
+    hpc_cards.save_draft(teacher.id, portal.ay, "Preparatory", "3001", {"a1_mother_tongue": "K" * 30})   # PARAKH allows 20
+    body = client.get(f"{API}/teacher/template/Preparatory/precheck").json()
+    item = next(i for i in body["items"] if i["question"].startswith("Mother Tongue:"))
+    assert "30 characters" in item["question"] and "allows 20" in item["question"]
+    assert item["where"].startswith("Common answers (tab 3)") and [s["student_id"] for s in item["students"]] == ["3001"]
+
+
+def test_settings_are_editable_in_the_file_and_used_on_upload(world):
+    """The teacher may change the class settings on the file's Settings sheet: the upload checks them like the
+    web app does, lists what changed, uses them for every student, and saves them as the class settings."""
+    client, portal, lookups, teacher, tmp_path = world
+    client.put(f"{API}/teacher/settings/Preparatory", json={"values": SETTINGS})
+    hpc_cards.save_draft(teacher.id, portal.ay, "Preparatory", "3001", {**grid(), **ANSWERS})
+    run_check(client)
+    path = tmp_path / "dl.xlsx"
+    path.write_bytes(client.get(f"{API}/teacher/template/Preparatory/download").content)
+    wb = load_workbook(path)
+    settings = wb["Settings"]
+    may = next(r for r in range(4, 30) if settings.cell(row=r, column=1).value == "Working days - May")
+    assert not settings.protection.sheet                                        # editable
+    assert template.read_settings(wb, ["Preparatory"])["Preparatory"]["working_days"] == [22] * 12
+
+    settings.cell(row=may, column=2, value=0)                                   # a month with no working days
+    wb.save(path)
+    report = upload_jobs.check_workbook(portal, path, teacher.id)
+    [changed] = [w for w in report["warnings"] if w["field"] == "Settings (Preparatory)"]
+    assert "Working days May: 22 -> 0" in changed["message"] and not [e for e in report["errors"] if e["field"].startswith("Settings")]
+
+    settings.cell(row=may, column=2, value=40)                                  # May has 31 days
+    wb.save(path)
+    report = upload_jobs.check_workbook(portal, path, teacher.id)
+    [bad] = [e for e in report["errors"] if e["field"] == "Settings (Preparatory)"]
+    assert "May" in bad["message"] and bad["sheet"] == "Settings" and report["is_valid"] is False
+
+    settings.cell(row=may, column=2, value=0)
+    settings.cell(row=may + 1, column=2).value = None                           # a blank month: no working days
+    wb.save(path)
+    found = upload_jobs.file_settings(portal, teacher.id, path)["Preparatory"]
+    assert found["values"]["working_days"][1:3] == [0, None] and not found["problems"]
+    upload_jobs.save_file_settings(teacher.id, {"Preparatory": found})
+    assert class_settings.load(teacher.id, "Preparatory").values["working_days"][1] == 0   # now the class settings
+
+
+def test_upload_errors_say_the_sheet_row_and_column_to_fix(world):
+    client, portal, lookups, teacher, tmp_path = world
+    client.put(f"{API}/teacher/settings/Preparatory", json={"values": SETTINGS})
+    hpc_cards.save_draft(teacher.id, portal.ay, "Preparatory", "3001", {**grid(), **ANSWERS})
+    run_check(client)
+    path = tmp_path / "dl.xlsx"
+    path.write_bytes(client.get(f"{API}/teacher/template/Preparatory/download").content)
+    wb = load_workbook(path)
+    ws = wb["Preparatory"]
+    keys = [c.value for c in ws[3]]
+    row = next(r for r in range(4, ws.max_row + 1) if str(ws.cell(row=r, column=1).value) == "3001")
+    col = keys.index("a1_mother_tongue") + 1
+    ws.cell(row=row, column=col, value="K" * 30)                              # PARAKH allows 20
+    wb.save(path)
+    report = upload_jobs.check_workbook(portal, path, teacher.id)
+    from openpyxl.utils import get_column_letter
+    [err] = [e for e in report["errors"] if "3001" in e["field"] and "Mother Tongue" in e["column"]]   # once, with the reason
+    assert err["sheet"] == "Preparatory" and err["row"] == row
+    assert err["column"] == f"Mother Tongue (column {get_column_letter(col)})"
+    assert "30 characters" in err["message"] and "allows 20" in err["message"]
+
+
+def test_file_errors_come_back_at_once_without_reading_parakh(world, monkeypatch):
+    """A cell the save would refuse is reported from the file alone, before any card is read from PARAKH."""
+    client, portal, lookups, teacher, tmp_path = world
+    client.put(f"{API}/teacher/settings/Preparatory", json={"values": SETTINGS})
+    hpc_cards.save_draft(teacher.id, portal.ay, "Preparatory", "3001", {**grid(), **ANSWERS})
+    run_check(client)
+    path = tmp_path / "dl.xlsx"
+    path.write_bytes(client.get(f"{API}/teacher/template/Preparatory/download").content)
+    wb = load_workbook(path)
+    ws = wb["Preparatory"]
+    keys = [c.value for c in ws[3]]
+    row = next(r for r in range(4, ws.max_row + 1) if str(ws.cell(row=r, column=1).value) == "3001")
+    ws.cell(row=row, column=keys.index("a1_mother_tongue") + 1, value="K" * 30)
+    wb.save(path)
+
+    def no_reading(*args, **kwargs):
+        raise AssertionError("read from PARAKH")
+    monkeypatch.setattr(sync, "fetch_student", no_reading)
+    report = upload_jobs.check_workbook(portal, path, teacher.id)
+    [err] = [e for e in report["errors"] if "3001" in e["field"] and e["column"].startswith("Mother Tongue")]
+    assert err["column"].startswith("Mother Tongue (column ") and err["message"] == "30 characters, the portal allows 20"
+    assert "3001" not in report["ready_students"]
+
+
+def test_the_upload_check_leaves_out_only_the_students_with_a_cell_to_fix(world, monkeypatch):
+    """The upload decides from the file alone (no card read): a student with a cell to fix is listed and left out,
+    every other one with Sync = Yes may be synced - the save checks each against PARAKH before writing anything."""
+    client, portal, lookups, teacher, tmp_path = world
+    client.put(f"{API}/teacher/settings/Preparatory", json={"values": SETTINGS})
+    hpc_cards.save_draft(teacher.id, portal.ay, "Preparatory", "3001", {**grid(), **ANSWERS})
+    run_check(client)
+    path = tmp_path / "dl.xlsx"
+    path.write_bytes(client.get(f"{API}/teacher/template/Preparatory/download").content)
+    from backend.tests.conftest import filled_row
+    full = filled_row("PREPARATORY")
+    wb = load_workbook(path)
+    ws = wb["Preparatory"]
+    keys = [c.value for c in ws[3]]
+    row = next(r for r in range(4, ws.max_row + 1) if str(ws.cell(row=r, column=1).value) == "3001")
+    for col, key in enumerate(keys, start=1):                             # 3001's row filled in; 3002 and 3004 not
+        if key in full and ws.cell(row=row, column=col).value in (None, ""):
+            ws.cell(row=row, column=col, value=full[key])
+    wb.save(path)
+
+    def no_reading(*args, **kwargs):
+        raise AssertionError("read from PARAKH")
+    monkeypatch.setattr(sync, "fetch_student", no_reading)
+    report = upload_jobs.check_workbook(portal, path, teacher.id)
+    bad = {e["student_id"] for e in report["errors"]}
+    assert "3001" not in bad and "3004" in bad                            # 3004's row is not filled in
+    included = {sid for sid, r in workbook.read(path).items() if r[workbook.SYNC_KEY]}
+    assert "3001" in report["ready_students"] and set(report["ready_students"]) == included - bad
+    assert report["is_valid"] is True and report["total_records"] == len(included - bad)
+    assert "left out" in report["warnings"][0]["message"]
+
+    # 3001 with a cell to fix: left out too
+    ws.cell(row=row, column=keys.index("a1_mother_tongue") + 1, value="K" * 30)
+    wb.save(path)
+    report = upload_jobs.check_workbook(portal, path, teacher.id)
+    assert "3001" not in report["ready_students"]
+    assert any(e["student_id"] == "3001" and e["message"] == "30 characters, the portal allows 20" for e in report["errors"])
+
+
+def test_a_blank_month_on_the_settings_sheet_stays_blank(world):
+    """The Excel's working days win: a month left blank is not filled from the web's Class settings."""
+    client, portal, lookups, teacher, tmp_path = world
+    client.put(f"{API}/teacher/settings/Preparatory", json={"values": SETTINGS})
+    hpc_cards.save_draft(teacher.id, portal.ay, "Preparatory", "3001", {**grid(), **ANSWERS})
+    run_check(client)
+    path = tmp_path / "dl.xlsx"
+    path.write_bytes(client.get(f"{API}/teacher/template/Preparatory/download").content)
+    wb = load_workbook(path)
+    ws = next(wb[n] for n in wb.sheetnames if n.endswith("Settings"))
+    for row in ws.iter_rows(min_row=4, max_col=2):
+        label = str(row[0].value or "")
+        if label.startswith("Working days - "):
+            row[1].value = 25 if label.endswith(template.MONTH_LABELS[5]) else None
+    wb.save(path)
+    [s] = upload_jobs.file_settings(portal, teacher.id, path).values()
+    assert s["values"]["working_days"] == [None] * 5 + [25] + [None] * 6
+
+
+def test_a_file_with_only_the_students_the_teacher_chose(world, tmp_path):
+    client, portal, lookups, teacher, _ = world
+    client.put(f"{API}/teacher/settings/Preparatory", json={"values": SETTINGS})
+    hpc_cards.save_draft(teacher.id, portal.ay, "Preparatory", "3001", {**grid(), **ANSWERS})   # ready
+    run_check(client)
+    r = client.get(f"{API}/teacher/template/Preparatory/download", params={"students": "3001,3003"})
+    assert r.status_code == 200, r.text
+    path = tmp_path / "chosen.xlsx"
+    path.write_bytes(r.content)
+    assert set(workbook.read(path)) == {"3001", "3003"}                    # 3003 is not ready: in, because chosen
+    assert client.get(f"{API}/teacher/template/Preparatory/download",
+                      params={"students": "9999"}).status_code == 409    # nobody chosen is in the check

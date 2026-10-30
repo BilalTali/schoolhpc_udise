@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AlertCircle, CheckCircle2, Download, Files, RefreshCw } from "lucide-react";
 import { ApiError, apiFetch, call } from "../api";
 import type { Api } from "../api";
+import { PrecheckView } from "./Precheck";
+import type { PrecheckResult } from "./Precheck";
 
 // One Excel file for all the teacher's stages: a sheet per stage. Each stage needs its class check and its
 // class settings first; this card shows where each stage is and offers the one download.
@@ -42,8 +44,12 @@ export function AllStagesDownload({ api, stages: assigned, onOpenSettings }: { a
     return () => { alive.current = false; window.clearTimeout(timer.current); };
   }, [refresh, tick]);
 
-  const check = async (stage: string) => {
+  // "Check": first every empty required answer of that stage, with where to fix it; then the check itself
+  const [pre, setPre] = useState<Record<string, PrecheckResult>>({});
+  const [preBusy, setPreBusy] = useState("");
+  const startCheck = async (stage: string) => {
     setError(null);
+    setPre((p) => { const n = { ...p }; delete n[stage]; return n; });
     try {
       await call(api, "POST", `/teacher/template/${stage}/check`);
       refresh();
@@ -51,8 +57,33 @@ export function AllStagesDownload({ api, stages: assigned, onOpenSettings }: { a
       setError(e.message);
     }
   };
+  const check = async (stage: string) => {
+    setError(null);
+    setPreBusy(stage);
+    try {
+      const result = await call<PrecheckResult>(api, "GET", `/teacher/template/${stage}/precheck`);
+      if (result.items.length) setPre((p) => ({ ...p, [stage]: result }));
+      else await startCheck(stage);
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setPreBusy("");
+    }
+  };
 
   const stages = assigned.filter((st) => (checks[st]?.students ?? 1) > 0);   // stages with no students are left out
+  // every stage at once: each looks for empty answers first (listed where any), then its check starts
+  const [allBusy, setAllBusy] = useState(false);
+  const checkAll = async () => {
+    setAllBusy(true);
+    try {
+      for (const st of stages) {
+        if (checks[st]?.job?.status !== "RUNNING") await check(st);
+      }
+    } finally {
+      setAllBusy(false);
+    }
+  };
   const ready = stages.length > 0 && stages.every((st) => checks[st]?.job?.status === "COMPLETED" && checks[st]?.settings_complete);
   const total = stages.reduce((n, st) => n + (checks[st]?.job?.ready || 0), 0);
 
@@ -86,6 +117,13 @@ export function AllStagesDownload({ api, stages: assigned, onOpenSettings }: { a
       </div>
       <p className="lib-muted">One Excel file with a sheet for each stage ({stages.join(", ")}). Each stage keeps its own Part B,
         Settings and Exceptions sheets. Upload the one file and everyone is synced.</p>
+      <div className="tp-row">
+        <button type="button" className="btn btn-outline" onClick={checkAll}
+                disabled={allBusy || !!preBusy || stages.every((st) => checks[st]?.job?.status === "RUNNING")}>
+          <RefreshCw size={14} aria-hidden="true" className={allBusy ? "spin" : ""} /> Check all stages
+        </button>
+        <span className="lib-muted">Checks {stages.join(", ")} one after another; the bar at the top shows how far each is.</span>
+      </div>
       <ul className="as-list">
         {stages.map((st) => {
           const c = checks[st];
@@ -103,9 +141,12 @@ export function AllStagesDownload({ api, stages: assigned, onOpenSettings }: { a
               {c && !c.settings_complete && (
                 <button type="button" className="portal-link-btn" onClick={() => onOpenSettings(st)}>Finish class settings</button>
               )}
-              <button type="button" className="btn btn-outline btn-sm" onClick={() => check(st)} disabled={job?.status === "RUNNING"}>
-                <RefreshCw size={13} aria-hidden="true" className={job?.status === "RUNNING" ? "spin" : ""} /> {job ? "Check again" : "Check"}
+              <button type="button" className="btn btn-outline btn-sm" onClick={() => check(st)} disabled={job?.status === "RUNNING" || preBusy === st}>
+                <RefreshCw size={13} aria-hidden="true" className={job?.status === "RUNNING" || preBusy === st ? "spin" : ""} />
+                {preBusy === st ? " Looking for empty answers…" : job ? " Check again" : " Check"}
               </button>
+              {pre[st] && <PrecheckView result={pre[st]} onStart={() => startCheck(st)}
+                                        onClose={() => setPre((p) => { const n = { ...p }; delete n[st]; return n; })} />}
             </li>
           );
         })}

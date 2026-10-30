@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { Link, Navigate, useParams, useSearchParams } from "react-router-dom";
 import { AlertCircle, BookOpen, Copy, Plus, RefreshCw, Search, Star, Trash2, X } from "lucide-react";
-import { ApiError, call, query } from "../api";
+import { call, query } from "../api";
 import type { Api } from "../api";
 import { ActivityEditor } from "./ActivityEditor";
-import { CoverageBadge, SourceBadge, StateBadges } from "./Badges";
+import { PlaceBadges, SourceBadge, StateBadges } from "./Badges";
 import { useConfirm } from "./useConfirm";
 import { SyncPanel } from "./SyncPanel";
 import { STAGES } from "./types";
@@ -13,7 +13,7 @@ import type { Activity, Listing } from "./types";
 // Activity Library: browse, search and manage activities per stage (route /activities/:stage).
 
 const PAGE_SIZE = 50;
-const FILTER_KEYS = ["q", "source", "subject", "covers", "status", "edited", "upstream"] as const;
+const FILTER_KEYS = ["q", "source", "subject", "grade", "status", "edited", "upstream"] as const;
 const yesNo = (v: string | null) => (v === "yes" ? true : v === "no" ? false : undefined);
 
 export function ActivityLibraryPage({ api, isAdmin }: { api: Api; isAdmin: boolean }) {
@@ -35,7 +35,7 @@ function StageLibrary({ api, isAdmin, stage }: { api: Api; isAdmin: boolean; sta
   const [search, setSearch] = useState(params.get("q") || "");
   const [confirmUi, confirm] = useConfirm();
   const request = useRef(0);
-  const ids = { search: useId(), source: useId(), subject: useId(), covers: useId(), status: useId(), edited: useId(), upstream: useId() };
+  const ids = { search: useId(), source: useId(), subject: useId(), grade: useId(), status: useId(), edited: useId(), upstream: useId() };
   const page = Math.max(1, Number(params.get("page") || 1));
 
   const load = useCallback(async () => {
@@ -45,7 +45,7 @@ function StageLibrary({ api, isAdmin, stage }: { api: Api; isAdmin: boolean; sta
     try {
       const data = await call<Listing>(api, "GET", `/activity-library${query({
         stage, page, page_size: PAGE_SIZE, q: params.get("q"), source: params.get("source"), subject: params.get("subject"),
-        covers_all: yesNo(params.get("covers")), status: params.get("status"), edited: yesNo(params.get("edited")),
+        grade: params.get("grade"), status: params.get("status"), edited: yesNo(params.get("edited")),
         upstream: params.get("upstream"),
       })}`);
       if (mine === request.current) setListing(data);
@@ -116,19 +116,10 @@ function StageLibrary({ api, isAdmin, stage }: { api: Api; isAdmin: boolean; sta
   };
 
   const makeDefault = async (a: Activity) => {
-    const put = (confirm_partial: boolean) => call(api, "PUT", `/activity-library/defaults/${stage}`, { activity_id: a.id, confirm_partial });
     setBusy(`default-${a.id}`);
     try {
-      try {
-        await put(false);
-      } catch (e) {
-        if (!(e instanceof ApiError && e.status === 409)) throw e;
-        const missing = ((e.detail as any)?.missing_subjects || []) as string[];
-        const ok = await confirm({ title: "This activity does not cover every subject", confirmLabel: "Make default anyway",
-          message: <>It is not set for: <b>{missing.join(", ")}</b>. Students given only this activity would be missing those subjects. Make it the default anyway?</> });
-        if (!ok) return;
-        await put(true);
-      }
+      // the default is only filled in for its own subject and grade, so it never has to cover every subject
+      await call(api, "PUT", `/activity-library/defaults/${stage}`, { activity_id: a.id });
       say(`"${a.label}" is now the default for ${stage}.`);
       await load();
     } catch (e: any) {
@@ -227,8 +218,8 @@ function StageLibrary({ api, isAdmin, stage }: { api: Api; isAdmin: boolean; sta
                 options={[["", "All"], ["portal_global", "PARAKH Activity Bank"], ["portal_teacher", "Teacher's own on PARAKH"], ["local", "Made in this app"]]} />
         <Select id={ids.subject} label="Subject" value={params.get("subject") || ""} onChange={(v) => setFilter("subject", v)}
                 options={[["", "All subjects"], ...(listing?.subjects || []).map((s) => [s.code, s.name] as [string, string])]} />
-        <Select id={ids.covers} label="Covers all subjects" value={params.get("covers") || ""} onChange={(v) => setFilter("covers", v)}
-                options={[["", "Any"], ["yes", "Yes, all subjects"], ["no", "No, some missing"]]} />
+        <Select id={ids.grade} label="Grade" value={params.get("grade") || ""} onChange={(v) => setFilter("grade", v)}
+                options={[["", "All grades"], ...(listing?.grades || []).map((g) => [String(g.id), g.name] as [string, string])]} />
         <Select id={ids.status} label="In Excel" value={params.get("status") || ""} onChange={(v) => setFilter("status", v)}
                 options={[["", "On and off"], ["active", "On"], ["disabled", "Off"]]} />
         <Select id={ids.edited} label="Changed" value={params.get("edited") || ""} onChange={(v) => setFilter("edited", v)}
@@ -280,7 +271,7 @@ function StageLibrary({ api, isAdmin, stage }: { api: Api; isAdmin: boolean; sta
                     </th>
                   )}
                   <th scope="col">Activity</th>
-                  <th scope="col">Subjects</th>
+                  <th scope="col">Subject and grade</th>
                   <th scope="col">In Excel</th>
                   <th scope="col">Notes</th>
                   <th scope="col"><span className="sr-only">Actions</span></th>
@@ -301,7 +292,7 @@ function StageLibrary({ api, isAdmin, stage }: { api: Api; isAdmin: boolean; sta
                       </button>
                       <SourceBadge source={a.source} />
                     </td>
-                    <td data-label="Subjects"><CoverageBadge activity={a} /></td>
+                    <td data-label="Subject and grade"><PlaceBadges activity={a} /></td>
                     <td data-label="In Excel">
                       {isAdmin ? (
                         <button type="button" role="switch" aria-checked={a.status === "active"} className="lib-switch"

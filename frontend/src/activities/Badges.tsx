@@ -1,18 +1,19 @@
-import { AlertCircle, CheckCircle2 } from "lucide-react";
+import { AlertCircle } from "lucide-react";
 import { SOURCE_LABEL } from "./types";
 import type { Activity, Source } from "./types";
 
 // Every badge says what it means in words; colour is only a second hint.
 
-export function CoverageBadge({ activity }: { activity: Pick<Activity, "covers_all" | "missing_subjects"> }) {
-  if (activity.covers_all) {
-    return <span className="lib-badge lib-badge-ok"><CheckCircle2 size={12} aria-hidden="true" /> Covers all subjects</span>;
-  }
-  const missing = activity.missing_subjects;
-  const shown = missing.length > 3 ? `${missing.slice(0, 3).join(", ")} +${missing.length - 3} more` : missing.join(", ");
+// Where an activity belongs: its subject and its grade (it is offered only there).
+export function PlaceBadges({ activity }: { activity: Pick<Activity, "subject_names" | "grade_name"> }) {
   return (
-    <span className="lib-badge lib-badge-warn" title={`Missing: ${missing.join(", ")}`}>
-      <AlertCircle size={12} aria-hidden="true" /> Missing: {shown}
+    <span className="lib-place">
+      {activity.subject_names.map((s) => <span key={s} className="lib-badge lib-badge-subject">{s}</span>)}
+      {activity.grade_name
+        ? <span className="lib-badge">{activity.grade_name}</span>
+        : <span className="lib-badge lib-badge-warn" title="Not offered to any student until its grade is set">
+            <AlertCircle size={12} aria-hidden="true" /> No grade set
+          </span>}
     </span>
   );
 }

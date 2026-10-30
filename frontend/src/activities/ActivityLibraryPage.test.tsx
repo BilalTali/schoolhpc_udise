@@ -34,18 +34,21 @@ beforeEach(() => vi.useRealTimers());
 afterEach(() => vi.unstubAllGlobals());
 
 describe("Activity Library table", () => {
-  it("lists activities with plain coverage badges and counts", async () => {
+  it("lists activities with the subject and grade they belong to, and counts", async () => {
     setup();
     expect(await screen.findByRole("button", { name: "L1CG 1, C 1.1" })).toBeInTheDocument();
     expect(rows()).toHaveLength(3);
-    expect(within(rows()[0]).getByText("Covers all subjects")).toBeInTheDocument();
-    expect(within(rows()[1]).getByText(/Missing: Mathematics, Art Education/)).toBeInTheDocument();
+    expect(within(rows()[0]).getByText("Language 1 (R1)")).toBeInTheDocument();
+    expect(within(rows()[0]).getByText("Grade 4")).toBeInTheDocument();
+    expect(within(rows()[1]).getByText("Grade 5")).toBeInTheDocument();
+    expect(within(rows()[1]).queryByText(/Missing/)).not.toBeInTheDocument();       // no "covers every subject" idea
+    expect(within(rows()[2]).getByText("No grade set")).toBeInTheDocument();
     expect(within(rows()[2]).getByText(/Has pictures - choose it on the PARAKH website/)).toBeInTheDocument();
     const counts = screen.getByText("Offered in Excel").parentElement!;
     expect(within(counts).getByText("2")).toBeInTheDocument();
   });
 
-  it("searches after typing pauses and filters by coverage", async () => {
+  it("searches after typing pauses and filters by grade", async () => {
     const { fake, user } = setup();
     await screen.findByRole("button", { name: "L1CG 1, C 1.1" });
     await user.type(screen.getByLabelText("Search activities"), "mcg");
@@ -56,9 +59,9 @@ describe("Activity Library table", () => {
 
     await user.click(screen.getByRole("button", { name: "Clear filters" }));
     await waitFor(() => expect(rows()).toHaveLength(3));
-    await user.selectOptions(screen.getByLabelText("Covers all subjects"), "no");
+    await user.selectOptions(screen.getByLabelText("Grade"), "Grade 5");
     await waitFor(() => expect(rows()).toHaveLength(1));
-    expect(calls(fake, "GET", "/activity-library?").at(-1)!.path).toContain("covers_all=false");
+    expect(calls(fake, "GET", "/activity-library?").at(-1)!.path).toContain("grade=8");
     expect(screen.getByRole("button", { name: "MCG 1, C 1.2" })).toBeInTheDocument();
   });
 
@@ -105,14 +108,12 @@ describe("Managing activities (school admin)", () => {
     expect(await screen.findByText("2 activities turned off.")).toBeInTheDocument();
   });
 
-  it("warns before making an activity that misses subjects the default", async () => {
+  it("makes an activity the default without asking about other subjects", async () => {
     const { fake, user } = setup();
     await user.click(await screen.findByRole("button", { name: /Make default \(MCG 1, C 1.2\)/ }));
-    const dialog = await screen.findByRole("alertdialog", { name: "This activity does not cover every subject" });
-    expect(dialog).toHaveTextContent("Mathematics, Art Education");
-    await user.click(within(dialog).getByRole("button", { name: "Make default anyway" }));
     await waitFor(() => expect(fake.state.defaultId).toBe("a2"));
-    expect(calls(fake, "PUT", "/activity-library/defaults")[1].body).toEqual({ activity_id: "a2", confirm_partial: true });
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(calls(fake, "PUT", "/activity-library/defaults")[0].body).toEqual({ activity_id: "a2" });
     expect(await screen.findByText(/is now the default for Preparatory/)).toBeInTheDocument();
     expect(within(rows()[0]).getByText("Default")).toBeInTheDocument();     // default listed first
   });

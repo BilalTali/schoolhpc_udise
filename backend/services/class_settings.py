@@ -54,7 +54,7 @@ def validate(stage: str, values: Dict[str, Any], medium_options: Optional[List[s
         if n < 0 or n > MONTH_DAYS[month]:
             problems[f"working_days.{i}"] = f"{MONTH_NAMES[month]}: between 0 and {MONTH_DAYS[month]}."
             continue
-        if n == 0 or n > UNUSUAL_DAYS:
+        if n > UNUSUAL_DAYS:                     # 0 is normal: schools have months with no working days
             warnings[f"working_days.{i}"] = f"{MONTH_NAMES[month]}: {n} working days is unusual - please check."
         clean["working_days"][i] = n
     given = values.get("max_marks") or {}
@@ -87,9 +87,9 @@ def missing(stage: str, values: Dict[str, Any]) -> List[str]:
         out.append("Medium of instruction")
     if not values.get("rural_urban"):
         out.append("Rural / Urban")
-    gaps = [MONTH_NAMES[m] for m, d in zip(MONTHS, values.get("working_days") or [None] * 12) if d is None]
-    if gaps:
-        out.append("Working days for " + ", ".join(gaps))
+    # a month left blank is a month without working days (the Excel's Settings sheet often has just one month)
+    if all(d is None for d in (values.get("working_days") or [None] * 12)):
+        out.append("Working days for at least one month")
     gaps = [s for n, s in marks_subjects(stage) if (values.get("max_marks") or {}).get(n) is None]
     if gaps:
         out.append("Max marks for " + ", ".join(gaps))

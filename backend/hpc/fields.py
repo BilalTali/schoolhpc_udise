@@ -31,9 +31,14 @@ class Field:
     blank: Any = ""                   # value stored when the cell is empty
     span: Tuple[int, int] = (0, 0)    # onehot/flags: (first slot, number of slots) in the list at path
     member: str = ""                  # inlist: the code looked for in the lists
+    default: str = ""                 # the answer an empty cell means (as the portal page pre-selects it)
 
     # -- portal -> Excel -------------------------------------------------
     def read(self, formdata: Any) -> Any:
+        value = self._read(formdata)
+        return self.default if self.default and value in (None, "") else value
+
+    def _read(self, formdata: Any) -> Any:
         value = get_path(formdata, self.path)
         if self.kind == "inlist":
             lists = list(value or [])
@@ -57,6 +62,8 @@ class Field:
     def parse(self, cell: Any) -> Tuple[Any, Optional[str]]:
         """Converts an Excel cell to the stored value. Returns (value, error message or None)."""
         text = "" if cell is None else str(cell).strip()
+        if not text and self.default:
+            text = self.default                    # e.g. Mother/Father/Guardian: Father, as the page pre-selects it
         if text.endswith(".0") and text[:-2].isdigit():
             text = text[:-2]                       # Excel turns 22 into 22.0
         if not text:

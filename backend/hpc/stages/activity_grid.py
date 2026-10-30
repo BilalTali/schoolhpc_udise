@@ -17,7 +17,7 @@ import copy
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from backend.hpc.stages.activity import bank_dt, filled
+from backend.hpc.stages.activity import filled
 
 ABILITIES = (("awareness", "awr"), ("sensitivity", "sen"), ("creativity", "cre"))
 LEVEL_TO_PORTAL = {"Beginner": "beginner", "Proficient": "proficient", "Advanced": "advance"}
@@ -96,6 +96,15 @@ class OwnNames(dict):
 
     def key_of(self, act: Dict[str, Any]) -> str:
         return self.owned.get(str(act.get("id") or "")) or self.get(act.get("nm") or "", "")
+
+
+def defaults_for(resolve: Optional["Resolver"], grade_id: Any) -> Optional[Dict[str, str]]:
+    """Each subject's default activity for a student of this grade - only an activity of the student's own grade
+    is filled in, and none when the grade is not known. Without grades (PARAKH's own lists): `defaults`."""
+    by_grade = getattr(resolve, "defaults_by_grade", None)
+    if by_grade is None:
+        return getattr(resolve, "defaults", None)
+    return by_grade.get(int(grade_id), {}) if str(grade_id or "").isdigit() else {}
 
 
 def typed_keys(resolve: Optional["Resolver"]) -> OwnNames:
@@ -190,50 +199,25 @@ def set_texts(dt: Dict[str, Any], content: Dict[str, Any], from_bank) -> None:
             dt[k] = v
 
 
-def wants_manual(entry: Dict[str, Any]) -> bool:
-    """A teacher's own activity - made in this app, or a bank activity whose texts were edited here - goes on
-    the card as PARAKH's "Create Manually" kind (no bank id), not as one picked from the bank."""
-    return entry.get("portal_id") is None or bool(entry.get("modified"))
-
-
 def new_card_activity(spec: "GridSpec", entry: Dict[str, Any], portal_levels: List[str]) -> Dict[str, Any]:
-    """A card's copy of a library activity. Bank activities as the page's "Pick from Activity Bank" makes them;
-    the teacher's own as its "Create Manually" does: the page's blank activity (act_bank_id None, no is_global)
-    with the texts filled in, and is_modified true - the page always saves a manual activity that way."""
-    if wants_manual(entry):
-        dt = spec.blank()
-        set_texts(dt, entry["content"], spec.from_bank)
-        for (_, k), level in zip(ABILITIES, portal_levels):
-            dt[k][3] = level
-        return {"nm": entry["caption"], "dt": dt, "is_modified": True}
-    dt = bank_dt(spec.blank, entry["content"], int(entry["portal_id"]), bool(entry.get("is_global", True)),
-                 spec.from_bank, portal_levels)
-    return {"nm": entry["caption"], "dt": dt, "is_modified": False}
+    """A card's copy of a library activity. Every activity - PARAKH's bank ones too, whose bank list can load
+    late on the page - goes on the card as the page's "Create Manually" does: the page's blank activity
+    (act_bank_id None, no is_global) with the texts filled in, and is_modified true."""
+    dt = spec.blank()
+    set_texts(dt, entry["content"], spec.from_bank)
+    for (_, k), level in zip(ABILITIES, portal_levels):
+        dt[k][3] = level
+    return {"nm": entry["caption"], "dt": dt, "is_modified": True}
 
 
-def copy_outdated(act: Dict[str, Any], entry: Optional[Dict[str, Any]], typed: Optional[Dict[str, str]] = None) -> bool:
-    """True when a card's copy needs updating: a teacher's own activity that is not yet the manual copy with
-    the current texts, or a manual copy this app wrote whose teacher's version was removed since (it goes
-    back to the bank activity). Any other bank or manual activity on the card is left as it is."""
+def copy_outdated(act: Dict[str, Any], entry: Optional[Dict[str, Any]]) -> bool:
+    """True when a card's copy of a chosen activity is not yet the manual copy with the library's current texts
+    (for example one picked from the bank before every activity went on as a manual one)."""
     if not entry:
         return False
     dt = act.get("dt") or {}
-    if not wants_manual(entry):
-        own = _names(typed).owned.get(str(act.get("id") or ""))
-        return not dt.get("act_bank_id") and own is not None and own == entry.get("key")
     return bool(dt.get("act_bank_id")) or "is_global" in dt or act.get("is_modified") is not True \
         or texts_differ(dt, entry["content"])
-
-
-def make_bank_copy(act: Dict[str, Any], entry: Dict[str, Any], spec: "GridSpec") -> None:
-    """Turns a manual copy this app wrote back into the bank activity (as "Pick from Activity Bank" makes it);
-    levels and the student's answers stay."""
-    dt = act["dt"]
-    set_texts(dt, entry["content"], spec.from_bank)
-    dt["act_bank_id"] = int(entry["portal_id"])
-    dt["is_global"] = bool(entry.get("is_global", True))
-    act["nm"] = entry["caption"]
-    act["is_modified"] = False
 
 
 def make_manual(act: Dict[str, Any], entry: Dict[str, Any], spec: "GridSpec") -> None:
@@ -321,15 +305,13 @@ def plan(subjects: List[str], names: Dict[str, str], spec: GridSpec, fd: List[Di
             act = copy.deepcopy(fd[i])
             dt = act["dt"]
             before = (sorted(dt.get("domain") or []), [str((dt.get(k) or ["", "", "", ""])[3]) for _, k in ABILITIES])
-            changed = before != (sorted(subs), portal_levels)
+            moved = before != (sorted(subs), portal_levels)
             entry = resolve(key)
-            if copy_outdated(act, entry, typed):
-                if wants_manual(entry):
-                    make_manual(act, entry, spec)    # the teacher's own texts, as a manual activity
-                else:
-                    make_bank_copy(act, entry, spec)  # their version was removed: back to the bank activity
-                changed = True
-            take_shared = changed or i == first
+            refreshed = copy_outdated(act, entry)
+            if refreshed:
+                make_manual(act, entry, spec)        # the library's current texts, as a manual activity
+            changed = moved or refreshed
+            take_shared = moved or i == first        # only new texts: the activity keeps its own answers
             changes.append({"action": "update" if changed else "keep", "name": act.get("nm") or key,
                             "subjects": [names[s] for s in subs]})
         else:
@@ -381,11 +363,11 @@ def plan(subjects: List[str], names: Dict[str, str], spec: GridSpec, fd: List[Di
 
 
 def stale_texts(fd: List[Dict[str, Any]], now: Current, resolve: Optional["Resolver"]) -> bool:
-    """True when a card holds a teacher's own activity whose copy is outdated (so a save updates it)."""
+    """True when a card holds a chosen activity whose copy is outdated (so a save updates it)."""
     if resolve is None:
         return False
     for act, info in zip([a for a in fd or [] if _real(a)], now.existing):
-        if copy_outdated(act, resolve(info["key"]) if info["key"] else None, typed_keys(resolve)):
+        if copy_outdated(act, resolve(info["key"]) if info["key"] else None):
             return True
     return False
 
@@ -443,4 +425,7 @@ def resolver_from_lookups(lookups) -> Resolver:
             return None
         return {"portal_id": pid, "caption": entry["activity_caption"], "content": entry["content"].get("dt") or {},
                 "is_global": True, "usable": True, "reason": ""}
+    resolve.typed = {}                               # manual copies on a card are found again by their name
+    for pid, entry in lookups.activities.items():
+        resolve.typed.setdefault(entry["activity_caption"], f"P{pid}")
     return resolve

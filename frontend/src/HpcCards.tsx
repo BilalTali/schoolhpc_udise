@@ -34,6 +34,10 @@ interface FieldMeta {
   max_len: number | null;
   required: boolean;
   multiple: boolean;
+  suggestions?: string[];          // ready phrases for a text answer, offered next to the box
+  mixable?: boolean;               // false: a fact about the student (mother tongue ...), never handed out at random
+  mix_pool?: string[];             // a several-option question Mix may fill: the options it may hand out ...
+  mix_pick?: number;               // ... and how many each student gets
 }
 
 interface CardField extends FieldMeta {
@@ -162,6 +166,13 @@ function FieldInput({ field, value, onChange, disabled, compact }: {
   const long = !compact && (field.max_len === null || field.max_len > 80);
   return (
     <div className="card-text-wrap">
+      {!!field.suggestions?.length && !disabled && (
+        <select className="form-select card-suggest" value="" aria-label={`${field.label}: use a suggestion`}
+                onChange={(e) => { if (e.target.value) onChange(e.target.value); }}>
+          <option value="">Suggestions…</option>
+          {field.suggestions.map((s) => <option key={s} value={s}>{s}</option>)}
+        </select>
+      )}
       {long ? (
         <textarea className="form-input card-input" rows={3} value={text} disabled={disabled}
                   onChange={(e) => onChange(e.target.value)} />
@@ -568,7 +579,11 @@ function HpcCardPreview({ api, stage, studentId, onClose }: {
 
 // ─── Bulk entry: one field for the whole class ─────────────────────────────
 
-export function HpcBulkEntry({ api, stage }: { api: CardsApi; stage: string }) {
+// Common answers (tab 3) shows A1-A4 and Part C's remarks (its levels have their own grid); the Activities tab
+// shows Part B's answers with the same tools.
+export function HpcBulkEntry({ api, stage, parts: only = ["A1", "A2", "A3", "A4", "C"], title = "Class-wide answers", intro }: {
+  api: CardsApi; stage: string; parts?: string[]; title?: string; intro?: React.ReactNode;
+}) {
   const [parts, setParts] = useState<{ code: string; title: string; fields: FieldMeta[] }[]>([]);
   const [fieldKey, setFieldKey] = useState("");
   const [field, setField] = useState<(FieldMeta & { part_title: string }) | null>(null);
@@ -585,6 +600,29 @@ export function HpcBulkEntry({ api, stage }: { api: CardsApi; stage: string }) {
   const [loadingRows, setLoadingRows] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error" | "warning"; text: string } | null>(null);
+  // per question: how many students have an answer, so done and pending questions can be told apart
+  const [progress, setProgress] = useState<{ total: number; fields: Record<string, { filled: number; required: boolean }> } | null>(null);
+
+  // only the parts this stage has, once its questions are known (Foundational has no A3/A4, Preparatory no A4)
+  const partCodes = parts.map((p) => p.code).join(",");
+  const loadProgress = useCallback(async () => {
+    if (!partCodes) return;
+    try {
+      const all = await Promise.all(partCodes.split(",").map((code) => call<{ total: number; fields: Record<string, { filled: number; required: boolean }> }>(
+        api, "GET", `/teacher/hpc-cards/${encodeURIComponent(stage)}/progress?part=${encodeURIComponent(code)}`).catch(() => null)));
+      const got = all.filter(Boolean) as { total: number; fields: Record<string, { filled: number; required: boolean }> }[];
+      if (got.length) setProgress({ total: got[0].total, fields: Object.assign({}, ...got.map((g) => g.fields)) });
+    } catch { /* the marks are a help only */ }
+  }, [api, stage, partCodes]);
+
+  useEffect(() => { loadProgress(); }, [loadProgress]);
+
+  const status = (key: string) => {
+    const p = progress?.fields[key];
+    if (!p || !progress) return "";
+    const left = progress.total - p.filled;
+    return left <= 0 ? " — ✓ done" : ` — ${left} to fill${p.required ? " (required)" : ""}`;
+  };
 
   useEffect(() => {
     let live = true;
@@ -595,7 +633,12 @@ export function HpcBulkEntry({ api, stage }: { api: CardsApi; stage: string }) {
     setRows([]);
     setMessage(null);
     call<{ parts: { code: string; title: string; fields: FieldMeta[] }[] }>(api, "GET", `/teacher/hpc-cards/${encodeURIComponent(stage)}/fields?common=true`)
-      .then((d) => { if (live) setParts(d.parts.filter((p) => p.code !== "C")); })   // Part C levels: the grid above
+      .then((d) => {
+        if (!live) return;
+        setParts(d.parts.filter((p) => only.includes(p.code))
+          .map((p) => (p.code === "C" ? { ...p, fields: p.fields.filter((f) => f.kind === "text") } : p))   // C levels: own grid
+          .filter((p) => p.fields.length));
+      })
       .catch((e) => { if (live) { if (needsParakh(e)) setOffline(true); else setMessage({ type: "error", text: e.message }); } })
       .finally(() => { if (live) setLoadingFields(false); });
     return () => { live = false; };
@@ -642,6 +685,41 @@ export function HpcBulkEntry({ api, stage }: { api: CardsApi; stage: string }) {
     for (const r of rows) if (isBlank(valueOf(r))) next[r.student_id] = fillValue;
     setEdits(next);
   };
+  // every student's answer replaced (e.g. new observations for a class that already has old ones); nothing is
+  // saved until Save, and single students can still be changed first
+  const fillAll = () => {
+    if (isBlank(fillValue)) return;
+    setEdits(Object.fromEntries(rows.map((r) => [r.student_id, fillValue])));
+  };
+  // what "Mix" hands out: a text answer's suggestions, or a single-choice question's options (Yes / No / Not sure);
+  // a question where several options can be picked is not mixed
+  const mixPool = !field || field.mixable === false ? []
+    : field.suggestions?.length ? field.suggestions : !field.multiple ? field.options : field.mix_pool || [];
+  // handed out at random, each used about equally (a shuffled round, again and again), so the class does not all
+  // get the same answer; replaces every answer, saved only with Save
+  const mixSuggestions = () => {
+    const pool = mixPool;
+    if (!pool.length) return;
+    let round: string[] = [];
+    const next = () => {
+      if (!round.length) {
+        round = [...pool];
+        for (let i = round.length - 1; i > 0; i--) {             // Fisher-Yates
+          const j = Math.floor(Math.random() * (i + 1));
+          [round[i], round[j]] = [round[j], round[i]];
+        }
+      }
+      return round.pop()!;
+    };
+    // a several-option question: a few different options per student, in the question's own order
+    const value = (): FieldValue => {
+      if (!field?.multiple) return next();
+      const chosen = new Set<string>();
+      while (chosen.size < (field.mix_pick || 1)) chosen.add(next());
+      return field.options.filter((o) => chosen.has(o));
+    };
+    setEdits(Object.fromEntries(rows.map((r) => [r.student_id, value()])));
+  };
 
   const save = async () => {
     const changed = Object.fromEntries(rows
@@ -656,6 +734,7 @@ export function HpcBulkEntry({ api, stage }: { api: CardsApi; stage: string }) {
       setProblems(res.problems);
       setRows((prev) => prev.map((r) => res.saved.includes(r.student_id) ? { ...r, value: changed[r.student_id], in_draft: true } : r));
       setEdits((prev) => Object.fromEntries(Object.entries(prev).filter(([id]) => !res.saved.includes(id))));
+      loadProgress();
       const bad = Object.keys(res.problems).length;
       setMessage({
         type: bad ? "warning" : "success",
@@ -670,26 +749,89 @@ export function HpcBulkEntry({ api, stage }: { api: CardsApi; stage: string }) {
 
   const dirty = rows.filter((r) => r.student_id in edits && !sameValue(edits[r.student_id], r.value)).length;
 
+  // "Mix all questions": every question on this screen at once, mixed answers, one save
+  type MixResult = { applied: boolean; students: number; cells: number; fields: { key: string; label: string; filled: number }[];
+                     skipped: { key: string; label: string; reason: string }[] };
+  const [mixReplace, setMixReplace] = useState(false);
+  const [mixPreview, setMixPreview] = useState<MixResult | null>(null);
+  const [mixing, setMixing] = useState(false);
+  const mixAll = async (apply: boolean) => {
+    if (apply && dirty && !window.confirm("Drop the changes you have not saved for this question?")) return;
+    setMixing(true);
+    setMessage(null);
+    try {
+      const res = await call<MixResult>(api, "POST", `/teacher/hpc-cards/${encodeURIComponent(stage)}/bulk-mix`,
+        { fields: parts.flatMap((p) => p.fields.map((f) => f.key)), replace: mixReplace, apply });
+      if (apply) {
+        setMixPreview(null);
+        setMessage({ type: "success", text: `Saved ${res.cells} mixed answer${res.cells === 1 ? "" : "s"} for ${res.students} student${res.students === 1 ? "" : "s"}.` });
+        loadProgress();
+        if (fieldKey) loadRows(fieldKey);
+      } else {
+        setMixPreview(res);
+      }
+    } catch (e: any) {
+      setMessage({ type: "error", text: e.message });
+    } finally {
+      setMixing(false);
+    }
+  };
+
   if (offline) return <div className="ui-panel"><ConnectPrompt what="your class's answers" /></div>;
 
   return (
     <div className="ui-panel">
       <div className="panel-header">
-        <div className="panel-title"><Layers size={20} color="#CF4A0A" /><span>Class-wide answers</span></div>
+        <div className="panel-title"><Layers size={20} color="#CF4A0A" /><span>{title}</span></div>
       </div>
       <p className="form-hint" style={{ fontSize: "0.85rem", marginBottom: "1rem" }}>
-        Answers where most of the class has the same choice and only a few differ: mother tongue, the Yes/Sometimes/No
-        questions, resources and support, and the Part C levels (Beginner/Proficient/Advanced). Use "Fill empty with" for the
-        usual answer, change the few who differ, and save. They are pre-filled in the Excel file you download on tab 5, where
-        you can still change any student. Medium of instruction and rural/urban are on tab 4 (Class settings); Part B is on tab 2.
+        {intro ?? <>Answers where most of the class has the same choice and only a few differ: mother tongue, the
+          Yes/Sometimes/No questions, "all about me", goals and ambition, resources and support, and each subject's Part C
+          remark (the levels are in the grid above). Each question says how many students are left. Use "Fill empty with" for
+          the usual answer, "Apply to all" to replace every answer, or <b>Mix</b> to give students different suggested
+          answers; change the few who differ, and save. Text boxes offer <b>Suggestions…</b>. Answers are pre-filled in the
+          Excel file you download on tab 5, where you can still change any student. Medium of instruction and rural/urban
+          are on tab 4 (Class settings); Part B's activities and answers are on tab 2 (Activities).</>}
       </p>
+
+      {parts.length > 0 && (
+        <div className="bulk-mixall" aria-live="polite">
+          <button type="button" className="btn btn-outline" onClick={() => mixAll(false)} disabled={mixing || saving}>
+            {mixing ? <RefreshCw size={15} className="spin" /> : <Layers size={15} />} Mix all questions
+          </button>
+          <label className="lib-radio">
+            <input type="checkbox" checked={mixReplace} onChange={(e) => { setMixReplace(e.target.checked); setMixPreview(null); }} />
+            Replace answers already filled
+          </label>
+          {mixPreview && (
+            <div className="alert-box alert-info lib-inline-alert">
+              <div>
+                {mixPreview.cells === 0
+                  ? <>Nothing to fill: every question already has an answer{mixReplace ? "" : " (tick 'Replace answers already filled' to mix them again)"}.</>
+                  : <>Fills <b>{mixPreview.cells}</b> answers in <b>{mixPreview.fields.filter((f) => f.filled).length}</b> questions
+                      for <b>{mixPreview.students}</b> students, each with one of the suggested answers at random.</>}
+                {mixPreview.skipped.length > 0 && (
+                  <> Not mixed (fill them yourself): {mixPreview.skipped.map((x) => `${x.label} - ${x.reason}`).join("; ")}.</>
+                )}
+                {mixPreview.cells > 0 && (
+                  <div style={{ marginTop: "0.5rem" }}>
+                    <button type="button" className="btn btn-green" onClick={() => mixAll(true)} disabled={mixing}>
+                      <Save size={15} /> Save all
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="bulk-toolbar">
         <select className="form-select" value={fieldKey} onChange={(e) => pick(e.target.value)} disabled={loadingFields || saving}>
           <option value="">{loadingFields ? "Loading fields…" : "— Choose a field —"}</option>
           {parts.map((p) => (
             <optgroup key={p.code} label={p.title}>
-              {p.fields.map((f) => <option key={f.key} value={f.key}>{f.label}</option>)}
+              {p.fields.map((f) => <option key={f.key} value={f.key}>{f.label}{status(f.key)}</option>)}
             </optgroup>
           ))}
         </select>
@@ -697,7 +839,16 @@ export function HpcBulkEntry({ api, stage }: { api: CardsApi; stage: string }) {
           <div className="bulk-fill">
             <span className="form-label" style={{ whiteSpace: "nowrap" }}>Fill empty with</span>
             <FieldInput field={field} value={fillValue} onChange={setFillValue} compact />
-            <button className="btn btn-outline" style={{ padding: "0.5rem 0.9rem" }} onClick={fillEmpty} disabled={isBlank(fillValue)}>Apply</button>
+            <button className="btn btn-outline" style={{ padding: "0.5rem 0.9rem" }} onClick={fillEmpty} disabled={isBlank(fillValue)}
+                    title="Fills only the students whose answer is empty">Apply</button>
+            <button className="btn btn-outline" style={{ padding: "0.5rem 0.9rem" }} onClick={fillAll} disabled={isBlank(fillValue)}
+                    title="Replaces every student's answer (saved only when you press Save)">Apply to all</button>
+            {mixPool.length > 1 && (
+              <button className="btn btn-outline" style={{ padding: "0.5rem 0.9rem" }} onClick={mixSuggestions}
+                      title={`Gives each student one of the ${field.suggestions?.length ? "suggestions" : "answers"} at random (saved only when you press Save)`}>
+                {field.suggestions?.length ? "Mix suggestions" : "Mix answers"}
+              </button>
+            )}
           </div>
         )}
       </div>

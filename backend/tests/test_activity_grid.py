@@ -60,11 +60,11 @@ def test_same_activity_with_different_levels_becomes_two_activities():
     assert errors == []
     acts = b["formdata"]
     assert [a["dt"]["domain"] for a in acts] == [["PSLS1", "PSLS2", "PSLS4", "PSLS6", "PSLS7"], ["PSLS3", "PSLS5"]]
-    assert [a["dt"]["act_bank_id"] for a in acts] == [85, 85]
+    assert all(is_manual(a) for a in acts)                           # every activity goes on as a manual one
     assert [acts[1]["dt"][k][3] for k in ("awr", "sen", "cre")] == ["advance", "beginner", "proficient"]
     assert acts[1]["dt"]["tf"] == ["3", "1", "2"]                    # Preparatory feedback follows the levels
     assert len({a["id"] for a in acts}) == 2 and all(a["is_complete"] for a in acts)
-    assert [m["bank_id"] for m in b["act_bank_map"]] == ["85", "85"]
+    assert b["act_bank_map"] == []
 
 
 def test_one_activity_per_subject():
@@ -76,7 +76,7 @@ def test_one_activity_per_subject():
     assert [a["nm"] for a in b["formdata"]] == [f"Bank {201 + i}" for i in range(7)]
 
 
-def test_unchanged_grid_leaves_parakh_exactly_as_it_is():
+def test_unchanged_grid_keeps_the_activities_and_their_answers_and_makes_them_manual():
     a = portal_activity(85, SUBJ[:5], sa=[2] * 8, n=1)
     b2 = portal_activity(91, SUBJ[5:], sa=[3] * 8, n=2)
     data = student_with(a, b2)
@@ -86,6 +86,7 @@ def test_unchanged_grid_leaves_parakh_exactly_as_it_is():
     b, errors = part_b("PREPARATORY", data, row, lk)
     assert errors == []
     assert [x["id"] for x in b["formdata"]] == ["1001_85_1", "1001_91_2"]
+    assert all(is_manual(x) for x in b["formdata"])                   # bank copies become manual ones
     assert b["formdata"][1]["dt"]["sa"] == [3] * 8                     # the second keeps its own answers
 
 
@@ -101,7 +102,7 @@ def test_changed_activity_gets_the_students_answers_and_others_keep_theirs():
     assert errors == []
     acts = b["formdata"]
     assert [x["dt"]["domain"] for x in acts] == [SUBJ[:5], ["PSLS6"], ["PSLS7"]]
-    assert acts[0]["id"] == "1001_85_1" and acts[1]["id"] == "1001_91_2" and acts[2]["dt"]["act_bank_id"] == 93
+    assert acts[0]["id"] == "1001_85_1" and acts[1]["id"] == "1001_91_2" and is_manual(acts[2]) and acts[2]["nm"] == "Bank 93"
     assert acts[0]["dt"]["sa"] == [2] * 8                     # first activity: Excel answers (2 = No)
     assert acts[1]["dt"]["sa"] == [2] * 8 and acts[2]["dt"]["sa"] == [2] * 8   # changed and new: the student's answers
     assert acts[1]["dt"]["awr"][3] == "advance"
@@ -172,7 +173,7 @@ def test_picture_activity_cannot_be_added_but_can_be_kept():
     assert errors == [] and b["formdata"][0]["id"] == "1001_1_1" and b["formdata"][0]["dt"]["awr"][3] == "advance"
 
 
-def test_teacher_own_activity_is_sent_as_not_global():
+def test_teachers_own_parakh_activity_also_goes_on_as_manual():
     lk = make_lookups("PREPARATORY")
 
     def resolve(key):
@@ -181,7 +182,7 @@ def test_teacher_own_activity_is_sent_as_not_global():
         return None
     b, errors = part_b("PREPARATORY", blank_student("PREPARATORY"), grid_row(**{s: ("T40321", "Beginner", "Beginner", "Beginner") for s in SUBJ}), lk, resolve)
     assert errors == []
-    assert b["act_bank_map"][0]["is_global"] is False and b["formdata"][0]["dt"]["act_bank_id"] == 40321
+    assert b["act_bank_map"] == [] and is_manual(b["formdata"][0]) and b["formdata"][0]["nm"] == "My role play"
 
 
 def test_middle_takes_the_approach_from_the_activity_and_keeps_student_answers():
@@ -258,11 +259,11 @@ def test_editing_updates_cards_that_already_have_the_activity_but_keeps_the_stud
     plan = grid.plan(SUBJ, dict(zip(SUBJ, PREP.SUBJECTS)), PREP.ACTIVITY_GRID, data.raw_parts["part_b"], grid_row(), resolve)
     assert plan.errors == [] and [c["action"] for c in plan.changes] == ["keep"]
     assert not grid.stale_texts(data.raw_parts["part_b"], grid.current(SUBJ, data.raw_parts["part_b"], resolve.typed), resolve)
-    # nothing edited: the card's texts and its "modified" flag are left as they are
+    # nothing edited: the bank copy still becomes a manual one, with the bank's texts
     data = student_with(portal_activity(85, SUBJ))
     b, errors = part_b("PREPARATORY", data, grid_row(), lk, edited_resolver(modified=False))
     act = b["formdata"][0]
-    assert errors == [] and act["is_modified"] is False
+    assert errors == [] and act["id"] == "1001_85_1" and is_manual(act)
     assert act["dt"]["desc"] == BANK_CONTENT["desc"] and act["dt"]["awr"][:3] == BANK_CONTENT["awr"][:3]
 
 
@@ -300,7 +301,7 @@ def test_an_activity_made_here_goes_on_the_card_typed_and_is_recognised_again():
 
 
 # ---------------------------------------------------------------------------
-# A teacher removes their version: only the app's own manual copies go back to the bank activity
+# A teacher removes their version: the app's own manual copy gets the bank's texts and stays manual
 # ---------------------------------------------------------------------------
 
 def manual_copy(act_id="1001_85_1", nm="Bank 85"):
@@ -322,7 +323,7 @@ def unedited_resolver(owned):
     return with_key
 
 
-def test_after_the_teachers_version_is_removed_the_apps_manual_copy_goes_back_to_the_bank():
+def test_after_the_teachers_version_is_removed_the_apps_manual_copy_gets_the_bank_texts():
     data = student_with(manual_copy())
     resolve = unedited_resolver({"1001_85_1": "P85"})
     names = grid.typed_keys(resolve)
@@ -333,15 +334,15 @@ def test_after_the_teachers_version_is_removed_the_apps_manual_copy_goes_back_to
     assert errors == []
     act = b["formdata"][0]
     assert act["id"] == "1001_85_1" and act["nm"] == "Bank 85"
-    assert act["dt"]["act_bank_id"] == 85 and act["dt"]["is_global"] is True and act["is_modified"] is False
+    assert is_manual(act)
     assert act["dt"]["desc"] == BANK_CONTENT["desc"] and act["dt"]["awr"] == BANK_CONTENT["awr"][:3] + ["proficient"]
     assert act["dt"]["tfob"] == "kept notes" or act["dt"]["tfob"] == data.raw_parts["part_b"][0]["dt"]["tfob"]
-    assert b["act_bank_map"] == [{"id": "1001_85_1", "bank_id": "85", "is_modified": False, "is_global": True}]
+    assert b["act_bank_map"] == []
     plan = grid.plan(SUBJ, dict(zip(SUBJ, PREP.SUBJECTS)), PREP.ACTIVITY_GRID, copy.deepcopy(data.raw_parts["part_b"]), grid_row(), resolve)
     assert [c["action"] for c in plan.changes] == ["update"]           # shown before saving
 
 
-def test_a_manual_activity_the_app_did_not_write_is_never_turned_into_a_bank_one():
+def test_a_manual_activity_the_app_did_not_write_is_left_alone():
     data = student_with(manual_copy(act_id="1001_0_1"))                  # same name, but not in the record
     resolve = unedited_resolver({"9999_85_1": "P85"})
     now = grid.current(SUBJ, data.raw_parts["part_b"], grid.typed_keys(resolve))

@@ -69,6 +69,7 @@ def _jwt_secret() -> str:
 
 JWT_SECRET = _jwt_secret()
 JWT_ALGORITHM = "HS256"
+WORKER_THREADS = int(os.getenv("HPC_WORKER_THREADS", "200"))   # requests + running uploads at the same time
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24              # legacy Bearer token in the login response: 24 hours (M-2)
 # The legacy Bearer login ends after this day (M-2): no new Bearer tokens, and old ones are refused.
 BEARER_LAST_DAY = date.fromisoformat(os.getenv("HPC_BEARER_LAST_DAY", "2026-11-01"))

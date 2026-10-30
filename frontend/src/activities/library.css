@@ -189,3 +189,7 @@
 .lib-chips .mono-chip { display: inline-flex; align-items: center; gap: 0.3rem; }
 .lib-chip-x { border: none; background: transparent; cursor: pointer; font-size: 1rem; line-height: 1; padding: 0 0.15rem; color: inherit; }
 .lib-chip-x:focus-visible { outline: 2px solid var(--chakra-blue); outline-offset: 1px; }
+
+/* where an activity belongs: subject and grade */
+.lib-place { display: inline-flex; flex-wrap: wrap; gap: 0.25rem; }
+.lib-badge-subject { background: var(--brand-50, #FFF7ED); border-color: var(--brand-200, #FED7AA); }

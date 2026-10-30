@@ -1162,6 +1162,7 @@ body {
 .card-input { width: 100%; }
 textarea.card-input { resize: vertical; min-height: 4.5rem; }
 .card-text-wrap { position: relative; }
+.card-suggest { display: block; margin-bottom: 0.3rem; max-width: 100%; font-size: 0.82rem; }   /* ready phrases next to a text answer */
 .char-count { position: absolute; right: 0.5rem; bottom: 0.35rem; font-size: 0.7rem; color: var(--text-light); pointer-events: none; }
 .char-count.over { color: var(--danger-500); font-weight: 700; }
 .field-problem { font-size: 0.78rem; color: var(--danger-500); }
@@ -1223,6 +1224,8 @@ textarea.card-input { resize: vertical; min-height: 4.5rem; }
 .bulk-toolbar > .form-select { min-width: 280px; max-width: 100%; }
 .bulk-fill { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
 .bulk-fill .card-input, .bulk-fill .card-text-wrap { min-width: 200px; }
+.bulk-mixall { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1rem; margin-bottom: 1rem; }
+.bulk-mixall .alert-box { flex-basis: 100%; margin: 0; }
 .bulk-table tr.row-edited td { background: var(--kesari-50); }
 .bulk-footer { display: flex; justify-content: flex-end; align-items: center; gap: 0.75rem; margin-top: 1rem; flex-wrap: wrap; }
 .bulk-footer > span { margin-right: auto; }
@@ -1242,3 +1245,12 @@ textarea.card-input { resize: vertical; min-height: 4.5rem; }
   .print-area { position: absolute; inset: 0; padding: 0; overflow: visible; }
   .no-print { display: none !important; }
 }
+
+/* the pre-check before the class check: empty answers by where they are filled */
+.pc-box { flex-basis: 100%; }
+.pc-body { flex: 1; }
+.pc-place { margin-top: 0.6rem; }
+.pc-where { font-weight: 700; }
+.pc-place ul { margin: 0.2rem 0 0; padding-left: 1.2rem; }
+.pc-students { font-size: 0.85rem; max-height: 220px; overflow-y: auto; }
+.pc-actions { display: flex; gap: 0.6rem; margin-top: 0.8rem; }

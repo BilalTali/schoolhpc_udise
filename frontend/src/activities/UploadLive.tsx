@@ -78,6 +78,8 @@ export function UploadLive({ api, jobId, onFinished, onRetry }: {
   const perStudent = done ? elapsed / done : 0;
   const failedSave = job.students.filter((s) => s.status === "FAILED").length;      // PARAKH problems: retry these
   const fileMistakes = job.students.filter((s) => s.status === "INVALID").length;   // these need the file fixed
+  const savedCount = job.students.filter((s) => s.status === "SUCCESS").length;
+  const notSaved = job.students.filter((s) => s.status !== "SUCCESS" && s.status !== "SKIPPED").length;
   const retry = async () => {
     setRetrying(true);
     setRetryError(null);
@@ -163,6 +165,16 @@ export function UploadLive({ api, jobId, onFinished, onRetry }: {
               {" "}Retry the {failedSave} not saved because of PARAKH
             </button>
           )}
+          {savedCount > 0 && (
+            <button type="button" className="btn btn-outline" onClick={() => downloadWorkbook(api, job.job_id, "saved")}>
+              <Download size={14} aria-hidden="true" /> Excel: the {savedCount} saved
+            </button>
+          )}
+          {notSaved > 0 && (
+            <button type="button" className="btn btn-primary" onClick={() => downloadWorkbook(api, job.job_id, "not_saved")}>
+              <Download size={14} aria-hidden="true" /> Excel: the {notSaved} not saved - fix and upload
+            </button>
+          )}
           <button type="button" className="btn btn-outline" onClick={() => downloadReport(api, job.job_id)}>
             <Download size={14} aria-hidden="true" /> Download the report (CSV)
           </button>
@@ -191,6 +203,19 @@ function fmt(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = seconds % 60;
   return m ? `${m} min ${s} s` : `${s} s`;
+}
+
+/** The uploaded file again with only the saved, or only the not-saved students (the others hidden, Sync = No). */
+async function downloadWorkbook(api: Api, jobId: string, which: "saved" | "not_saved") {
+  const res = await apiFetch(`/teacher/upload/jobs/${jobId}/workbook?which=${which}`, {}, api.base);
+  if (!res.ok) return;
+  const name = /filename="([^"]+)"/.exec(res.headers.get("Content-Disposition") || "")?.[1];
+  const url = URL.createObjectURL(await res.blob());
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name || `hpc_upload_${jobId.slice(0, 8)}_${which}.xlsx`;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 async function downloadReport(api: Api, jobId: string) {

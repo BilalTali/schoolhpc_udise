@@ -41,3 +41,19 @@ def as_text_answer(cell, field) -> None:
 
 def _intended(wb) -> Set[Tuple[str, str]]:
     return wb.__dict__.setdefault(_KEY, set())
+
+
+MAX_UNPACKED = 80 * 1024 * 1024             # a class workbook unpacks to a few MB; far more is a "zip bomb"
+
+
+def unpacked_size_ok(source) -> bool:
+    """An .xlsx is a zip: checks what it would unpack to before openpyxl opens it (a small upload must not expand to
+    gigabytes in memory). source: a path or the file's bytes. False when too large or not a zip at all."""
+    import io
+    import zipfile
+    try:
+        with zipfile.ZipFile(io.BytesIO(source) if isinstance(source, (bytes, bytearray)) else source) as z:
+            infos = z.infolist()
+            return len(infos) <= 2000 and sum(i.file_size for i in infos) <= MAX_UNPACKED
+    except (zipfile.BadZipFile, OSError, ValueError):
+        return False

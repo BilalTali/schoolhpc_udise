@@ -5,10 +5,14 @@ Run from the project root:   python -m uvicorn backend.main:app --reload
 API docs:                    http://127.0.0.1:8000/docs
 """
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+
+from backend import config
 
 from backend.database import SessionLocal, init_db
 from backend.models.entities import encrypt_stored_passwords
@@ -32,6 +36,10 @@ with SessionLocal() as _db:
 
 @asynccontextmanager
 async def lifespan(app):
+    import anyio
+    # routes are plain functions run in worker threads, and an upload's sync runs in one for all its minutes: the
+    # default 40 threads would let a few long uploads and PARAKH's slow answers hold up every other request
+    anyio.to_thread.current_default_thread_limiter().total_tokens = config.WORKER_THREADS
     count = recover_interrupted_jobs()
     if count:
         print(f"[startup] {count} upload(s) were interrupted by a restart and marked FAILED.")
@@ -60,6 +68,24 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Every answer tells the browser: no guessing file types, not inside another site's frame (clickjacking), no address
+# sent to other sites; the app's pages may load only its own scripts and styles (images also as data: - the captcha).
+_PAGE_POLICY = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
+                "connect-src 'self'; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'; "
+                "frame-ancestors 'none'")
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    if not request.url.path.startswith(("/api/", "/docs", "/redoc", "/openapi.json")):   # the API docs load their own scripts
+        response.headers.setdefault("Content-Security-Policy", _PAGE_POLICY)
+    return response
+
+
 @app.exception_handler(UnsafePath)
 async def unsafe_path(request: Request, exc: UnsafePath):
     """An id, stage or file name that would reach outside its folder (C-1, C-2)."""
@@ -71,6 +97,27 @@ for router in (auth_router, schools_router, teachers_router, hpc_cards_router, a
     app.include_router(router, prefix="/api/v1")
 
 
-@app.get("/")
-def root():
+@app.get("/api/health")
+def health():
     return {"status": "online", "service": "HPC Automation API", "docs": "/docs"}
+
+
+# The built web app (frontend/dist, made by `npm run build`) is served from here too, so one server - without
+# the Vite dev server - runs everything. Without a build, "/" just says the API is online.
+_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+if (_DIST / "index.html").exists():
+    app.mount("/assets", StaticFiles(directory=_DIST / "assets"), name="assets")
+
+    @app.get("/{path:path}", include_in_schema=False)
+    def web_app(path: str):
+        """Files of the build (favicon ...) by name; every other path is a page of the app (index.html)."""
+        if path.startswith(("api/", "docs", "openapi.json", "redoc")):
+            return JSONResponse(status_code=404, content={"detail": "Not Found"})
+        file = (_DIST / path).resolve()
+        if path and file.is_file() and _DIST in file.parents:
+            return FileResponse(file)
+        return FileResponse(_DIST / "index.html", headers={"Cache-Control": "no-cache"})
+else:
+    @app.get("/")
+    def root():
+        return health()

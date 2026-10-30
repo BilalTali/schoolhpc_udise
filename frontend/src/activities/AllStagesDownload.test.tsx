@@ -22,6 +22,7 @@ describe("One file for all stages", () => {
       const path = String(input).replace("http://test/api/v1", "");
       calls.push(`${init?.method || "GET"} ${path}`);
       const stage = path.split("/")[3];
+      if (path.endsWith("/precheck")) return json({ stage, students: 35, complete: 35, items: [] });
       if (path.endsWith("/check") && init?.method === "POST") { state[stage].job = done(30, 35); return json(state[stage].job); }
       if (path.endsWith("/check")) return json(state[stage]);
       if (path === "/teacher/template/all/download") return Promise.resolve(new Response(new Blob(["x"]), { status: 200 }));

@@ -11,6 +11,7 @@ Nothing is written for a student whose workbook row has errors.
 """
 import copy
 import json
+import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
@@ -91,7 +92,8 @@ def build_payloads(stage: str, data: StudentData, row: Dict[str, Any], lookups: 
         parts[part.col] = fd
 
     part_b = next(p for p in st.PARTS if p.code == "B")
-    grid_errors = apply_activity_grid(stage, parts, row, lookups, resolve or activity_grid.resolver_from_lookups(lookups))
+    grid_errors = apply_activity_grid(stage, parts, row, lookups, resolve or activity_grid.resolver_from_lookups(lookups),
+                                      (data.record.get("stu_info") or {}).get("grade_id"))
     errors += [f"{part_b.title}: {e}" for e in grid_errors]
 
     ctx = StudentContext(record=data.record, lookups=lookups, parts=parts)
@@ -146,16 +148,18 @@ def grid_state(stage: str, parts: Dict[str, Any], row: Dict[str, Any], lookups: 
 
 
 def apply_activity_grid(stage: str, parts: Dict[str, Any], row: Dict[str, Any], lookups: Lookups,
-                        resolve: activity_grid.Resolver) -> List[str]:
-    """Rebuilds Part B from the grid when the grid differs from PARAKH, or when an activity on the card was
-    edited in the library since; otherwise leaves it exactly as it is."""
+                        resolve: activity_grid.Resolver, grade_id: Any = None) -> List[str]:
+    """Rebuilds Part B from the grid when the grid differs from PARAKH, or when a chosen activity on the card is
+    not yet the manual copy with the library's current texts; otherwise leaves it exactly as it is. A locked
+    student (activities sharing subjects) whose grid is unchanged is left alone until Replace is ticked."""
     st = get_stage(stage)
     part_b = next(p for p in st.PARTS if p.code == "B")
     now, values, _ = grid_state(stage, parts, row, lookups, activity_grid.typed_keys(resolve),
-                                getattr(resolve, "defaults", None))
+                                activity_grid.defaults_for(resolve, grade_id))
     replace = str(values.get(activity_grid.REPLACE_KEY, "")).lower() in ("yes", "true", "1")
     unchanged = all(values[k] == now.values.get(k, "") for k in values if k != activity_grid.REPLACE_KEY)
-    if now.existing and unchanged and not replace and not activity_grid.stale_texts(parts[part_b.col], now, resolve):
+    if now.existing and unchanged and not replace and \
+            (now.locked or not activity_grid.stale_texts(parts[part_b.col], now, resolve)):
         return []
     return activity_grid.apply(st.DOMAINS, dict(zip(st.DOMAINS, st.SUBJECTS)), st.ACTIVITY_GRID, parts[part_b.col], values, resolve)
 
@@ -164,10 +168,15 @@ GENDERS = {"MALE": "Male", "FEMALE": "Female", "BOY": "Male", "GIRL": "Female", 
 
 
 def add_details(student: Dict[str, Any], record: Dict[str, Any]) -> None:
-    """Fills gender and admission number from a student's full record (the roster list lacks them)."""
+    """Fills gender, admission number and date of birth from a student's full record (the roster list lacks them;
+    the date of birth gives "All about me" its age without reading PARAKH again)."""
     stu = record.get("stu_info") or {}
     student["gender"] = GENDERS.get(str(stu.get("gender") or "").strip().upper(), "")
     student["admission_number"] = stu.get("school_admission_number", "")
+    student["dob"] = str(stu.get("dob") or "")
+    school = record.get("sch_info") or {}
+    student["school_place"] = ", ".join(x for x in (str(school.get("school_city") or "").strip(),
+                                                     str(school.get("district_name") or "").strip()) if x)
 
 
 def roster_with_details(portal: Portal, stage: str, lookups: Lookups, workers: int = 6) -> List[Dict[str, Any]]:
@@ -201,6 +210,7 @@ def roster(portal: Portal, stage: str, lookups: Lookups) -> List[Dict[str, Any]]
             "hpc_login_id": r.get("std_reg_id", ""),
             "apaar_id": r.get("std_apaar_id", ""),
             "grade": next((g["grade_caption"] for g in lookups.grades if g["id"] == r.get("grade_id")), ""),
+            "grade_id": r.get("grade_id"),
             "section": lookups.section_name(r.get("section_id")),
             "status": r.get("hpc_status") or "PENDING",
         })
@@ -274,15 +284,21 @@ def sync_workbook(portal: Portal, path, dry_run: bool = False, on_result=lambda 
                   before_save_for=lambda stage: None, base_values=lambda stage, student_id: {},
                   exception_problems: Optional[List[str]] = None,
                   on_step: Callable[[str, str], None] = lambda student_id, step: None,
-                  only: Optional[set] = None) -> List[SyncResult]:
+                  only: Optional[set] = None,
+                  read_for: Callable[[str, str], Optional["StudentData"]] = lambda stage, student_id: None,
+                  lookups_for: Optional[Callable[[str], Lookups]] = None) -> List[SyncResult]:
     """Checks, then uploads every student marked Sync=Yes, stage by stage. Calls on_result after each student.
     extra_values adds values kept outside the file (the Activities grid); resolver_for gives the activity list.
-    only: just these students (a retry of the ones whose save failed); the others are left out entirely."""
+    only: just these students (a retry of the ones whose save failed); the others are left out entirely.
+    read_for: a dry run may use a card already read (the class check's); a save always reads PARAKH again.
+    lookups_for: PARAKH's lists for a stage (the check's, cached). They are asked for again when PARAKH does not
+    answer; still missing, only that student is not saved (retry later) and the next one asks again."""
     from backend.hpc import workbook
     rows = workbook.read(path, exception_problems)
     stages = workbook.detect_stages(path)
     only_stage = stages[0] if len(stages) == 1 else ""     # older one-stage files have no Stage column
     lookups: Dict[str, Lookups] = {}
+    no_lists: Dict[str, str] = {}                           # stage -> why its lists did not load in this round
     results = []
     for sid, row in rows.items():
         if only is not None and sid not in only:
@@ -296,15 +312,75 @@ def sync_workbook(portal: Portal, path, dry_run: bool = False, on_result=lambda 
         elif stage.lower() not in STAGE_NAMES:
             result = SyncResult(sid, name, "INVALID", [f"Students: unknown stage '{stage}'"], stage=stage)
         else:
-            if stage not in lookups:
-                lookups[stage] = Lookups(portal, stage_code(stage))
+            if stage not in lookups and stage not in no_lists:
+                try:
+                    lookups[stage] = _load_lookups(portal, stage, lookups_for)
+                except PortalError as exc:
+                    no_lists[stage] = str(exc)
+            if stage in no_lists:
+                result = SyncResult(sid, name, "FAILED", [f"PARAKH's lists for {stage} did not load: {no_lists[stage]}"], stage=stage)
+                results.append(result)
+                on_result(result)
+                continue
             # class settings under the file's values (an exception in the file wins); the dashboard's Part B on top
             row = {**base_values(stage, sid), **row, **extra_values(stage, sid)}
             result = sync_student(portal, stage, sid, row, lookups[stage], dry_run=dry_run, resolve=resolver_for(stage),
-                                  before_save=before_save_for(stage), on_step=lambda step, sid=sid: on_step(sid, step))
+                                  before_save=before_save_for(stage), on_step=lambda step, sid=sid: on_step(sid, step),
+                                  data=read_for(stage, sid) if dry_run else None)
         results.append(result)
         on_result(result)
     return results
+
+
+LOOKUP_TRIES, LOOKUP_WAIT = 3, 10.0
+SAVE_RECHECK_WAIT = 10.0
+
+
+def no_answer(message: str) -> bool:
+    """PARAKH did not answer (a stall, a dropped connection, its gateway down) - asking again later may work."""
+    text = str(message)
+    return any(m in text for m in ("did not answer", "Proxy error", "HTTP 500", "HTTP 502", "HTTP 503", "HTTP 504"))
+
+
+def _save_part(portal: Portal, stage: str, student_id: str, payload: Dict[str, Any], on_step) -> None:
+    """Saves one part. When PARAKH gives no answer, the outcome is unknown: the part is read back - already as
+    sent means saved; otherwise it is sent once more (a part save replaces the whole part, so sending the same
+    values again changes nothing else)."""
+    try:
+        portal.save_part(stage, student_id, payload)
+        return
+    except PortalError as exc:
+        if not no_answer(exc):
+            raise
+    time.sleep(SAVE_RECHECK_WAIT)
+    on_step("PARAKH did not answer the save - checking whether it was saved")
+    held = portal.student(stage, student_id, payload["hpc_col"]).get("formdata")
+    if _same(held, payload.get("formdata")):
+        return
+    on_step("Not saved yet - saving again")
+    portal.save_part(stage, student_id, payload)
+
+
+def _same(a: Any, b: Any) -> bool:
+    """Formdata as PARAKH holds it vs as sent: either may be a JSON string or the structure itself."""
+    def plain(x):
+        if isinstance(x, str):
+            try:
+                return json.loads(x) if x.strip() else None
+            except ValueError:
+                return x
+        return x
+    return json.dumps(plain(a), sort_keys=True, default=str) == json.dumps(plain(b), sort_keys=True, default=str)
+
+
+def _load_lookups(portal: Portal, stage: str, lookups_for: Optional[Callable[[str], Lookups]]) -> Lookups:
+    for attempt in range(1, LOOKUP_TRIES + 1):
+        try:
+            return lookups_for(stage) if lookups_for else Lookups(portal, stage_code(stage))
+        except PortalError:
+            if attempt == LOOKUP_TRIES:
+                raise
+            time.sleep(LOOKUP_WAIT * attempt)                 # PARAKH slow for a moment: ask again
 
 
 def sync_student(portal: Portal, stage: str, student_id: str, row: Dict[str, Any],
@@ -342,7 +418,7 @@ def sync_student(portal: Portal, stage: str, student_id: str, row: Dict[str, Any
         for i, payload in enumerate(payloads, start=1):
             current = payload["hpc_col"]
             on_step(f"Saving {names.get(current, current)} ({i} of {len(payloads)})")
-            portal.save_part(stage, student_id, payload)
+            _save_part(portal, stage, student_id, payload, on_step)
             saved.append(current)
         current = ""
         on_step("Checking that PARAKH shows the card completed")

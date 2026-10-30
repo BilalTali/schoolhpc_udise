@@ -29,6 +29,8 @@ export interface Activity {
   covers_all: boolean;
   missing_subjects: string[];
   portal_subject_names: string[];
+  grade_id?: number | null;     // PARAKH grade id; for activities made here, chosen by the teacher
+  grade_name?: string;
   has_pictures: boolean;
   status: "active" | "disabled";
   is_default: boolean;
@@ -55,8 +57,6 @@ export interface Activity {
 }
 
 export interface ActivityDetail extends Activity {
-  grade_id?: number | null;     // PARAKH grade id; for activities made here, chosen by the teacher
-  grade_name?: string;
   original?: Pick<Activity, "activity_text" | "assessment_text" | "rubric" | "goals" | "competencies" | "subjects" | "subject_names">;
   diff?: { field: string; label: string; original: unknown; current: unknown }[];
   history: { at: string; who: string; action: string }[];
@@ -91,11 +91,12 @@ export interface SyncJob {
 export interface Listing {
   stage: string;
   subjects: Subject[];
+  grades?: { id: number; name: string }[];
   total: number;
   page: number;
   page_size: number;
   items: Activity[];
-  counts: { all: number; active: number; disabled: number; covers_all: number; edited: number; removed: number; usable_in_excel: number };
+  counts: { all: number; active: number; disabled: number; covers_all: number; edited: number; removed: number; no_grade?: number; usable_in_excel: number };
   default_id: string | null;
   default_label: string | null;
   sync: { latest: SyncJob | null; last_synced: Record<string, string>; bank_updated?: Record<string, string> };

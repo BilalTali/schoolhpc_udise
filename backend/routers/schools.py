@@ -1,24 +1,29 @@
 """
 School endpoints: teacher accounts, dashboard stats, the school's HPC session and roster.
 """
+import io
 import json
 import os
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from backend.database import get_db
 from backend.hpc import sync
 from backend.hpc.portal import PortalError, stage_code
+from backend.hpc.xl import unpacked_size_ok
 from backend.hpc.stages.common import Lookups
 from backend.models.entities import School, StudentRecord, Teacher, UploadJob
 from backend.schemas.schemas import (
     HpcCaptchaRequest, HpcCredentialsRequest, HpcOtpRequest, HpcSessionStatusResponse, HpcStartSessionRequest,
     TeacherCreateRequest, TeacherResponse, TeacherUpdateRequest,
 )
-from backend.services import audit, hpc_sessions
+from backend.services import (audit, hpc_sessions, reports_pdf, sdms_aadhaar, sdms_admit, sdms_apaar_excel, sdms_bulk, sdms_data,
+                              sdms_sync, udise_parakh, udise_sessions)
 from backend.services.safe_paths import inside
 from backend.services.auth_service import end_all_sessions, hash_password, require_school_admin
 
@@ -245,16 +250,27 @@ def get_school_stats(
     total_teachers = len(teachers)
     total_jobs = db.query(UploadJob).filter(UploadJob.teacher_id.in_(teacher_ids)).count() if teacher_ids else 0
 
-    student_records = (
-        db.query(StudentRecord)
-        .join(UploadJob)
-        .filter(UploadJob.teacher_id.in_(teacher_ids))
-        .all()
-    ) if teacher_ids else []
+    # each student once: an upload (and every retry of it) adds a row per student, so rows are not students
+    outcomes: dict = {}
+    if teacher_ids:
+        for sid, state in (db.query(StudentRecord.admission_number, StudentRecord.status).join(UploadJob)
+                           .filter(UploadJob.teacher_id.in_(teacher_ids)).distinct()):
+            outcomes.setdefault(sid, set()).add(state)
+    on_rosters = set()                                    # the teachers' classes as fetched from PARAKH
+    for t in teachers:
+        for path in hpc_sessions.session_dir("teacher", t.id).glob("roster_*.json"):
+            try:
+                body = json.loads(path.read_text(encoding="utf-8"))
+            except ValueError:
+                continue
+            on_rosters |= {str(x.get("student_id")) for x in (body.get("students") if isinstance(body, dict) else body) or []
+                           if isinstance(x, dict) and x.get("student_id")}
 
-    total_students = len(student_records)
-    success_students = sum(1 for s in student_records if s.status == "SUCCESS")
-    failed_students = sum(1 for s in student_records if s.status in ("FAILED", "INVALID"))
+    if on_rosters:                                        # uploads of students no longer in a class (old ids) don't count
+        outcomes = {sid: states for sid, states in outcomes.items() if sid in on_rosters}
+    total_students = len(on_rosters) or len(outcomes)
+    success_students = sum(1 for states in outcomes.values() if "SUCCESS" in states)
+    failed_students = sum(1 for states in outcomes.values() if "SUCCESS" not in states and states & {"FAILED", "INVALID"})
 
     return {
         "school_name": admin.school_name,
@@ -382,3 +398,418 @@ def sync_school_roster(stage: str = "Preparatory", admin: School = Depends(requi
     path.write_text(json.dumps(students, ensure_ascii=False, indent=1), encoding="utf-8")
     return {"success": True, "total_students": len(students), "stage": stage,
             "last_synced_at": datetime.now().strftime("%d %b %Y, %I:%M %p"), "students": students}
+
+
+# ---------------------------------------------------------------------------
+# UDISE+: one sign-in, a saved session for each of its four services
+# ---------------------------------------------------------------------------
+
+class UdiseConnectRequest(BaseModel):
+    username: str = Field("", max_length=20)       # empty: the saved one
+    password: str = Field("", max_length=100)
+
+
+@router.get("/udise/status")
+def udise_status(admin: School = Depends(require_school_admin)):
+    return udise_sessions.status(admin.id)
+
+
+@router.post("/udise/connect")
+def udise_connect(payload: UdiseConnectRequest, admin: School = Depends(require_school_admin)):
+    """Starts the sign-in: UDISE+'s captcha picture comes back for the person to read."""
+    return udise_sessions.connect(admin.id, payload.username, payload.password)
+
+
+@router.post("/udise/new-captcha")
+def udise_new_captcha(admin: School = Depends(require_school_admin)):
+    return udise_sessions.new_captcha(admin.id)
+
+
+@router.post("/udise/verify-captcha")
+def udise_verify_captcha(payload: HpcCaptchaRequest, admin: School = Depends(require_school_admin)):
+    return udise_sessions.verify_captcha(admin.id, payload.answer)
+
+
+@router.post("/udise/verify-otp")
+def udise_verify_otp(payload: HpcOtpRequest, admin: School = Depends(require_school_admin)):
+    return udise_sessions.verify_otp(admin.id, payload.otp)
+
+
+@router.post("/udise/disconnect")
+def udise_disconnect(admin: School = Depends(require_school_admin)):
+    audit.record(f"school_admin:{admin.id}", "disconnect_udise", "settings", admin.id, None, {})
+    return udise_sessions.disconnect(admin.id)
+
+
+# SDMS: the school's students for the current session (read only)
+
+@router.post("/udise/sdms/fetch")
+def sdms_fetch(admin: School = Depends(require_school_admin)):
+    """Starts reading every student of every class (in the background)."""
+    return sdms_data.start(admin.id)
+
+
+@router.get("/udise/sdms/fetch")
+def sdms_fetch_progress(admin: School = Depends(require_school_admin)):
+    return sdms_data.progress(admin.id)
+
+
+@router.get("/udise/sdms/students")
+def sdms_students(admin: School = Depends(require_school_admin)):
+    found = sdms_data.view(admin.id)
+    if found is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No SDMS data yet. Press 'Fetch all students'.")
+    return found
+
+
+@router.get("/udise/sdms/students.xlsx")
+def sdms_students_excel(admin: School = Depends(require_school_admin)):
+    content = sdms_data.excel(admin.id)
+    if content is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No SDMS data yet. Press 'Fetch all students'.")
+    audit.record(f"school_admin:{admin.id}", "sdms_download", "udise", admin.id, None, {})
+    return StreamingResponse(io.BytesIO(content), headers={"Content-Disposition": 'attachment; filename="SDMS_students.xlsx"'},
+                             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
+@router.get("/udise/sdms/completion")
+def sdms_completion(admin: School = Depends(require_school_admin)):
+    """How many students still have fields SDMS requires, and which fields most often."""
+    found = sdms_data.completion_summary(admin.id)
+    if found is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No SDMS data yet. Press 'Fetch all students'.")
+    return found
+
+
+@router.get("/udise/sdms/completion.xlsx")
+def sdms_completion_excel(admin: School = Depends(require_school_admin)):
+    """One sheet: each student (class, section, name, father's name, PEN) and only the fields SDMS requires."""
+    content = sdms_data.completion_excel(admin.id)
+    if content is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No SDMS data yet. Press 'Fetch all students'.")
+    audit.record(f"school_admin:{admin.id}", "sdms_download", "udise", admin.id, None, {"sheet": "completion"})
+    return StreamingResponse(io.BytesIO(content), headers={"Content-Disposition": 'attachment; filename="SDMS_to_complete.xlsx"'},
+                             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
+@router.get("/udise/sdms/new-admissions.xlsx")
+def sdms_admission_template(admin: School = Depends(require_school_admin)):
+    """A sheet for new admissions: SDMS's Add Student fields, then the rest its form requires (drop-downs in its words)."""
+    content = sdms_data.admission_template(admin.id)
+    if content is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Fetch the students once first: the sheet uses the school's classes and SDMS lists.")
+    return StreamingResponse(io.BytesIO(content), headers={"Content-Disposition": 'attachment; filename="SDMS_new_admissions.xlsx"'},
+                             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
+# SDMS updates from the filled completion sheet: upload + validate (nothing sent), then sync (after confirming)
+
+class SdmsSyncRequest(BaseModel):
+    confirm: bool = Field(False, description="must be true: the person agreed to save to SDMS")
+    only: Optional[List[int]] = Field(None, description="just these students (e.g. one to try first)")
+
+
+@router.post("/udise/sdms/validate")
+def sdms_validate(file: UploadFile = File(...), admin: School = Depends(require_school_admin)):
+    """Checks a filled completion sheet against the students SDMS holds: changes and problems. Sends nothing."""
+    content = file.file.read(5 * 1024 * 1024 + 1)
+    if len(content) > 5 * 1024 * 1024:
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "The file is larger than 5 MB.")
+    if not unpacked_size_ok(content):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "This is not an Excel file the app can read (.xlsx), or it is damaged.")
+    result = sdms_sync.validate(admin.id, content, file.filename or "sheet.xlsx")
+    if not result.get("ok"):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, result["error"])
+    return result
+
+
+@router.get("/udise/sdms/plan")
+def sdms_plan(admin: School = Depends(require_school_admin)):
+    return {"plan": sdms_sync.last_plan(admin.id), **sdms_sync.progress(admin.id)}
+
+
+@router.post("/udise/sdms/sync")
+def sdms_sync_start(payload: SdmsSyncRequest, admin: School = Depends(require_school_admin)):
+    """Saves the validated changes to SDMS. Only when the request says the person confirmed."""
+    if not payload.confirm:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Confirm first: this saves the changes to SDMS.")
+    result = sdms_sync.start(admin.id, payload.only)
+    if not result.get("started"):
+        raise HTTPException(status.HTTP_409_CONFLICT, result["error"])
+    audit.record(f"school_admin:{admin.id}", "sdms_sync_start", "udise", admin.id, None,
+                 {"students": result["students"], "only": payload.only})
+    return result
+
+
+@router.get("/udise/sdms/sync")
+def sdms_sync_progress(admin: School = Depends(require_school_admin)):
+    return sdms_sync.progress(admin.id)
+
+
+# SDMS new admissions from the filled New admissions sheet: upload + validate, then add (after confirming)
+
+class SdmsAdmitRequest(BaseModel):
+    confirm: bool = Field(False, description="must be true: the person agreed to add these students on SDMS")
+    rows: Optional[List[int]] = Field(None, description="just these sheet rows (e.g. one to try first)")
+
+
+@router.post("/udise/sdms/admit/validate")
+def sdms_admit_validate(file: UploadFile = File(...), admin: School = Depends(require_school_admin)):
+    """Checks a filled New admissions sheet. Sends nothing."""
+    content = file.file.read(5 * 1024 * 1024 + 1)
+    if len(content) > 5 * 1024 * 1024:
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "The file is larger than 5 MB.")
+    if not unpacked_size_ok(content):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "This is not an Excel file the app can read (.xlsx), or it is damaged.")
+    result = sdms_admit.validate(admin.id, content, file.filename or "sheet.xlsx")
+    if not result.get("ok"):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, result["error"])
+    return result
+
+
+@router.get("/udise/sdms/admit")
+def sdms_admit_state(admin: School = Depends(require_school_admin)):
+    return {"plan": sdms_admit.last_plan(admin.id), **sdms_admit.progress(admin.id)}
+
+
+@router.post("/udise/sdms/admit")
+def sdms_admit_start(payload: SdmsAdmitRequest, admin: School = Depends(require_school_admin)):
+    """Adds the checked new students on SDMS. Only when the request says the person confirmed."""
+    if not payload.confirm:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Confirm first: this adds students on SDMS.")
+    result = sdms_admit.start(admin.id, payload.rows)
+    if not result.get("started"):
+        raise HTTPException(status.HTTP_409_CONFLICT, result["error"])
+    audit.record(f"school_admin:{admin.id}", "sdms_admit_start", "udise", admin.id, None,
+                 {"students": result["students"], "rows": payload.rows})
+    return result
+
+
+# SDMS: AADHAAR verification and APAAR IDs
+
+class AadhaarVerifyRequest(BaseModel):
+    student_ids: List[int] = Field(..., min_length=1, max_length=500)
+    consent: bool = Field(False, description="the parents gave consent for demographic authentication of these students")
+
+
+class AadhaarCorrectRequest(BaseModel):
+    aadhaar: str = Field(..., max_length=14, description="the 12 digits exactly as on the AADHAAR card")
+    name_as_aadhaar: str = Field(..., max_length=100)
+    gender: Optional[int] = Field(None, description="1 Male, 2 Female, 3 Transgender - only to change it")
+    dob: Optional[str] = Field(None, description="DD/MM/YYYY - only to change it")
+    consent: bool = Field(False, description="the parent gave consent for demographic authentication")
+
+
+class ApaarRequest(BaseModel):
+    relation: int = Field(..., description="1 Father, 2 Mother, 3 Legal Guardian")
+    name: str = Field(..., max_length=100)
+    id_type: int = Field(..., description="1 AADHAAR, 2 PAN, 3 EPIC/Voter ID, 4 Driving License, 5 Passport")
+    id_no: str = Field(..., max_length=30)
+    place: str = Field(..., max_length=60)
+    date: str = Field(..., description="YYYY-MM-DD: when the parent gave the physical consent")
+    consent: bool = Field(False, description="the parent gave this physical consent for the APAAR ID")
+
+
+@router.get("/udise/sdms/aadhaar")
+def sdms_aadhaar_overview(admin: School = Depends(require_school_admin)):
+    found = sdms_aadhaar.overview(admin.id)
+    if found is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Fetch the students from SDMS first.")
+    return {**found, **sdms_aadhaar.progress(admin.id)}
+
+
+@router.post("/udise/sdms/aadhaar/verify")
+def sdms_aadhaar_verify(payload: AadhaarVerifyRequest, admin: School = Depends(require_school_admin)):
+    """Asks UIDAI again (SDMS's 'AADHAAR Validate'), only with the parents' consent confirmed."""
+    if not payload.consent:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Confirm the parents' consent for demographic authentication first.")
+    result = sdms_aadhaar.start_verify(admin.id, payload.student_ids)
+    if not result.get("started"):
+        raise HTTPException(status.HTTP_409_CONFLICT, result["error"])
+    return result
+
+
+@router.post("/udise/sdms/aadhaar/{student_id}/correct")
+def sdms_aadhaar_correct(student_id: int, payload: AadhaarCorrectRequest, admin: School = Depends(require_school_admin)):
+    """Saves the AADHAAR details exactly as on the card on SDMS, then asks UIDAI again."""
+    if not payload.consent:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Confirm the parent's consent for demographic authentication first.")
+    result = sdms_aadhaar.correct(admin.id, student_id, payload.aadhaar, payload.name_as_aadhaar, payload.gender, payload.dob)
+    if not result.get("ok"):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, result["error"])
+    return result
+
+
+@router.post("/udise/sdms/apaar/read")
+def sdms_apaar_read(admin: School = Depends(require_school_admin)):
+    """Reads SDMS's APAAR status for every class (nothing is changed)."""
+    result = sdms_aadhaar.read_apaar(admin.id)
+    if not result.get("ok"):
+        raise HTTPException(status.HTTP_409_CONFLICT, result["error"])
+    return result
+
+
+@router.post("/udise/sdms/apaar/{student_id}")
+def sdms_apaar_generate(student_id: int, payload: ApaarRequest, admin: School = Depends(require_school_admin)):
+    """Generates one student's APAAR ID with the parent's physical consent."""
+    if not payload.consent:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Confirm the parent's physical consent for the APAAR ID first.")
+    result = sdms_aadhaar.generate_apaar(admin.id, student_id, payload.model_dump(exclude={"consent"}))
+    if not result.get("ok"):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, result["error"])
+    return result
+
+
+# APAAR by Excel: status report, consent sheet, generation from the filled consent sheet
+
+class ApaarSheetRequest(BaseModel):
+    confirm: bool = Field(False, description="must be true: the person agreed to generate APAAR IDs on SDMS")
+    rows: Optional[List[int]] = Field(None, description="just these sheet rows (e.g. one to try first)")
+
+
+def _xlsx(content: Optional[bytes], name: str):
+    if content is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Fetch the students and read the APAAR status first.")
+    return StreamingResponse(io.BytesIO(content), headers={"Content-Disposition": f'attachment; filename="{name}"'},
+                             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
+@router.get("/udise/sdms/apaar/status.xlsx")
+def sdms_apaar_status_excel(admin: School = Depends(require_school_admin)):
+    """Completed (APAAR IDs) and Pending (SDMS's reasons and what to do next)."""
+    audit.record(f"school_admin:{admin.id}", "sdms_download", "udise", admin.id, None, {"sheet": "apaar status"})
+    return _xlsx(sdms_apaar_excel.status_excel(admin.id), "APAAR_status.xlsx")
+
+
+@router.get("/udise/sdms/apaar/consent.xlsx")
+def sdms_apaar_consent_sheet(admin: School = Depends(require_school_admin)):
+    """The students ready for an APAAR ID, with the parent's consent columns to fill."""
+    return _xlsx(sdms_apaar_excel.consent_template(admin.id), "APAAR_consent.xlsx")
+
+
+@router.post("/udise/sdms/apaar/consent/validate")
+def sdms_apaar_consent_validate(file: UploadFile = File(...), admin: School = Depends(require_school_admin)):
+    """Checks a filled consent sheet. Sends nothing."""
+    content = file.file.read(5 * 1024 * 1024 + 1)
+    if len(content) > 5 * 1024 * 1024:
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "The file is larger than 5 MB.")
+    if not unpacked_size_ok(content):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "This is not an Excel file the app can read (.xlsx), or it is damaged.")
+    result = sdms_apaar_excel.validate(admin.id, content, file.filename or "consent.xlsx")
+    if not result.get("ok"):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, result["error"])
+    return result
+
+
+@router.get("/udise/sdms/apaar/consent")
+def sdms_apaar_consent_state(admin: School = Depends(require_school_admin)):
+    return sdms_apaar_excel.state(admin.id)
+
+
+@router.post("/udise/sdms/apaar/consent/generate")
+def sdms_apaar_consent_generate(payload: ApaarSheetRequest, admin: School = Depends(require_school_admin)):
+    """Generates APAAR IDs for the checked rows of the consent sheet. Only when the person confirmed."""
+    if not payload.confirm:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Confirm first: this generates APAAR IDs on SDMS.")
+    result = sdms_apaar_excel.start(admin.id, payload.rows)
+    if not result.get("started"):
+        raise HTTPException(status.HTTP_409_CONFLICT, result["error"])
+    audit.record(f"school_admin:{admin.id}", "sdms_apaar_sheet_start", "udise", admin.id, None,
+                 {"students": result["students"], "rows": payload.rows})
+    return result
+
+
+# Bulk tools from Excel: class / section shift, Send to Dropbox, Import from the Dropbox, AADHAAR corrections
+
+BULK_FILES = {"shift": "Class_section_shift.xlsx", "dropbox": "Send_to_Dropbox.xlsx", "import": "Import_from_Dropbox.xlsx",
+              "aadhaar": "AADHAAR_corrections.xlsx"}
+
+
+class BulkRunRequest(BaseModel):
+    confirm: bool = Field(False, description="must be true: the person agreed to make these changes on SDMS")
+    rows: Optional[List[int]] = Field(None, description="just these sheet rows (e.g. one to try first)")
+
+
+def _bulk_kind(kind: str) -> str:
+    if kind not in BULK_FILES:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No such bulk tool.")
+    return kind
+
+
+@router.get("/udise/sdms/bulk/{kind}/sheet.xlsx")
+def sdms_bulk_sheet(kind: str, admin: School = Depends(require_school_admin)):
+    """The sheet to fill: this school's students (an empty sheet for an import)."""
+    kind = _bulk_kind(kind)
+    return _xlsx(sdms_bulk.template(admin.id, kind), BULK_FILES[kind])
+
+
+@router.post("/udise/sdms/bulk/{kind}/validate")
+def sdms_bulk_validate(kind: str, file: UploadFile = File(...), admin: School = Depends(require_school_admin)):
+    """Checks a filled sheet. Sends nothing (an import sheet looks each PEN up on SDMS's Dropbox - a read)."""
+    kind = _bulk_kind(kind)
+    content = file.file.read(5 * 1024 * 1024 + 1)
+    if len(content) > 5 * 1024 * 1024:
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "The file is larger than 5 MB.")
+    if not unpacked_size_ok(content):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "This is not an Excel file the app can read (.xlsx), or it is damaged.")
+    result = sdms_bulk.validate(admin.id, kind, content, file.filename or BULK_FILES[kind])
+    if not result.get("ok"):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, result["error"])
+    return result
+
+
+@router.get("/udise/sdms/bulk/{kind}")
+def sdms_bulk_state(kind: str, admin: School = Depends(require_school_admin)):
+    return sdms_bulk.state(admin.id, _bulk_kind(kind))
+
+
+@router.post("/udise/sdms/bulk/{kind}/run")
+def sdms_bulk_run(kind: str, payload: BulkRunRequest, admin: School = Depends(require_school_admin)):
+    """Sends the checked rows to SDMS. Only when the person confirmed; a row done once is never sent again."""
+    kind = _bulk_kind(kind)
+    if not payload.confirm:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Confirm first: this changes students on SDMS.")
+    result = sdms_bulk.start(admin.id, kind, payload.rows)
+    if not result.get("started"):
+        raise HTTPException(status.HTTP_409_CONFLICT, result["error"])
+    audit.record(f"school_admin:{admin.id}", f"sdms_bulk_{kind}_start", "udise", admin.id, None,
+                 {"students": result["students"], "rows": payload.rows})
+    return result
+
+
+# Reports: a printable PDF of each pendency, and UDISE+ against PARAKH
+
+REPORTS = {"aadhaar": "AADHAAR_pending.pdf", "apaar": "APAAR_status.pdf", "completion": "SDMS_forms_pending.pdf",
+           "compare": "UDISE_vs_PARAKH.pdf"}
+
+
+def _school_compare(admin: School, db: Session):
+    teacher_ids = [t.id for t in db.query(Teacher).filter(Teacher.school_id == admin.id)]
+    return udise_parakh.compare(admin.id, teacher_ids)
+
+
+@router.get("/udise/compare")
+def udise_parakh_compare(admin: School = Depends(require_school_admin), db: Session = Depends(get_db)):
+    """Students on UDISE+ and not on PARAKH, and the other way round; matched students whose details differ."""
+    result = _school_compare(admin, db)
+    if not result.get("ok"):
+        raise HTTPException(status.HTTP_409_CONFLICT, result["error"])
+    return result
+
+
+@router.get("/udise/reports/{name}.pdf")
+def udise_report_pdf(name: str, admin: School = Depends(require_school_admin), db: Session = Depends(get_db)):
+    if name not in REPORTS:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "No such report.")
+    if name == "compare":
+        result = _school_compare(admin, db)
+        if not result.get("ok"):
+            raise HTTPException(status.HTTP_409_CONFLICT, result["error"])
+        content = reports_pdf.compare(admin.id, admin, result)
+    else:
+        content = {"aadhaar": reports_pdf.aadhaar, "apaar": reports_pdf.apaar, "completion": reports_pdf.completion}[name](admin.id, admin)
+    if content is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Fetch the students from SDMS first.")
+    audit.record(f"school_admin:{admin.id}", "report_download", "udise", admin.id, None, {"report": name})
+    return StreamingResponse(io.BytesIO(content), media_type="application/pdf",
+                             headers={"Content-Disposition": f'attachment; filename="{REPORTS[name]}"'})

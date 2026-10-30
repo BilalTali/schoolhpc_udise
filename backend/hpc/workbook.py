@@ -11,7 +11,7 @@ Layout:
 """
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 from openpyxl import Workbook, load_workbook
 from openpyxl.comments import Comment
@@ -142,6 +142,32 @@ def build(sections: List[Section], path: Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     wb.save(path)
     return path
+
+
+def layout(path: Path) -> Tuple[Dict[str, Tuple[str, int]], Dict[str, Dict[str, Tuple[str, str]]]]:
+    """Where things are in a filled file, for pointing at the cell to fix: (student_id -> (sheet, row),
+    sheet -> {field key: (column letter, column title)})."""
+    from backend.hpc import template
+    wb = load_workbook(path, read_only=True)
+    where: Dict[str, Tuple[str, int]] = {}
+    columns: Dict[str, Dict[str, Tuple[str, str]]] = {}
+    for ws in wb.worksheets:
+        if template.is_locked_sheet(ws.title):
+            continue
+        top = [list(r) for r in ws.iter_rows(min_row=1, max_row=3, values_only=True)]
+        key_row = next((i for i in (1, 2) if len(top) > i and ID_KEY in top[i]), None)
+        if key_row is None:
+            continue
+        keys, titles = top[key_row], top[key_row - 1]
+        columns[ws.title] = {str(k): (get_column_letter(i + 1), str(titles[i] or k).replace("\n", " ").strip())
+                             for i, k in enumerate(keys) if k}
+        id_col = keys.index(ID_KEY)
+        for n, row in enumerate(ws.iter_rows(min_row=key_row + 2, values_only=True), start=key_row + 2):
+            sid = row[id_col] if id_col < len(row) else None
+            if sid not in (None, ""):
+                where.setdefault(str(sid).split(".")[0].strip(), (ws.title, n))
+    wb.close()
+    return where, columns
 
 
 def read(path: Path, exception_problems: List[str] = None) -> Dict[str, Dict[str, Any]]:

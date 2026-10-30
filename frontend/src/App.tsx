@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from "react";
 import {
   School,
   GraduationCap,
@@ -12,6 +12,7 @@ import {
   LogOut,
   Building2,
   ShieldCheck,
+  ArrowLeft,
   RefreshCw,
   Plus,
   UserX,
@@ -34,20 +35,29 @@ import {
   Menu,
   X,
 } from "lucide-react";
-import { HpcCardEditor, HpcBulkEntry } from "./HpcCards";
 import { NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { API_BASE, apiFetch } from "./api";
-import { ActivityLibraryPage } from "./activities/ActivityLibraryPage";
-import { PlatformAdmin } from "./activities/PlatformAdmin";
-import { ActivitiesGrid } from "./activities/ActivitiesGrid";
 import { ClassSettings } from "./activities/ClassSettings";
 import { TemplatePanel } from "./activities/TemplatePanel";
-import { LevelsGrid } from "./activities/LevelsGrid";
 import { UploadLive } from "./activities/UploadLive";
 import { AllStagesDownload } from "./activities/AllStagesDownload";
+import { ServerActivity } from "./activities/ServerActivity";
 import type { LiveJob } from "./activities/UploadLive";
 import { OPEN_PARAKH_EVENT } from "./activities/parakhConnect";
+// Pages a user may never open load on first use, so the first screen comes up sooner
+const HpcCardEditor = lazy(() => import("./HpcCards").then((m) => ({ default: m.HpcCardEditor })));
+const HpcBulkEntry = lazy(() => import("./HpcCards").then((m) => ({ default: m.HpcBulkEntry })));
+const ActivityLibraryPage = lazy(() => import("./activities/ActivityLibraryPage").then((m) => ({ default: m.ActivityLibraryPage })));
+const PlatformAdmin = lazy(() => import("./activities/PlatformAdmin").then((m) => ({ default: m.PlatformAdmin })));
+const AadhaarPage = lazy(() => import("./AadhaarPage").then((m) => ({ default: m.AadhaarPage })));
+const ReportsPage = lazy(() => import("./ReportsPage").then((m) => ({ default: m.ReportsPage })));
+const BulkTools = lazy(() => import("./BulkTools").then((m) => ({ default: m.BulkTools })));
+const SdmsPage = lazy(() => import("./SdmsPage").then((m) => ({ default: m.SdmsPage })));
+const ActivitiesGrid = lazy(() => import("./activities/ActivitiesGrid").then((m) => ({ default: m.ActivitiesGrid })));
+const LevelsGrid = lazy(() => import("./activities/LevelsGrid").then((m) => ({ default: m.LevelsGrid })));
 import { CaptchaStep } from "./CaptchaStep";
+import { SchoolHome, UdiseCard } from "./SchoolHome";
+import { CardHub } from "./CardHub";
 import type { CaptchaResult } from "./CaptchaStep";
 
 
@@ -80,6 +90,9 @@ interface ValidationReport {
   warnings: { row: number; field: string; message: string }[];
   seeder_working_days: string;
   seeder_max_marks: string;
+  already_saved?: number;      // saved before with these same answers: not sent again
+  file_name?: string;          // set when the report is the last check, shown again after a reload
+  checked_at?: string;
 }
 
 interface UploadJobStatus {
@@ -92,6 +105,7 @@ interface UploadJobStatus {
   reconciliation_count?: number;
   file_hash?: string;
   detected_stage: string;
+  created_at?: string;
 }
 
 interface UserInfo {
@@ -283,18 +297,22 @@ export default function App() {
   const [teacherHpcRefreshing, setTeacherHpcRefreshing] = useState(false);
   const [schoolCaptcha, setSchoolCaptcha] = useState<string | null>(null);     // PARAKH captcha picture to answer
   const [teacherCaptcha, setTeacherCaptcha] = useState<string | null>(null);
-  const [teacherHpcRefreshLog, setTeacherHpcRefreshLog] = useState<string | null>(null);
-  const [showTeacherRefreshLog, setShowTeacherRefreshLog] = useState(false);
 
   // Teacher workspace
-  const [teacherTab, setTeacherTab] = useState<TeacherTab>("roster");
   const [validationReport, setValidationReport] = useState<ValidationReport | null>(null);
   const [uploadedFileName, setUploadedFileName] = useState("");
+  const [checking, setChecking] = useState<{ name: string; since: number } | null>(null);   // a file being checked
+  const [checkFailed, setCheckFailed] = useState<string | null>(null);   // why the check could not finish
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);   // the upload shown live on tab 5
   const [navOpen, setNavOpen] = useState(false);                          // the sidebar on small screens
   const location = useLocation();
   const navigate = useNavigate();
+  // a teacher's step is a card on their home; the opened one is in the address (?open=roster ...)
+  const openParam = new URLSearchParams(location.search).get("open");
+  const teacherTab: TeacherTab | null = (["roster", "settings", "upload", "bulk", "activities"] as string[]).includes(openParam || "")
+    ? openParam as TeacherTab : null;
+  const setTeacherTab = (tab: TeacherTab) => navigate(`/?open=${tab}`);
   const userRole = user?.role;
   useEffect(() => {                                      // "Connect to PARAKH" on any screen opens the panel
     const open = () => {
@@ -323,7 +341,6 @@ export default function App() {
   const schoolActiveStageRef = useRef(schoolActiveStage);
   schoolActiveStageRef.current = schoolActiveStage;
   const [schoolStudentSearch, setSchoolStudentSearch] = useState("");
-  const [schoolTab, setSchoolTab] = useState<"teachers" | "students">("teachers");
   const [schoolRosterLastSynced, setSchoolRosterLastSynced] = useState<string | null>(null);
 
   // ─── Auth & Session Management ───────────────────────────────────────────
@@ -918,15 +935,11 @@ export default function App() {
 
   const handleRefreshTeacherSession = async () => {
     setTeacherHpcRefreshing(true);
-    setTeacherHpcRefreshLog(null);
-    setShowTeacherRefreshLog(false);
     setStatusMsg({ type: "info", text: "Reconnecting to PARAKH…" });
     try {
       const res = await apiPost("/teacher/hpc/refresh-session");
       const data = await res.json();
       if (res.ok) {
-        setTeacherHpcRefreshLog(data.log || "");
-        setShowTeacherRefreshLog(!!data.log);
         if (data.status === "captcha_required") {
           setTeacherCaptcha(data.captcha_image);
           setStatusMsg({ type: "info", text: "Type the answer shown in the picture to reconnect." });
@@ -1026,11 +1039,16 @@ export default function App() {
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = "";                               // so choosing the same file again (after fixing it) uploads it again
     if (!file || !user) return;
     setValidationReport(null);
     if (!isSubmitting) setActiveJobId(null);           // a finished upload's live view makes way for the new file
     setLoading(true);
-    setStatusMsg(null);
+    setChecking({ name: file.name, since: Date.now() });
+    setCheckFailed(null);
+    // checking reads each student's card (from the last class check when there is one, else from PARAKH):
+    // a big class without a recent check can take several minutes - say so instead of showing nothing
+    setStatusMsg({ type: "info", text: `Checking ${file.name}: every student is checked the way the save will. With a recent "Check" on each stage this takes seconds; otherwise each card is read from PARAKH, which can take several minutes for a big class. Please keep this page open.` });
     setUploadedFileName(file.name);
 
     const formData = new FormData();
@@ -1044,19 +1062,28 @@ export default function App() {
         handleUnauthorized();
         return;
       }
-      const report = await res.json();
-      if (res.ok) {
+      const body = await res.text();
+      let report: any = null;
+      try { report = JSON.parse(body); } catch { /* not JSON: the server failed before answering */ }
+      if (res.ok && report) {
         setValidationReport(report);
         setStatusMsg(report.is_valid
           ? { type: "success", text: `Pre-flight passed! ${report.total_records} students ready.` }
           : { type: "error", text: `${report.error_count} validation error(s) found.` });
       } else {
-        setStatusMsg({ type: "error", text: report.detail || "Failed to parse workbook." });
+        const detail = report?.detail;
+        const why = typeof detail === "string" ? detail : detail?.message
+          || `The server could not check the file (error ${res.status}). Try again; if it repeats, reconnect to PARAKH.`;
+        setCheckFailed(why);
+        setStatusMsg({ type: "error", text: why });
       }
     } catch (err: any) {
-      setStatusMsg({ type: "error", text: err.message });
+      const why = `The check stopped: ${err.message || "no answer from the server"}. Upload the file again.`;
+      setCheckFailed(why);
+      setStatusMsg({ type: "error", text: why });
     } finally {
       setLoading(false);
+      setChecking(null);
     }
   };
 
@@ -1111,20 +1138,31 @@ export default function App() {
       .catch(() => undefined);
   }, [user]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // An upload still running (for example after a page reload) is shown live again.
+  // After a page reload: an upload still running is shown live again; else the last checked file (with its Sync
+  // button, no need to check it again); else the last finished upload (with its saved / not-saved Excel files).
   useEffect(() => {
     if (!user || user.role !== "TEACHER") return;
-    apiFetch("/teacher/upload/jobs")
-      .then(async (res) => {
-        if (!res.ok) return;
-        const jobs: UploadJobStatus[] = await res.json();
-        const running = jobs.find((j) => j.status === "PENDING" || j.status === "IN_PROGRESS");
-        if (running) {
-          setActiveJobId(String(running.job_id));
-          setIsSubmitting(true);
-        }
-      })
-      .catch(() => undefined);
+    (async () => {
+      const res = await apiFetch("/teacher/upload/jobs");
+      if (!res.ok) return;
+      const jobs: UploadJobStatus[] = await res.json();
+      const running = jobs.find((j) => j.status === "PENDING" || j.status === "IN_PROGRESS");
+      if (running) {
+        setActiveJobId(String(running.job_id));
+        setIsSubmitting(true);
+        return;
+      }
+      const checked = await apiFetch("/teacher/upload/checked");
+      const last = checked.ok ? (await checked.json()).report as ValidationReport | null : null;
+      const utc = (t: string) => new Date(/[zZ]|[+-]\d\d:?\d\d$/.test(t) ? t : `${t}Z`);   // the server's times are UTC
+      const newer = !!jobs[0]?.created_at && (!last?.checked_at || utc(jobs[0].created_at) > utc(last.checked_at));
+      if (last?.file_name && !newer) {
+        setValidationReport(last);
+        setUploadedFileName(last.file_name);
+      } else if (jobs[0]) {
+        setActiveJobId(String(jobs[0].job_id));
+      }
+    })().catch(() => undefined);
   }, [user]);
 
   // ─── Auth ─────────────────────────────────────────────────────────────────
@@ -1601,30 +1639,40 @@ export default function App() {
 
   // ─── The admin: its own pages, above every school ─────────────
   if (user.role === "APP_ADMIN") {
-    return <main className="content">{statusAlert}<PlatformAdmin api={cardsApi} onLogout={handleLogout} /></main>;
+    return <main className="content">{statusAlert}<Suspense fallback={<div className="lib-muted" role="status">Loading…</div>}>
+      <PlatformAdmin api={cardsApi} onLogout={handleLogout} /></Suspense></main>;
   }
 
   // ─── Signed in: sidebar + top bar ───────────────────────────────────────
   const isTeacher = user.role === "TEACHER";
   const onLibrary = location.pathname.startsWith("/activities");
+  const onSdms = !isTeacher && location.pathname.startsWith("/udise/sdms");
+  const onUdise = !isTeacher && location.pathname.startsWith("/udise");                 // the UDISE+ area
+  const onHome = !isTeacher && !onLibrary && !onUdise && location.pathname !== "/hpc";   // the school's home: HPC and UDISE+
+  const inHpc = isTeacher || onLibrary || location.pathname === "/hpc";                   // the HPC area (PARAKH)
+  const hpcOpen = new URLSearchParams(location.search).get("open");
+  const schoolView = hpcOpen === "teachers" || hpcOpen === "students" ? hpcOpen : null;   // a card opened; else the cards
   const parakh = isTeacher ? teacherHpcStatus : schoolHpcStatus;
   const initials = (user.name || "?").split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
-  const page = onLibrary ? PAGES.library : isTeacher ? PAGES[teacherTab] : PAGES[schoolTab === "teachers" ? "school_teachers" : "school_students"];
+  const page = onLibrary ? PAGES.library : isTeacher ? PAGES[teacherTab || "teacher_home"] : onSdms ? PAGES.sdms
+    : location.pathname.startsWith("/udise/aadhaar") ? PAGES.aadhaar
+    : location.pathname.startsWith("/udise/bulk") ? PAGES.sdms_bulk
+    : location.pathname.startsWith("/udise/reports") ? PAGES.udise_reports : onUdise ? PAGES.udise
+    : onHome ? PAGES.school_home
+    : schoolView ? PAGES[schoolView === "teachers" ? "school_teachers" : "school_students"] : PAGES.hpc_home;
   const goTeacher = (tab: TeacherTab) => {
     if (tab === "roster") loadTeacherRoster(activeTeacherStage);
     if (tab === "activities") setGridFocus(undefined);
     setTeacherTab(tab);
     setNavOpen(false);
-    if (onLibrary) navigate("/");
   };
   const goSchool = (tab: "teachers" | "students") => {
     if (tab === "students") loadSchoolRoster(schoolActiveStage);
-    setSchoolTab(tab);
     setNavOpen(false);
-    if (onLibrary) navigate("/");
+    navigate(`/hpc?open=${tab}`);
   };
   const openParakh = () => {
-    if (onLibrary) navigate("/");
+    if (onLibrary || onHome) navigate(isTeacher ? "/" : "/hpc");
     if (isTeacher) setShowTeacherHpcPanel(true); else setShowSchoolHpcPanel(true);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
@@ -1632,7 +1680,7 @@ export default function App() {
   return (
     <div className={`shell ${navOpen ? "nav-open" : ""}`}>
       <aside className="sidebar" aria-label="Main">
-        <div className="sb-brand">{logo}<div><b>Teacher Assist</b><span>HPC helper</span></div></div>
+        <div className="sb-brand">{logo}<div><b>Teacher Assist</b><span>{isTeacher ? "HPC helper" : "HPC and UDISE+"}</span></div></div>
         <div className="sb-school">
           <span className="sb-school-name">{user.school_name || "Your school"}</span>
           <span className="sb-school-meta">{isTeacher ? `Class teacher${user.assigned_grade ? ` · ${user.assigned_grade}${user.assigned_section ? ` ${user.assigned_section}` : ""}` : ""}` : "School"}</span>
@@ -1653,22 +1701,79 @@ export default function App() {
                   </button>
                 );
               })}
+              <div className="sb-section">Help</div>
+              <a className="sb-item" href="/Teacher_Manual.pdf" download="Teacher_Manual.pdf" onClick={() => setNavOpen(false)}>
+                <BookOpen size={17} className="sb-lead" aria-hidden="true" /><span className="sb-text"><b>User manual</b><small>Teacher's guide (PDF)</small></span>
+              </a>
             </>
           ) : (
             <>
-              <div className="sb-section">School</div>
-              <button type="button" className={`sb-item ${!onLibrary && schoolTab === "teachers" ? "active" : ""}`} onClick={() => goSchool("teachers")}>
-                <Users size={17} className="sb-lead" aria-hidden="true" /><span className="sb-text"><b>Teachers</b><small>Accounts and classes</small></span>
+              <button type="button" className={`sb-item ${onHome ? "active" : ""}`} aria-current={onHome ? "page" : undefined}
+                      onClick={() => { setNavOpen(false); navigate("/"); }}>
+                <School size={17} className="sb-lead" aria-hidden="true" /><span className="sb-text"><b>Home</b><small>HPC and UDISE+</small></span>
               </button>
-              <button type="button" className={`sb-item ${!onLibrary && schoolTab === "students" ? "active" : ""}`} onClick={() => goSchool("students")}>
-                <GraduationCap size={17} className="sb-lead" aria-hidden="true" /><span className="sb-text"><b>Students</b><small>Every class at a glance</small></span>
-              </button>
+              {onHome && (
+                <>
+                  {/* the home: the two areas; inside an area the sidebar shows only that area's work */}
+                  <div className="sb-section">Areas</div>
+                  <button type="button" className="sb-item" onClick={() => { setNavOpen(false); navigate("/hpc"); }}>
+                    <FileCheck2 size={17} className="sb-lead" aria-hidden="true" /><span className="sb-text"><b>HPC</b><small>Progress cards on PARAKH</small></span>
+                  </button>
+                  <button type="button" className="sb-item" onClick={() => { setNavOpen(false); navigate("/udise"); }}>
+                    <Layers size={17} className="sb-lead" aria-hidden="true" /><span className="sb-text"><b>UDISE+</b><small>Students, teachers, school data</small></span>
+                  </button>
+                </>
+              )}
+              {inHpc && (
+                <>
+                  <div className="sb-section">HPC</div>
+                  <button type="button" className={`sb-item ${!onLibrary && schoolView === "teachers" ? "active" : ""}`} onClick={() => goSchool("teachers")}>
+                    <Users size={17} className="sb-lead" aria-hidden="true" /><span className="sb-text"><b>Teachers</b><small>Accounts and classes</small></span>
+                  </button>
+                  <button type="button" className={`sb-item ${!onLibrary && schoolView === "students" ? "active" : ""}`} onClick={() => goSchool("students")}>
+                    <GraduationCap size={17} className="sb-lead" aria-hidden="true" /><span className="sb-text"><b>Students</b><small>Every class at a glance</small></span>
+                  </button>
+                  <NavLink to="/activities/preparatory" onClick={() => setNavOpen(false)} className={({ isActive }) => `sb-item ${isActive ? "active" : ""}`}>
+                    <BookOpen size={17} className="sb-lead" aria-hidden="true" /><span className="sb-text"><b>Activity Library</b><small>Activities from PARAKH</small></span>
+                  </NavLink>
+                  <button type="button" className="sb-item sb-switch" onClick={() => { setNavOpen(false); navigate("/udise"); }}>
+                    <Layers size={15} className="sb-lead" aria-hidden="true" /><span className="sb-text"><b>Switch to UDISE+</b></span>
+                  </button>
+                </>
+              )}
+              {onUdise && (
+                <>
+                  <div className="sb-section">UDISE+</div>
+                  <NavLink to="/udise" end onClick={() => setNavOpen(false)} className={({ isActive }) => `sb-item ${isActive ? "active" : ""}`}>
+                    <ShieldCheck size={17} className="sb-lead" aria-hidden="true" /><span className="sb-text"><b>Connection &amp; services</b><small>Sign in once, all four</small></span>
+                  </NavLink>
+                  <NavLink to="/udise/sdms" onClick={() => setNavOpen(false)} className={({ isActive }) => `sb-item ${isActive ? "active" : ""}`}>
+                    <GraduationCap size={17} className="sb-lead" aria-hidden="true" /><span className="sb-text"><b>Students (SDMS)</b><small>Forms, completion, new admissions</small></span>
+                  </NavLink>
+                  <NavLink to="/udise/aadhaar" onClick={() => setNavOpen(false)} className={({ isActive }) => `sb-item ${isActive ? "active" : ""}`}>
+                    <ShieldCheck size={17} className="sb-lead" aria-hidden="true" /><span className="sb-text"><b>AADHAAR &amp; APAAR</b><small>Verify, correct, generate APAAR</small></span>
+                  </NavLink>
+                  <NavLink to="/udise/bulk" onClick={() => setNavOpen(false)} className={({ isActive }) => `sb-item ${isActive ? "active" : ""}`}>
+                    <Layers size={17} className="sb-lead" aria-hidden="true" /><span className="sb-text"><b>Bulk tools</b><small>Shift, Dropbox, import, AADHAAR</small></span>
+                  </NavLink>
+                  <NavLink to="/udise/reports" onClick={() => setNavOpen(false)} className={({ isActive }) => `sb-item ${isActive ? "active" : ""}`}>
+                    <FileCheck2 size={17} className="sb-lead" aria-hidden="true" /><span className="sb-text"><b>Reports</b><small>PDFs, UDISE+ vs PARAKH</small></span>
+                  </NavLink>
+                  <button type="button" className="sb-item sb-switch" onClick={() => { setNavOpen(false); navigate("/hpc"); }}>
+                    <FileCheck2 size={15} className="sb-lead" aria-hidden="true" /><span className="sb-text"><b>Switch to HPC</b></span>
+                  </button>
+                </>
+              )}
             </>
           )}
-          <div className="sb-section">Resources</div>
-          <NavLink to="/activities/preparatory" onClick={() => setNavOpen(false)} className={({ isActive }) => `sb-item ${isActive ? "active" : ""}`}>
-            <BookOpen size={17} className="sb-lead" aria-hidden="true" /><span className="sb-text"><b>Activity Library</b><small>{isTeacher ? "Edit or add activities" : "Activities from PARAKH"}</small></span>
-          </NavLink>
+          {isTeacher && (
+            <>
+              <div className="sb-section">Resources</div>
+              <NavLink to="/activities/preparatory" onClick={() => setNavOpen(false)} className={({ isActive }) => `sb-item ${isActive ? "active" : ""}`}>
+                <BookOpen size={17} className="sb-lead" aria-hidden="true" /><span className="sb-text"><b>Activity Library</b><small>Edit or add activities</small></span>
+              </NavLink>
+            </>
+          )}
         </nav>
         <div className="sb-foot">
           <div className="sb-user"><span className="sb-avatar" aria-hidden="true">{initials}</span><div><b>{user.name}</b><small>{isTeacher ? "Teacher" : "School"}</small></div></div>
@@ -1684,21 +1789,39 @@ export default function App() {
             <h1>{page.title}</h1>
             <p>{page.desc}</p>
           </div>
-          <button type="button" className={`parakh-pill ${parakh?.logged_in ? "on" : "off"}`} onClick={openParakh}
+          {inHpc && <button type="button" className={`parakh-pill ${parakh?.logged_in ? "on" : "off"}`} onClick={openParakh}
                   aria-label={parakh?.logged_in ? "PARAKH connected - show connection" : "Not connected to PARAKH - connect"}>
             <span className="dot" aria-hidden="true" />
             <span>{parakh?.logged_in ? "PARAKH connected" : "PARAKH not connected"}</span>
             {!parakh?.logged_in && <span className="pill-cta">Connect</span>}
-          </button>
+          </button>}
         </header>
 
         <main className="content">
           {statusAlert}
         {/* ── SCHOOL ADMIN DASHBOARD ────────────────────────────────────── */}
+        <Suspense fallback={<div className="lib-muted" role="status">Loading…</div>}>
         <Routes>
           <Route path="/activities/:stage?" element={user ? <ActivityLibraryPage api={cardsApi} isAdmin={user.role === "SCHOOL_ADMIN"} /> : null} />
+          <Route path="/udise/sdms" element={user?.role === "SCHOOL_ADMIN" ? <SdmsPage api={cardsApi} /> : null} />
+          <Route path="/udise/aadhaar" element={user?.role === "SCHOOL_ADMIN" ? <AadhaarPage api={cardsApi} /> : null} />
+          <Route path="/udise/reports" element={user?.role === "SCHOOL_ADMIN" ? <ReportsPage api={cardsApi} /> : null} />
+          <Route path="/udise/bulk" element={user?.role === "SCHOOL_ADMIN" ? <BulkTools api={cardsApi} /> : null} />
+          <Route path="/udise" element={user?.role === "SCHOOL_ADMIN"
+            ? <div className="udise-page">
+                <CardHub cards={[
+                  { key: "sdms", title: "Students (SDMS)", icon: GraduationCap, about: "Every student's form, what is left to complete, new admissions.", onOpen: () => navigate("/udise/sdms") },
+                  { key: "aadhaar", title: "AADHAAR & APAAR", icon: ShieldCheck, about: "Verify with UIDAI, correct mismatches, generate APAAR IDs.", onOpen: () => navigate("/udise/aadhaar") },
+                  { key: "bulk", title: "Bulk tools", icon: Layers, about: "Class or section shift, Dropbox, import and AADHAAR corrections from Excel.", onOpen: () => navigate("/udise/bulk") },
+                  { key: "reports", title: "Reports", icon: FileCheck2, about: "PDFs of what is pending, and UDISE+ compared with PARAKH.", onOpen: () => navigate("/udise/reports") },
+                ]} />
+                <UdiseCard api={cardsApi} onOpenSdms={() => navigate("/udise/sdms")} />
+              </div> : null} />
           <Route path="*" element={<>
-        {user?.role === "SCHOOL_ADMIN" && (
+        {user?.role === "SCHOOL_ADMIN" && onHome && (
+          <SchoolHome api={cardsApi} onOpenHpc={() => navigate("/hpc")} onOpenUdise={() => navigate("/udise")} teachers={schoolStats?.total_teachers ?? 0} students={schoolStats?.total_students ?? 0} />
+        )}
+        {user?.role === "SCHOOL_ADMIN" && !onHome && (
           <div>
             {/* School HPC Session Panel */}
             {showSchoolHpcPanel && <HpcSessionPanel
@@ -1721,8 +1844,8 @@ export default function App() {
               <CaptchaStep who="school" image={schoolCaptcha} onDone={(r) => afterCaptcha("school", r)} onCancel={() => setSchoolCaptcha(null)} />
             )}
 
-            {/* KPIs */}
-            {schoolStats && (
+            {/* KPIs and the area's cards; a card opens its details */}
+            {!schoolView && schoolStats && (
               <div className="kpi-grid">
                 <div className="kpi-card saffron">
                   <div className="kpi-top"><span className="kpi-label">Classroom Teachers</span><div className="kpi-icon saffron"><Users size={20} /></div></div>
@@ -1730,9 +1853,9 @@ export default function App() {
                   <div className="kpi-subtext">Provisioned educator accounts</div>
                 </div>
                 <div className="kpi-card navy">
-                  <div className="kpi-top"><span className="kpi-label">Uploaded Students</span><div className="kpi-icon navy"><GraduationCap size={20} /></div></div>
+                  <div className="kpi-top"><span className="kpi-label">Students</span><div className="kpi-icon navy"><GraduationCap size={20} /></div></div>
                   <div className="kpi-number">{schoolStats.total_students}</div>
-                  <div className="kpi-subtext">Across Preparatory &amp; Middle</div>
+                  <div className="kpi-subtext">In the teachers' classes, every stage</div>
                 </div>
                 <div className="kpi-card green">
                   <div className="kpi-top"><span className="kpi-label">Verified &amp; Submitted</span><div className="kpi-icon green"><CheckCircle2 size={20} /></div></div>
@@ -1747,8 +1870,28 @@ export default function App() {
               </div>
             )}
 
-            {/* Tab 1: Teachers Table */}
-            {schoolTab === "teachers" && (
+            {!schoolView && (
+              <CardHub cards={[
+                { key: "teachers", title: "Teachers", icon: Users, stat: schoolStats?.total_teachers ?? "…", statLabel: "accounts", tone: "info",
+                  about: "Teacher accounts, their classes and their PARAKH connection.", onOpen: () => goSchool("teachers") },
+                { key: "students", title: "Students", icon: GraduationCap, stat: schoolStats?.total_students ?? "…", statLabel: "in the classes",
+                  tone: "info", about: "Every class's students and how far their progress cards are.", onOpen: () => goSchool("students") },
+                { key: "library", title: "Activity Library", icon: BookOpen, about: "Activities from PARAKH for each stage, grade and subject.",
+                  onOpen: () => navigate("/activities/preparatory") },
+                { key: "parakh", title: "PARAKH connection", icon: ShieldCheck, stat: schoolHpcStatus?.logged_in ? "Connected" : "Not connected",
+                  tone: schoolHpcStatus?.logged_in ? "good" : "warn", about: "The school's own sign-in to PARAKH.", onOpen: openParakh },
+              ]} />
+            )}
+            {schoolView && (
+              <div className="hub-back">
+                <button type="button" className="btn btn-outline btn-sm" onClick={() => navigate("/hpc")}>
+                  <ArrowLeft size={15} aria-hidden="true" /> Back to HPC
+                </button>
+              </div>
+            )}
+
+            {/* Teachers */}
+            {schoolView === "teachers" && (
             <div className="ui-panel">
               <div className="panel-header">
                 <div className="panel-title"><Users size={20} color="#CF4A0A" /><span>Teachers</span></div>
@@ -1864,7 +2007,7 @@ export default function App() {
             )}
 
             {/* Tab 2: Synced Students Directory (School) */}
-            {schoolTab === "students" && (
+            {schoolView === "students" && (
               <div className="ui-panel">
                 <div className="panel-header">
                   <div className="panel-title">
@@ -2373,6 +2516,7 @@ export default function App() {
         {/* ── TEACHER WORKSPACE ─────────────────────────────────────────── */}
         {user?.role === "TEACHER" && (
           <div>
+            <ServerActivity api={cardsApi} />
             {/* Teacher HPC Session Panel */}
             {showTeacherHpcPanel && <HpcSessionPanel
               role="teacher"
@@ -2394,6 +2538,21 @@ export default function App() {
               <CaptchaStep who="teacher" image={teacherCaptcha} onDone={(r) => afterCaptcha("teacher", r)} onCancel={() => setTeacherCaptcha(null)} />
             )}
 
+            {/* The steps as cards; a card opens its step */}
+            {!teacherTab && (
+              <CardHub cards={TEACHER_STEPS.map((step, i) => ({
+                key: step.id, title: `${i + 1}. ${step.label}`, icon: step.icon, about: step.about,
+                ...(step.id === "roster" ? { stat: students.length || "…", statLabel: "students", tone: "info" as const } : {}),
+                onOpen: () => goTeacher(step.id) }))} />
+            )}
+            {teacherTab && (
+              <div className="hub-back">
+                <button type="button" className="btn btn-outline btn-sm" onClick={() => navigate("/")}>
+                  <ArrowLeft size={15} aria-hidden="true" /> Back to your steps
+                </button>
+              </div>
+            )}
+
             {/* Tab 4: class settings for the Excel template (medium, working days, max marks, declaration) */}
             {teacherTab === "settings" && (
               <>
@@ -2410,6 +2569,14 @@ export default function App() {
                                 libraryHref={`/activities/${activeTeacherStage.toLowerCase()}`}
                                 uploadedFile={validationReport?.warnings?.some((w) => w.message.includes("old Activity columns"))
                                   ? uploadedFileName : undefined} />
+                {/* Part B's own answers sit with the activities, so they are never forgotten (PARAKH counts an
+                    activity unfinished without them) */}
+                <HpcBulkEntry key={`answers-${activeTeacherStage}`} api={cardsApi} stage={activeTeacherStage} parts={["B"]}
+                              title="Part B answers (self-assessment and reflection)"
+                              intro={<>Each student's own Part B answers. PARAKH counts the activities unfinished until the
+                                required ones are filled, and a student with one missing shows "Needs work" in the grid above.
+                                Choose a question, use "Fill empty with" for the usual answer, change the few who differ, and
+                                save. Text boxes offer <b>Suggestions…</b> you can pick and then change.</>} />
               </>
             )}
 
@@ -2451,7 +2618,7 @@ export default function App() {
                 </div>
 
                 <label className="dropzone" style={{ display: "block", marginBottom: "1.5rem" }}>
-                  <input type="file" accept=".xlsx" onChange={handleFileUpload} style={{ display: "none" }} />
+                  <input type="file" accept=".xlsx" onChange={handleFileUpload} disabled={!!checking} style={{ display: "none" }} />
                   <FileSpreadsheet size={42} color="#CF4A0A" style={{ margin: "0 auto 0.8rem" }} />
                   <div style={{ fontWeight: 700, fontSize: "1.05rem", color: "var(--chakra-navy)" }}>
                     {uploadedFileName ? `Selected: ${uploadedFileName}` : "Choose the filled Excel file (.xlsx)"}
@@ -2460,6 +2627,13 @@ export default function App() {
                     Every student is checked first. Nothing is sent to PARAKH until you press Sync.
                   </div>
                 </label>
+                {checking && <UploadChecking name={checking.name} since={checking.since} />}
+                {!checking && checkFailed && (
+                  <div className="alert-box alert-error" role="alert" style={{ marginBottom: "1rem" }}>
+                    <AlertCircle size={18} aria-hidden="true" />
+                    <div style={{ flex: 1 }}><b>The file was not checked.</b> {checkFailed}</div>
+                  </div>
+                )}
 
                 {validationReport && (
                   <div style={{ marginTop: "1.5rem" }}>
@@ -2469,7 +2643,12 @@ export default function App() {
                         {validationReport.is_valid ? <CheckCircle2 size={24} color="#046A38" /> : <AlertCircle size={24} color="#DC2626" />}
                         <div>
                           <div style={{ fontWeight: 800, fontSize: "1.05rem", color: validationReport.is_valid ? "#065F46" : "#991B1B" }}>
-                            {validationReport.is_valid ? `✅ ${validationReport.total_records} student(s) ready to sync` : `❌ No student is ready yet · ${validationReport.error_count} issue(s)`}
+                            {validationReport.is_valid ? `✅ ${validationReport.total_records} student(s) ready to sync`
+                              : validationReport.error_count === 0 && validationReport.already_saved
+                                ? `✅ All ${validationReport.already_saved} student(s) are already saved with these answers - nothing to send`
+                                : `❌ No student is ready yet · ${validationReport.error_count} issue(s)`}
+                            {validationReport.is_valid && !!validationReport.already_saved && (
+                              <span style={{ fontWeight: 600, fontSize: "0.85rem" }}> · {validationReport.already_saved} already saved, not sent again</span>)}
                           </div>
                           <div style={{ fontSize: "0.82rem", color: validationReport.is_valid ? "#047857" : "#B91C1C" }}>
                             Stage: <b>{validationReport.detected_stage}</b>
@@ -2517,16 +2696,19 @@ export default function App() {
                     {validationReport.errors?.length > 0 && (
                       <div className="data-table-wrapper">
                         <div style={{ padding: "0.6rem 1rem", background: "#FEF2F2", borderBottom: "1px solid #FECACA", fontSize: "0.82rem", fontWeight: 600, color: "#991B1B" }}>
-                          Fix these {validationReport.error_count} error(s) in the Excel file, then re-upload:
+                          Fix these {validationReport.error_count} error(s) in the Excel file, then re-upload. Each one says the
+                          sheet, the row and the column of the cell to change:
                         </div>
                         <table className="data-table">
-                          <thead><tr><th>Excel Row</th><th>Field</th><th>Validation Issue</th></tr></thead>
+                          <thead><tr><th>Sheet</th><th>Row</th><th>Student</th><th>Column to fix</th><th>Problem</th></tr></thead>
                           <tbody>
-                            {validationReport.errors.map((err: { row: number; field: string; message: string }, idx: number) => (
+                            {validationReport.errors.map((err: { row: number; field: string; message: string; sheet?: string; column?: string; guidance?: string }, idx: number) => (
                               <tr key={idx}>
-                                <td><b>Row {err.row}</b></td>
-                                <td><code>{err.field}</code></td>
-                                <td style={{ color: "var(--danger-500)" }}>{err.message}</td>
+                                <td>{err.sheet || "-"}</td>
+                                <td><b>{err.row ? `Row ${err.row}` : "-"}</b></td>
+                                <td>{err.field}</td>
+                                <td>{err.column || "-"}</td>
+                                <td style={{ color: "var(--danger-500)" }}>{err.message}{err.guidance ? <> <span className="lib-muted">{err.guidance}</span></> : null}</td>
                               </tr>
                             ))}
                           </tbody>
@@ -2602,29 +2784,6 @@ export default function App() {
                         </button>
                       </div>
                     </div>
-                    {/* Collapsible refresh log */}
-                    {showTeacherRefreshLog && teacherHpcRefreshLog && (
-                      <div style={{ borderTop: "1px solid #A7F3D0", background: "#F0FDF4", padding: "0.75rem 1rem" }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.4rem" }}>
-                          <span style={{ fontSize: "0.78rem", fontWeight: 700, color: "#065F46" }}>🖥️ Refresh Log (refresh_session.py output)</span>
-                          <button
-                            onClick={() => setShowTeacherRefreshLog(false)}
-                            style={{ background: "none", border: "none", color: "#6B7280", cursor: "pointer", fontSize: "0.75rem" }}
-                          >
-                            ✕ Close
-                          </button>
-                        </div>
-                        <pre style={{
-                          fontSize: "0.72rem", color: "#1F2937", background: "#ECFDF5",
-                          border: "1px solid #BBF7D0", borderRadius: "6px",
-                          padding: "0.6rem", maxHeight: "180px", overflowY: "auto",
-                          whiteSpace: "pre-wrap", wordBreak: "break-all", margin: 0,
-                          fontFamily: "'Courier New', monospace",
-                        }}>
-                          {teacherHpcRefreshLog}
-                        </pre>
-                      </div>
-                    )}
                   </div>
                 ) : (
                   <div style={{ background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: "10px", marginBottom: "1rem", overflow: "hidden" }}>
@@ -2659,16 +2818,6 @@ export default function App() {
                         </button>
                       </div>
                     </div>
-                    {/* Collapsible refresh log when inactive */}
-                    {showTeacherRefreshLog && teacherHpcRefreshLog && (
-                      <div style={{ borderTop: "1px solid #FDE68A", background: "#FFFBEB", padding: "0.75rem 1rem" }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.4rem" }}>
-                          <span style={{ fontSize: "0.78rem", fontWeight: 700, color: "#92400E" }}>🖥️ Refresh Log</span>
-                          <button onClick={() => setShowTeacherRefreshLog(false)} style={{ background: "none", border: "none", color: "#6B7280", cursor: "pointer", fontSize: "0.75rem" }}>✕ Close</button>
-                        </div>
-                        <pre style={{ fontSize: "0.72rem", color: "#1F2937", background: "#FEF3C7", border: "1px solid #FDE68A", borderRadius: "6px", padding: "0.6rem", maxHeight: "160px", overflowY: "auto", whiteSpace: "pre-wrap", wordBreak: "break-all", margin: 0, fontFamily: "'Courier New', monospace" }}>{teacherHpcRefreshLog}</pre>
-                      </div>
-                    )}
                   </div>
                 )}
 
@@ -2959,6 +3108,7 @@ export default function App() {
         )}
           </>} />
         </Routes>
+        </Suspense>
         </main>
 
         <footer className="shell-footer" role="contentinfo">
@@ -2984,6 +3134,29 @@ interface FetchJob {
 }
 
 /** "Fetch from PARAKH" while it runs: which stage, how many students read of how many, time left. */
+/** Shown under the upload box while a file is checked, with the time so far, so the teacher sees it is working. */
+function UploadChecking({ name, since }: { name: string; since: number }) {
+  const [now, setNow] = useState(since);
+  useEffect(() => {
+    const t = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(t);
+  }, []);
+  const secs = Math.max(0, Math.round((now - since) / 1000));
+  const took = secs < 60 ? `${secs}s` : `${Math.floor(secs / 60)} min ${secs % 60}s`;
+  return (
+    <div className="alert-box alert-info" role="status" style={{ marginBottom: "1rem" }}>
+      <RefreshCw size={18} aria-hidden="true" style={{ animation: "spin 1s linear infinite" }} />
+      <div style={{ flex: 1 }}>
+        <b>Checking {name}… {took}</b>
+        <div style={{ fontSize: "0.82rem", marginTop: "0.2rem" }}>
+          Looking at every cell of the file (a few seconds; longer only while PARAKH's lists load). Cells to fix and
+          the Sync button for every other student appear here.
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function FetchProgress({ job }: { job: FetchJob }) {
   const pct = job.total ? Math.round((job.done / job.total) * 100) : 0;
   const left = job.seconds_left > 90 ? `about ${Math.round(job.seconds_left / 60)} min left` : job.seconds_left ? "less than 2 min left" : "";
@@ -3006,21 +3179,35 @@ function FetchProgress({ job }: { job: FetchJob }) {
 }
 
 type PageInfo = { title: string; desc: string };
+// the UDISE+ services not worked on in the app yet: their own sites
 const PAGES: Record<string, PageInfo> = {
+  teacher_home: { title: "Your HPC steps", desc: "Each step is a card: open one to work on it." },
   roster: { title: "Students", desc: "Your class as on PARAKH. Open any student's card from here." },
   activities: { title: "Activities", desc: "Choose an activity and the three levels for each subject (Part B)." },
   bulk: { title: "Common answers", desc: "Answers most of the class shares - fill them once, change the few who differ." },
   settings: { title: "Class settings", desc: "Working days, max marks, medium and declaration for the whole class." },
   upload: { title: "Excel & upload", desc: "Download the class file, fill it, and send everything to PARAKH." },
+  school_home: { title: "Home", desc: "Your school's work: HPC on PARAKH, and UDISE+." },
+  udise: { title: "UDISE+", desc: "One sign-in for its four services: data capture, school profile, teachers and students." },
+  hpc_home: { title: "HPC", desc: "Holistic Progress Cards on PARAKH: teachers, students and activities." },
+  udise_reports: { title: "Reports", desc: "Printable PDFs of what is pending, and UDISE+ compared with PARAKH." },
+  sdms_bulk: { title: "Bulk tools (SDMS)", desc: "Class or section shift, Send to Dropbox, Import from the Dropbox and AADHAAR corrections, from Excel." },
+  aadhaar: { title: "AADHAAR & APAAR", desc: "Verify students' AADHAAR with UIDAI, correct mismatches, and generate APAAR IDs." },
+  sdms: { title: "Students on UDISE+ (SDMS)", desc: "Every student of every class as SDMS holds them, current session." },
   school_teachers: { title: "Teachers", desc: "Teacher accounts, their classes and their PARAKH connection." },
   school_students: { title: "Students", desc: "Every class's students and how far their cards are." },
   library: { title: "Activity Library", desc: "Activities from PARAKH, your school's versions and your own." },
 };
 
-const TEACHER_STEPS: { id: "roster" | "activities" | "bulk" | "settings" | "upload"; label: string; hint: string; icon: typeof Users }[] = [
-  { id: "roster", label: "Students", hint: "Your class from PARAKH", icon: Users },
-  { id: "activities", label: "Activities", hint: "Part B for every subject", icon: CheckCircle2 },
-  { id: "bulk", label: "Common answers", hint: "Same answer for many", icon: Layers },
-  { id: "settings", label: "Class settings", hint: "Days, marks, medium", icon: SlidersHorizontal },
-  { id: "upload", label: "Excel & upload", hint: "Download, fill, send", icon: Upload },
+const TEACHER_STEPS: { id: "roster" | "activities" | "bulk" | "settings" | "upload"; label: string; hint: string; about: string; icon: typeof Users }[] = [
+  { id: "roster", label: "Students", hint: "Your class from PARAKH", icon: Users,
+    about: "Your class as on PARAKH; open any student's card." },
+  { id: "activities", label: "Activities", hint: "Part B for every subject", icon: CheckCircle2,
+    about: "Choose an activity and the three levels for each subject." },
+  { id: "bulk", label: "Common answers", hint: "Same answer for many", icon: Layers,
+    about: "Answers most of the class shares: fill once, change the few who differ." },
+  { id: "settings", label: "Class settings", hint: "Days, marks, medium", icon: SlidersHorizontal,
+    about: "Working days, max marks, medium and declaration for the whole class." },
+  { id: "upload", label: "Excel & upload", hint: "Download, fill, send", icon: Upload,
+    about: "Download the class file, fill it, and send everything to PARAKH." },
 ];

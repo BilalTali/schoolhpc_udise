@@ -5,10 +5,10 @@ import { ApiError, call } from "../api";
 import type { Api } from "../api";
 import { QuickFill } from "./QuickFill";
 import { useCardCheck } from "./useCardCheck";
-import { ConnectPrompt } from "./ConnectPrompt";
+import { ConnectPrompt, ReadingFromParakh } from "./ConnectPrompt";
 import { needsParakh } from "./parakhConnect";
-import { ABILITY_KEYS, ABILITY_LABEL, LEVEL_VALUES, REPLACE_KEY, actKey, gradeOf, levelKey } from "./gridTypes";
-import type { GridData, GridStudent } from "./gridTypes";
+import { ABILITY_KEYS, ABILITY_LABEL, LEVEL_VALUES, REPLACE_KEY, actKey, gradeOf, levelKey, placedFor } from "./gridTypes";
+import type { GridData, GridOption, GridStudent } from "./gridTypes";
 
 // The Activities tab: every fetched student in rows; per subject an activity and three levels.
 // Every change is saved (as a draft) about a second later. Nothing goes to PARAKH from here.
@@ -178,10 +178,10 @@ export function ActivitiesGrid({ api, stage, uploadedFile, focusStudent, library
   if (!data) {
     return (
       <div className="ui-panel">
+        <ReadingFromParakh what="your students and their activities" />
         <div className="lib-skeleton" aria-busy="true" aria-label="Loading students and their activities">
           {Array.from({ length: 6 }, (_, i) => <div key={i} className="lib-skeleton-row"><span /><span /><span /></div>)}
         </div>
-        <p className="lib-muted">Reading each student's activities from PARAKH… this takes a few seconds the first time.</p>
       </div>
     );
   }
@@ -307,7 +307,7 @@ function SubHead() {
 interface RowProps {
   row: GridStudent;
   subjects: { code: string; name: string }[];
-  options: { key: string; label: string }[];
+  options: GridOption[];
   labels: Record<string, string>;
   ticked: boolean;
   save: SaveState;
@@ -396,18 +396,15 @@ const GridRow = memo(function GridRow({ row, subjects, options, labels, ticked, 
 
 function Cells({ sid, name, subject, value, row, options, unknownLabel, disabled, onChange }: {
   sid: string; name: string; subject: { code: string; name: string }; value: string; row: GridStudent;
-  options: { key: string; label: string; subjects?: string[] | null; grade?: string }[]; unknownLabel: string; disabled: boolean;
+  options: GridOption[]; unknownLabel: string; disabled: boolean;
   onChange: (sid: string, key: string, value: string) => void;
 }) {
   const ak = actKey(subject.code);
-  // only this subject's activities (R1 under R1, Mathematics under Mathematics), and of them the ones for the
-  // student's grade; when PARAKH has none for the grade or the subject, a wider list with a remark saying so.
-  // A choice made before that belongs elsewhere stays visible, marked, so nothing disappears silently.
-  const own = options.filter((o) => !o.subjects || o.subjects.includes(subject.code));
-  const forGrade = row.grade ? own.filter((o) => !o.grade || o.grade === row.grade) : own;
-  const mine = forGrade.length ? forGrade : own.length ? own : options;
-  const remark = !own.length ? `No ${subject.name} activity on PARAKH - showing every activity`
-    : !forGrade.length ? `No ${subject.name} activity for ${row.grade} on PARAKH - showing other grades` : "";
+  // only this subject's activities for the student's grade (Grade 4 R1 under a Grade 4 student's R1), never
+  // another grade's or subject's. A choice made before that belongs elsewhere stays visible, marked, so nothing
+  // disappears silently.
+  const mine = options.filter((o) => placedFor(o, subject.code, row.grade_id));
+  const remark = mine.length ? "" : `No ${subject.name} activity for ${row.grade || "this grade"} in your Activity Library`;
   const elsewhere = value && !mine.some((o) => o.key === value) ? options.find((o) => o.key === value) : undefined;
   return (
     <>
@@ -417,10 +414,10 @@ function Cells({ sid, name, subject, value, row, options, unknownLabel, disabled
                 onChange={(e) => onChange(sid, ak, e.target.value)}>
           <option value="">— Choose —</option>
           {unknownLabel && <option value={value}>{unknownLabel} (kept from PARAKH)</option>}
-          {elsewhere && <option value={elsewhere.key}>{elsewhere.label} (not for this subject)</option>}
-          {mine.map((o) => <option key={o.key} value={o.key}>{o.label}{forGrade.length || !o.grade ? "" : ` (${o.grade})`}</option>)}
+          {elsewhere && <option value={elsewhere.key}>{elsewhere.label} (not for this subject or grade)</option>}
+          {mine.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
         </select>
-        {remark && <small className="grid-note" title={remark}>{!own.length ? "All activities" : "Other grades"}</small>}
+        {remark && <small className="grid-note" title={remark}>No activity</small>}
       </td>
       {ABILITY_KEYS.map((a) => {
         const k = levelKey(subject.code, a);

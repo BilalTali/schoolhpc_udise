@@ -327,7 +327,7 @@ def test_edit_diff_and_reset(world):
         "display_name": "Asking politely", "version": act["version"]})
     assert res.status_code == 200, res.text
     d = res.json()
-    assert d["edited"] and d["activity_text"] == "Our version." and d["label"] == "L1CG 1, C 1.1 - Asking politely"
+    assert d["edited"] and d["activity_text"] == "Our version." and d["label"] == "Asking politely (L1CG 1, C 1.1)"
     assert {x["field"] for x in d["diff"]} == {"activity_text", "rubric.awareness.beginner"}
     assert d["original"]["activity_text"] == "Pairs act out a short conversation."
 
@@ -363,12 +363,14 @@ def test_coverage_badge_and_filter(world):
     assert [i["code"] for i in items(users["admin_a"], covers_all=False)["items"]] == ["A"]
     assert [i["code"] for i in items(users["admin_a"], covers_all=True)["items"]] == ["B"]
     assert [i["code"] for i in items(users["admin_a"], subject="PSLS3")["items"]] == ["B"]
+    assert [i["code"] for i in items(users["admin_a"], grade=7)["items"]] == ["A", "B"]       # both tagged Grade 4
+    assert items(users["admin_a"], grade=8)["items"] == [] and items(users["admin_a"])["grades"][1] == {"id": 7, "name": "Grade 4"}
     assert [i["code"] for i in items(users["admin_a"], q="art education")["items"]] == ["B"]
     bad = client.patch(f"{API}/activity-library/{a['id']}", headers=users["admin_a"], json={"subjects": ["SM"]})
     assert bad.status_code == 422 and "Unknown subject" in bad.json()["detail"]
 
 
-def test_default_must_cover_all_subjects(world):
+def test_default_activity_rules(world):
     users, fake = world
     fake.records = [bank_record(1, "Preparatory", "A"), bank_record(2, "Preparatory", "B"),
                     bank_record(3, "Preparatory", "C", pictures=True)]
@@ -378,11 +380,10 @@ def test_default_must_cover_all_subjects(world):
     client.patch(f"{API}/activity-library/{b['id']}", headers=users["admin_a"], json={"subjects": ["PSLS1", "PSLS2", "PSLS3", "PSLS4", "PSLS5", "PSLS6", "PSLS7"]})   # widened on purpose
 
     url = f"{API}/activity-library/defaults/Preparatory"
-    res = client.put(url, headers=users["admin_a"], json={"activity_id": a["id"]})
-    assert res.status_code == 409 and len(res.json()["detail"]["missing_subjects"]) == 6
-    assert client.put(url, headers=users["admin_a"], json={"activity_id": a["id"], "confirm_partial": True}).json()["covers_all"] is False
+    res = client.put(url, headers=users["admin_a"], json={"activity_id": a["id"]})     # one subject is fine now
+    assert res.status_code == 200 and res.json()["activity_id"] == a["id"]
     assert client.put(url, headers=users["admin_a"], json={"activity_id": c["id"]}).status_code == 422   # has pictures
-    assert client.put(url, headers=users["admin_a"], json={"activity_id": b["id"]}).json()["covers_all"] is True
+    assert client.put(url, headers=users["admin_a"], json={"activity_id": b["id"]}).json()["activity_id"] == b["id"]
 
     listing = items(users["admin_a"])
     assert listing["default_id"] == b["id"] and listing["items"][0]["code"] == "B"     # default first
@@ -571,7 +572,7 @@ def test_activity_made_here_is_usable_once_finished_and_codes_come_from_parakh(w
     assert key in {e["key"] for e in dropdown}
     resolve = lib.resolver_for_teacher(_teacher_id(users["t1"]), "Preparatory")
     assert resolve(key)["portal_id"] is None and resolve(key)["caption"] == "Story circle"
-    assert resolve.typed == {"Story circle": key}
+    assert resolve.typed == {"Story circle": key, "A": "P1"}           # every activity, the app's own first
 
     # Middle needs the approach as well
     mid = client.post(f"{API}/activity-library", headers=users["t1"], json={**body, "stage": "Middle", "competencies": []})

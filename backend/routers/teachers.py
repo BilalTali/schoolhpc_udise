@@ -5,6 +5,8 @@ import csv
 import hashlib
 import io
 import json
+import re
+import shutil
 import threading
 import time
 from datetime import datetime
@@ -113,7 +115,7 @@ def refresh_session(teacher: Teacher = Depends(require_teacher)):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "HPC credentials not saved. Save your HPC Login ID and password first.")
     result = hpc_sessions.start(KIND, teacher.id, teacher.hpc_login_id, teacher.hpc_password)
     return {**result, "success": result.get("status") in ("authenticated", "captcha_required", "otp_required"),
-            "message": result.get("message") or result.get("error") or "Session refreshed.", "log": "", "returncode": 0}
+            "message": result.get("message") or result.get("error") or "Session refreshed."}
 
 
 @router.post("/hpc/verify-captcha")
@@ -141,6 +143,27 @@ def _warm_up(teacher: Teacher, result) -> None:
         cols = [p.col for p in get_stage(name).PARTS if p.code in ("A1", "A3", "A4", "B", "C")]
         if students:
             card_store.warm(client, f"teacher_{teacher.id}", client.ay, name, [s["student_id"] for s in students], cols)
+
+
+@router.get("/activity")
+def server_activity(teacher: Teacher = Depends(require_teacher), db: Session = Depends(get_db)):
+    """Everything the server is doing for this teacher now (for the web app's "Server is working" strip):
+    class checks, cards read in the background, re-checks against PARAKH, and a running upload."""
+    from backend.services import class_template
+    tasks = []
+    for stage in teacher_stages(teacher):
+        job = class_template.latest(teacher.id, stage)
+        if job and job.get("status") == "RUNNING":
+            tasks.append({"kind": "class_check", "stage": stage, "done": job.get("done", 0), "total": job.get("total", 0)})
+    stage_names = {s.lower(): s for s in teacher_stages(teacher)}
+    for t in card_store.running_for(f"teacher_{teacher.id}"):
+        tasks.append({**t, "stage": stage_names.get(t["stage"], t["stage"].title())})
+    upload = db.query(UploadJob).filter(UploadJob.teacher_id == teacher.id,
+                                        UploadJob.status.in_(["PENDING", "IN_PROGRESS"])).first()
+    if upload:
+        done = sum(1 for r in upload.records if r.status not in ("PENDING", "IN_PROGRESS"))
+        tasks.append({"kind": "upload", "stage": upload.detected_stage, "done": done, "total": len(upload.records)})
+    return {"parakh_connected": hpc_sessions.status_of(KIND, teacher.id).get("logged_in", False), "tasks": tasks}
 
 
 @router.post("/hpc/new-captcha")
@@ -305,6 +328,10 @@ def _save_upload(file: UploadFile, path) -> None:
 
 
 def _workbook_stages(teacher: Teacher, path) -> List[str]:
+    from backend.hpc.xl import unpacked_size_ok
+    if not unpacked_size_ok(path):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "This file could not be opened as an Excel workbook. "
+                            "It may be damaged - download the class workbook from this app again.")
     try:
         stages = workbook.detect_stages(path)
     except Exception:                                  # not an Excel file at all, or a damaged one (M-6)
@@ -331,7 +358,38 @@ def validate_upload(file: UploadFile = File(...), teacher: Teacher = Depends(req
         report = upload_jobs.check_workbook(_portal(teacher), path, teacher.id)
     except PortalError as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc))
-    return ValidationReportResponse(**{k: v for k, v in report.items() if k != "ready_students"})
+    held: Dict[str, List[str]] = {}
+    for e in report["errors"]:
+        if e.get("student_id") and e["student_id"] not in report["ready_students"]:
+            held.setdefault(e["student_id"], []).append(f"{e.get('column') or e.get('sheet')}: {e['message']}")
+    shown = {k: v for k, v in report.items() if k != "ready_students"}
+    shown.update(file_name=file.filename, checked_at=datetime.utcnow().isoformat(timespec="seconds") + "Z")
+    _checked_path(teacher, file.filename).write_text(json.dumps({   # Sync sends exactly these students
+        "file_hash": hashlib.sha256(path.read_bytes()).hexdigest(), "ready": report["ready_students"],
+        "held": {sid: "; ".join(m)[:4000] for sid, m in held.items()}, "report": shown,
+        "blocked": bool(report["ready_students"]) and not report["is_valid"]}), encoding="utf-8")   # Settings sheet
+    return ValidationReportResponse(**shown)
+
+
+@router.get("/upload/checked")
+def last_checked(teacher: Teacher = Depends(require_teacher), db: Session = Depends(get_db)):
+    """The last checked file's report, so a page reload shows it (and its Sync button) without checking again.
+    Nothing once the file was replaced. A sync since then is fine: Sync leaves out whoever it saved."""
+    found = sorted(hpc_sessions.session_dir(KIND, teacher.id).glob("checked_*.json"), key=lambda p: p.stat().st_mtime)
+    if not found:
+        return {"report": None}
+    data = json.loads(found[-1].read_text(encoding="utf-8"))
+    report = data.get("report")
+    if not report:
+        return {"report": None}
+    path = _upload_path(teacher, report["file_name"])
+    if not path.exists() or hashlib.sha256(path.read_bytes()).hexdigest() != data.get("file_hash"):
+        return {"report": None}
+    return {"report": report}
+
+
+def _checked_path(teacher: Teacher, file_name: str) -> Path:
+    return inside(hpc_sessions.session_dir(KIND, teacher.id), f"checked_{Path(file_name).name}.json")
 
 
 @router.post("/upload/submit", response_model=UploadJobResponse)
@@ -341,17 +399,38 @@ def submit_upload(file_name: str, background_tasks: BackgroundTasks, teacher: Te
     path = _upload_path(teacher, file_name)
     if not path.exists():
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Uploaded file not found. Upload and validate it first.")
-    return _start_job(teacher, db, background_tasks, file_name, path)
+    checked = _checked_path(teacher, file_name)
+    if not checked.exists():                              # a file from before checks were kept: as it is
+        return _start_job(teacher, db, background_tasks, file_name, path)
+    found = json.loads(checked.read_text(encoding="utf-8"))
+    if found.get("file_hash") != hashlib.sha256(path.read_bytes()).hexdigest():
+        raise HTTPException(status.HTTP_409_CONFLICT, "The file changed since it was checked. Upload it again.")
+    if not found.get("ready"):
+        raise HTTPException(status.HTTP_409_CONFLICT, "No student in this file is complete. Fix the cells listed and upload it again.")
+    if found.get("blocked"):
+        raise HTTPException(status.HTTP_409_CONFLICT, "The file's Settings sheet has a value to fix (see the check). Fix it and upload the file again.")
+    # only the students the check found complete are sent, less any saved since (same answers); the others are
+    # listed as not saved, with the reason. No new check: nothing is asked of PARAKH here.
+    client = _portal(teacher)
+    hooks = upload_jobs._with_file_settings(upload_jobs._grid_hooks(client, teacher.id),     # the file's settings, as
+                                            upload_jobs.file_settings(client, teacher.id, path, choices=False))   # the check
+    saved = upload_jobs.already_saved(client, teacher.id, workbook.read(path), hooks, path)
+    ready = set(found["ready"]) - set(saved)
+    if not ready:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Every complete student in this file is already saved with these answers.")
+    return _start_job(teacher, db, background_tasks, file_name, path, only=ready, held=found.get("held") or {})
 
 
 def _start_job(teacher: Teacher, db: Session, background_tasks: BackgroundTasks, file_name: str, path,
-               only: Optional[set] = None) -> UploadJobResponse:
-    """Creates the job and its per-student rows, then saves in the background. only: just these students."""
+               only: Optional[set] = None, held: Optional[Dict[str, str]] = None) -> UploadJobResponse:
+    """Creates the job and its per-student rows, then saves in the background. only: just these students.
+    held: students the check kept back {id: why} - listed as not saved (nothing sent), never synced."""
     busy = HTTPException(status.HTTP_409_CONFLICT, "An upload is already running. Wait for it to finish.")
     stages = _workbook_stages(teacher, path)
     rows = workbook.read(path)
+    held = {sid: why for sid, why in (held or {}).items() if sid in rows}
     if only is not None:
-        rows = {sid: row for sid, row in rows.items() if sid in only}
+        rows = {sid: row for sid, row in rows.items() if sid in only or sid in held}
     client = _portal(teacher)
     label = ", ".join(s[:4] for s in stages) if len(stages) > 1 else stages[0]       # fits the 30-char column
     with _submit_lock:
@@ -368,17 +447,25 @@ def _start_job(teacher: Teacher, db: Session, background_tasks: BackgroundTasks,
         except IntegrityError:
             db.rollback()
             raise busy
+        try:                                   # the file as synced (for its result files), before the job is kept
+            shutil.copyfile(path, _job_copy(teacher, job.id))
+        except OSError as exc:
+            db.rollback()
+            raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, f"The file could not be kept for this upload ({exc}). Try again.")
         for row_number, (sid, row) in enumerate(rows.items(), start=3):
             db.add(StudentRecord(job_id=job.id, row_number=row_number, admission_number=sid,
                                  student_name=str(row.get(workbook.NAME_KEY) or sid), student_key=sid,
                                  grade=str(row.get("grade") or "")[:20], section=str(row.get("section") or "")[:10],
-                                 status="PENDING" if row.get(workbook.SYNC_KEY) else "SKIPPED"))
+                                 status="INVALID" if sid in held else "PENDING" if row.get(workbook.SYNC_KEY) else "SKIPPED",
+                                 error_message=f"Not sent - fix in the file: {held[sid]}"[:4000] if sid in held else None))
+        if held:
+            job.failed_count = len(held)
         db.commit()
     db.refresh(job)
     if only is None:
         background_tasks.add_task(upload_jobs.run_job, job.id, client, str(path), teacher.id)
     else:
-        background_tasks.add_task(upload_jobs.run_job, job.id, client, str(path), teacher.id, set(only))
+        background_tasks.add_task(upload_jobs.run_job, job.id, client, str(path), teacher.id, set(only) - set(held))
     return _job_response(job)
 
 
@@ -431,6 +518,11 @@ def job_live(job_id: str, teacher: Teacher = Depends(require_teacher), db: Sessi
                           "error": r.error_message} for r in records]}
 
 
+def _csv_text(value):
+    """A cell Excel would run as a formula (=, +, -, @ first) is kept as text: CSV formula injection."""
+    return "'" + value if isinstance(value, str) and value[:1] in ("=", "+", "-", "@", "\t", "\r") else value
+
+
 @router.get("/upload/jobs/{job_id}/export")
 def export_job(job_id: str, teacher: Teacher = Depends(require_teacher), db: Session = Depends(get_db)):
     """CSV report: one line per student with the outcome."""
@@ -439,11 +531,35 @@ def export_job(job_id: str, teacher: Teacher = Depends(require_teacher), db: Ses
     w = csv.writer(out)
     w.writerow(["Workbook", "Stage", "Row", "Student ID", "Student Name", "Status", "Result", "Errors", "Finished At"])
     for r in sorted(job.records, key=lambda r: r.row_number or 0):
-        w.writerow([job.original_filename, job.detected_stage, r.row_number, r.admission_number, r.student_name,
-                    r.status, r.verification_result or "", r.error_message or "",
-                    r.completed_at.isoformat() if r.completed_at else ""])
+        w.writerow([_csv_text(v) for v in (job.original_filename, job.detected_stage, r.row_number, r.admission_number,
+                    r.student_name, r.status, r.verification_result or "", r.error_message or "",
+                    r.completed_at.isoformat() if r.completed_at else "")])
     return StreamingResponse(io.BytesIO(out.getvalue().encode("utf-8-sig")), media_type="text/csv",
                              headers={"Content-Disposition": f'attachment; filename="hpc_job_{job_id[:8]}_report.csv"'})
+
+
+def _job_copy(teacher: Teacher, job_id: str) -> Path:
+    return inside(hpc_sessions.session_dir(KIND, teacher.id), f"job_{job_id}.xlsx")
+
+
+@router.get("/upload/jobs/{job_id}/workbook")
+def job_workbook(job_id: str, which: str = Query("not_saved", pattern="^(saved|not_saved)$"),
+                 teacher: Teacher = Depends(require_teacher), db: Session = Depends(get_db)):
+    """The synced file again with only the saved students, or only the ones not saved (with the reasons): the
+    not-saved file is fixed and uploaded as it is."""
+    job = _own_job(db, teacher, job_id)
+    if job.status in ("PENDING", "IN_PROGRESS"):
+        raise HTTPException(status.HTTP_409_CONFLICT, "This upload is still running. Wait for it to finish.")
+    src = _job_copy(teacher, job.id)
+    if not src.exists():                                  # an upload from before copies were kept
+        src = _upload_path(teacher, job.original_filename)
+        if not src.exists() or (job.file_hash and hashlib.sha256(src.read_bytes()).hexdigest() != job.file_hash):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "The file of this upload is no longer kept.")
+    data = upload_jobs.result_workbook(src, job.records, which == "saved")
+    stem = re.sub(r"[^A-Za-z0-9 ._()-]", "_", Path(job.original_filename).stem)[:60]   # a header is plain ASCII
+    name = f"{stem} - {'saved' if which == 'saved' else 'not saved - fix and upload'}.xlsx"
+    return StreamingResponse(io.BytesIO(data), headers={"Content-Disposition": f'attachment; filename="{name}"'},
+                             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
 def _own_job(db: Session, teacher: Teacher, job_id: str) -> UploadJob:

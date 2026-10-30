@@ -46,14 +46,19 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+RECORD = "__record__"           # the student's record itself (name, grade, school), kept like a part
+
+
 def parts(client, owner: str, session: str, stage: str, student_id: str, cols: Iterable[str]) -> Dict[str, Any]:
-    """{col: formdata} for one student: from the stored copy, reading from PARAKH only the parts not kept yet."""
+    """{col: formdata} for one student: from the stored copy, reading from PARAKH only the parts not kept yet.
+    RECORD among the cols gives the student's record (not a part's formdata)."""
     path = _path(owner, session, stage, student_id)
     with _lock:
         stored = _load(path)
     missing = [c for c in cols if c not in stored["parts"]]
     if missing:
-        fresh = {c: client.student(stage, student_id, c).get("formdata") for c in missing}
+        fresh = {c: client.student(stage, student_id) if c == RECORD else client.student(stage, student_id, c).get("formdata")
+                 for c in missing}
         with _lock:
             stored = _load(path)
             stored["parts"].update(fresh)
@@ -111,6 +116,19 @@ _checks: Dict[tuple, Dict[str, Any]] = {}
 _checked_at: Dict[tuple, float] = {}
 
 
+def running_for(owner: str) -> List[Dict[str, Any]]:
+    """What is reading this owner's cards in the background now: warm-ups and checks against PARAKH."""
+    out = []
+    with _lock:
+        for (who, _session, stage), p in _warming.items():
+            if who == owner:
+                out.append({"kind": "reading", "stage": stage, "done": p["done"], "total": p["total"]})
+        for (who, _session, stage), job in _checks.items():
+            if who == owner and job["status"] == "RUNNING":
+                out.append({"kind": "rechecking", "stage": stage, "done": job["done"], "total": job["total"]})
+    return out
+
+
 def check_view(owner: str, session: str, stage: str) -> Optional[Dict[str, Any]]:
     """The latest check for this stage: progress, which students' cards changed on PARAKH (IDs only)."""
     with _lock:
@@ -145,7 +163,7 @@ def put_many(owner: str, session: str, stage: str, students) -> None:
                 _checked_at[(owner, str(session), stage.lower(), c)] = time.time()
 
 
-_warming: set = set()
+_warming: Dict[tuple, Dict[str, Any]] = {}       # (owner, session, stage) -> {"done", "total"} while reading
 
 
 def warm(client, owner: str, session: str, stage: str, student_ids: List[str], cols: Iterable[str]) -> bool:
@@ -156,18 +174,19 @@ def warm(client, owner: str, session: str, stage: str, student_ids: List[str], c
     with _lock:
         if key in _warming:
             return False
-        _warming.add(key)
+        _warming[key] = progress = {"done": 0, "total": len(student_ids)}
 
     def run():
         try:
             bg = _background(client)
             for sid in student_ids:
                 parts(bg, owner, session, stage, sid, cols)
+                progress["done"] += 1
         except Exception:
             pass                                   # a screen reads what is missing itself
         finally:
             with _lock:
-                _warming.discard(key)
+                _warming.pop(key, None)
     threading.Thread(target=run, daemon=True, name=f"warm-{stage}").start()
     return True
 

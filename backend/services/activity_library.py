@@ -260,6 +260,38 @@ def default_id(db: Session, school_id: str, stage: str) -> Optional[str]:
     return row.activity_id if row else None
 
 
+# "L2CG1,C-1.1 Important Idea Circle" -> "Important Idea Circle": the codes in front of a name
+_CODES_THEN_NAME = re.compile(r"^.*?\bC-?\s*\d+(?:\.\d+)*(?:\s*,\s*C-?\s*\d+(?:\.\d+)*)*\s+(?P<name>\S.*)$")
+_QUOTED = r"[“\"]([^”\"\n]{3,70})[”\"]"
+# where an activity's own text gives its title (PARAKH has no name field: its "name" is the codes)
+_TITLE_IN_TEXT = [re.compile(p, re.I | re.M) for p in (
+    r"Activity\s*(?:Title|Name)\s*[:\-–]\s*(?:" + _QUOTED + r"|([^\n]{3,70}))",      # Activity Title: “Shape Detectives”
+    r"(?:Suggested )?Activity\s*:?\s*\n?\s*" + _QUOTED,                              # Suggested Activity:\n“Safe or Unsafe?”
+    r"^[A-Za-z ]{0,30}(?:Task|Scenario)\s*:\s*" + _QUOTED,                          # Task: "The Double-Take Performance"
+    r"\AText for Activity:[^\n]*\n\s*\n([^\n]{3,70})\n")]                           # the import files' layout
+
+
+def activity_name(title: str, activity_text: str) -> str:
+    """An activity's name, apart from its codes: the name after the codes in its title, else the title its text
+    gives; "" when there is none."""
+    m = _CODES_THEN_NAME.match((title or "").strip())
+    if m:
+        return m.group("name").strip()
+    head = (activity_text or "").replace("\r", "")[:400]
+    for pattern in _TITLE_IN_TEXT:
+        found = pattern.search(head)
+        if found:
+            return next(g for g in found.groups() if g).strip(" .:“”\"'")
+    return ""
+
+
+def _label(name: str, code: str) -> str:
+    """Name and code, to tell activities apart: "Important Idea Circle (L2CG1,C-1.1)"; the code alone without a
+    name. A code that already ends with the name (titles made here) shows only its code part."""
+    codes = code[:-len(name)].strip(" -,") if name and code.endswith(name) else code
+    return f"{name} ({codes})" if name and codes and name != code else code
+
+
 def view(act: LibraryActivity, setting: Optional[SchoolActivitySetting], actor: Actor,
          default: Optional[str] = None, mine: Optional[TeacherActivityEdit] = None) -> Dict[str, Any]:
     school_edits, my_edits = _layers(setting, mine)
@@ -278,6 +310,9 @@ def view(act: LibraryActivity, setting: Optional[SchoolActivitySetting], actor: 
     missing = [names[c] for c in all_codes if c not in subjects]
     texts = _texts(content)
     title = (setting.display_name if setting else None) or act.title or ""
+    name = (setting.display_name if setting and setting.display_name else None) \
+        or activity_name(act.title or "", (content.get("desc") or [""])[0]) \
+        or (title if title and title != act.code else "")
     status_ = setting.status if setting else "active"
     portal_active = act.source == "local" or bool((act.original_snapshot or {}).get("is_active", True))
     ready = _portal_ready(act, content, subjects)
@@ -294,8 +329,8 @@ def view(act: LibraryActivity, setting: Optional[SchoolActivitySetting], actor: 
         usable, reason = False, "Has pictures - choose it on the PARAKH website instead."
     return {
         "id": act.id, "source": act.source, "stage": act.stage, "portal_id": act.portal_id,
-        "code": act.code, "title": title,
-        "label": f"{act.code} - {title}" if title and title != act.code else act.code,
+        "code": act.code, "title": title, "name": name,
+        "label": _label(name, act.code),
         **texts,
         "subjects": subjects, "subject_names": [names[c] for c in subjects],
         "covers_all": not missing, "missing_subjects": missing,
@@ -417,7 +452,7 @@ def list_views(db: Session, actor: Actor, stage: str) -> List[Dict[str, Any]]:
 
 def filter_views(views: List[Dict[str, Any]], q: str = "", source: str = "", subject: str = "",
                  covers_all: Optional[bool] = None, status_: str = "", edited: Optional[bool] = None,
-                 upstream: str = "", mine: Optional[bool] = None) -> List[Dict[str, Any]]:
+                 upstream: str = "", mine: Optional[bool] = None, grade: Optional[int] = None) -> List[Dict[str, Any]]:
     q = q.strip().lower()
 
     def keep(v):
@@ -428,6 +463,8 @@ def filter_views(views: List[Dict[str, Any]], q: str = "", source: str = "", sub
         if subject and subject not in v["subjects"]:
             return False
         if covers_all is not None and v["covers_all"] != covers_all:
+            return False
+        if grade is not None and v["grade_id"] != grade:
             return False
         if status_ and v["status"] != status_:
             return False
@@ -458,19 +495,21 @@ def library_entries(db: Session, actor: Actor, stage: str) -> Dict[str, Dict[str
                         "content": effective_content(a, settings.get(a.id), mine.get(a.id)),
                         "is_global": a.source == "portal_global", "modified": v["modified"],
                         "usable": v["usable_in_excel"], "reason": v["not_usable_reason"], "key": _key(v),
-                        "subjects": v["subjects"], "activity_id": a.id}
+                        "subjects": v["subjects"], "grade_id": a.grade_id, "activity_id": a.id}
     return out
 
 
-def subject_defaults(db: Session, actor: Actor, stage: str, entries: Dict[str, Dict[str, Any]]) -> Dict[str, str]:
+def subject_defaults(db: Session, actor: Actor, stage: str, entries: Dict[str, Dict[str, Any]],
+                     grade_id: Optional[int] = None) -> Dict[str, str]:
     """Subject code -> the activity filled in when a student has none for it: the school's default activity if
-    it belongs to that subject, otherwise the subject's first own activity (by name). Subjects without activities
-    of their own get none - the teacher chooses from all."""
+    it belongs to that subject (and grade), otherwise the subject's first own activity (by name). With grade_id
+    only activities of that grade count. Subjects without such an activity get none."""
     row = db.query(StageActivityDefault).filter_by(school_id=actor.school_id, teacher_id=None, stage=stage).first()
     school_default = next((k for k, e in entries.items() if row and e.get("activity_id") == row.activity_id), None)
     out = {}
     for s in stage_subjects(stage):
-        own = sorted((k for k, e in entries.items() if e["usable"] and s["code"] in (e.get("subjects") or [])),
+        own = sorted((k for k, e in entries.items() if e["usable"] and s["code"] in (e.get("subjects") or [])
+                      and (grade_id is None or e.get("grade_id") == grade_id)),
                      key=lambda k: entries[k]["label"].lower())
         if school_default in own:
             out[s["code"]] = school_default
@@ -487,6 +526,8 @@ def resolver_for_teacher(teacher_id: str, stage: str, fallback=None):
         actor = Actor("TEACHER", t.id, t.school_id, t.teacher_name) if t else None
         entries = library_entries(db, actor, stage) if t else {}
         defaults = subject_defaults(db, actor, stage, entries) if t else {}
+        by_grade = {g: subject_defaults(db, actor, stage, entries, g)
+                    for g in STAGE_GRADES.get(stage.capitalize(), {})} if t else {}
     if not entries and fallback is None:
         return None                     # never synced: the save uses PARAKH's own lists
 
@@ -494,11 +535,13 @@ def resolver_for_teacher(teacher_id: str, stage: str, fallback=None):
         if key in entries:
             return entries[key]
         return fallback(key) if fallback and not entries else None
-    own = [(k, e) for k, e in entries.items() if e["portal_id"] is None] + \
-          [(k, e) for k, e in entries.items() if e["portal_id"] is not None and e["modified"]]
+    # every activity goes on a card as a manual one, found again by its name: made here first, then edited
+    # bank activities, then the rest
+    ordered = sorted(entries.items(), key=lambda ke: (ke[1]["portal_id"] is not None, not ke[1]["modified"]))
     resolve.typed = {}
     resolve.defaults = defaults                       # each subject's own activity, used when a student has none
-    for k, e in own:                                 # made here first, then edited bank activities
+    resolve.defaults_by_grade = by_grade              # the same for each grade: what students of that grade get
+    for k, e in ordered:
         resolve.typed.setdefault(e["caption"], k)
     from backend.services import own_activities
     owner = f"teacher_{teacher_id}"
@@ -828,11 +871,8 @@ def set_default(db: Session, actor: Actor, stage: str, activity_id: Optional[str
         v = view(act, _setting(db, actor.school_id, act.id), actor)
         if not v["usable_in_excel"]:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, f"It cannot be the default: {v['not_usable_reason']}")
-        covers = v["covers_all"]
-        if not covers and not confirm_partial:
-            raise HTTPException(status.HTTP_409_CONFLICT, {
-                "message": "This activity does not cover every subject of the stage.",
-                "missing_subjects": v["missing_subjects"]})
+        # an activity is for its own subject and grade; the default only fills in students of those
+        # (confirm_partial is no longer needed and is ignored)
     if row is None:
         row = StageActivityDefault(school_id=actor.school_id, teacher_id=None, stage=stage)
         db.add(row)

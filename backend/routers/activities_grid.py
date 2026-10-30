@@ -30,14 +30,16 @@ class SaveRequest(BaseModel):
 
 
 class QuickFillRequest(BaseModel):
-    activity_key: str = Field("", description="library key, e.g. P85; empty = only set levels")
+    activity_key: str = Field("", description="library key, e.g. P85; \"each_subject\" = every subject its own activity for the student's grade; empty = only set levels")
     subjects: Optional[List[str]] = Field(None, description="subject codes; leave out for all subjects")
     students: Optional[List[str]] = Field(None, description="student ids; leave out for every student shown")
     grade: Optional[str] = Field(None, description="'Grade 4 - A': only that grade and section")
     levels: Dict[Literal["awareness", "sensitivity", "creativity"], str] = Field(default_factory=dict)
     replace_filled: bool = False
+    replace_on_parakh: bool = Field(False, description="tick 'Replace activities on PARAKH' for the students filled")
     apply: bool = False
     expected_cells: Optional[int] = Field(None, description="the cell count the preview showed (apply only)")
+    mix_seed: Optional[str] = Field(None, max_length=32, description="the seed the preview returned (Mixed levels)")
 
 
 class ImportRequest(BaseModel):
@@ -105,4 +107,5 @@ def quick_fill(stage: str, payload: QuickFillRequest, teacher: Teacher = Depends
     if not students:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "No students match. Choose a grade or tick some students.")
     return _call(activity_grid.quick_fill, _portal(teacher), teacher, stage, students, payload.activity_key,
-                 payload.subjects, dict(payload.levels), payload.replace_filled, payload.apply, payload.expected_cells)
+                 payload.subjects, dict(payload.levels), payload.replace_filled, payload.apply, payload.expected_cells,
+                 payload.replace_on_parakh, payload.mix_seed)

@@ -1,5 +1,6 @@
 fastapi>=0.115
 uvicorn>=0.30
+anyio>=4.0                # the worker-thread limit (main.py)
 python-multipart>=0.0.9
 sqlalchemy>=2.0
 pymysql>=1.1
@@ -8,6 +9,7 @@ bcrypt>=4.1
 PyJWT>=2.8
 requests>=2.31
 openpyxl>=3.1
+reportlab>=4.2
 pillow>=10.0
 cryptography>=42          # stored passwords and encrypted backups
 

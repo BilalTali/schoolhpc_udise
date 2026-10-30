@@ -144,6 +144,9 @@ class ValidationReportResponse(BaseModel):
     warnings: List[dict]
     seeder_working_days: str
     seeder_max_marks: str
+    already_saved: int = 0                 # students saved before with these same answers: not sent again
+    file_name: Optional[str] = None        # the checked file (a check shown again after a page reload)
+    checked_at: Optional[str] = None
 
 
 class UploadJobResponse(BaseModel):
@@ -159,22 +162,6 @@ class UploadJobResponse(BaseModel):
     created_at: datetime
     completed_at: Optional[datetime] = None
 
-
-class StudentRecordResponse(BaseModel):
-    id: str
-    row_number: Optional[int] = None
-    admission_number: str
-    student_name: str
-    student_key: Optional[str] = None
-    grade: Optional[str] = None
-    section: Optional[str] = None
-    status: str
-    attempt_count: int = 0
-    verification_result: Optional[str] = None
-    error_message: Optional[str] = None
-    completed_at: Optional[datetime] = None
-
-    model_config = ConfigDict(from_attributes=True)
 
 
 # ---------------------------------------------------------------------------

@@ -7,7 +7,10 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 from backend.config import DATABASE_URL
 
 _connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
-engine = create_engine(DATABASE_URL, pool_pre_ping=True, pool_recycle=3600, connect_args=_connect_args)
+# every request and every running upload (it keeps one connection while it saves) needs a connection: room for
+# a busy school (the default 5 + 10 runs out with a few uploads and a full page of teachers)
+_pool = {} if DATABASE_URL.startswith("sqlite") else {"pool_size": 20, "max_overflow": 40, "pool_timeout": 20}
+engine = create_engine(DATABASE_URL, pool_pre_ping=True, pool_recycle=3600, connect_args=_connect_args, **_pool)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 

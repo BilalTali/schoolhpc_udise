@@ -13,7 +13,7 @@ const KEYS = SUBJECTS.flatMap((s) => [`b_act_${s.code}`, ...["awareness", "sensi
 function student(id: string, name: string, values: Record<string, string> = {}, extra: Partial<GridStudent> = {}): GridStudent {
   const all = Object.fromEntries([...KEYS, "b_replace"].map((k) => [k, values[k] || ""]));
   return {
-    student_id: id, student_name: name, grade: "Grade 5", section: "A", status: "PENDING", values: all,
+    student_id: id, student_name: name, grade: "Grade 5", grade_id: 8, section: "A", status: "PENDING", values: all,
     source: Object.fromEntries(Object.keys(all).map((k) => [k, values[k] ? "portal" : ""])) as GridStudent["source"],
     locked: false, replace: false, existing: [], missing_subjects: [], problems: [], notes: [], ready: false,
     draft_version: 0, saved_at: null, ...extra,
@@ -72,6 +72,7 @@ function fakeGrid(options?: GridData["options"]) {
           : s));
       }
       return json(200, { applied: !!body.apply, cells, students: 1, kept: 4, subjects: SUBJECTS.map((s) => s.name),
+                         older_on_parakh: body.replace_on_parakh ? [] : ["STUDENT THREE"],
                          skipped: [{ student_id: "3", student_name: "STUDENT THREE", reason: "Tick 'Replace' for this student first." }] });
     }
     return json(404, { detail: "no fake" });
@@ -93,22 +94,24 @@ const puts = (fake: ReturnType<typeof fakeGrid>) => fake.state.calls.filter((c) 
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 describe("Activities grid", () => {
-  it("offers the student's grade's activities first, and says so when PARAKH has none for the grade or subject", async () => {
-    const fake = fakeGrid([{ key: "P85", label: "85: Pairs", subjects: ["PSLS1"], grade: "Grade 4" },
-                           { key: "P86", label: "86: Rhymes", subjects: ["PSLS1"], grade: "Grade 5" },
-                           { key: "P91", label: "91: Story", subjects: ["PSLS3"], grade: "Grade 4" }]);
+  it("offers only the student's grade's activities of each subject, never another grade's", async () => {
+    const fake = fakeGrid([{ key: "P85", label: "85: Pairs", subjects: ["PSLS1"], grade_id: 7, grade: "Grade 4" },
+                           { key: "P86", label: "86: Rhymes", subjects: ["PSLS1"], grade_id: 8, grade: "Grade 5" },
+                           { key: "L1", label: "No grade yet", subjects: ["PSLS1"], grade_id: null, grade: "" },
+                           { key: "P91", label: "91: Story", subjects: ["PSLS3"], grade_id: 7, grade: "Grade 4" }]);
     vi.stubGlobal("fetch", vi.fn(fake.fetch));
     render(<ActivitiesGrid api={api} stage="Preparatory" />);
     const one = (await screen.findByRole("rowheader", { name: /STUDENT ONE/ })).closest("tr")!;       // a Grade 5 student
     const names = (box: HTMLElement) => within(box).getAllByRole("option").map((o) => o.textContent);
     expect(names(within(one).getByRole("combobox", { name: "STUDENT ONE, Language 1 (R1), activity" }))).toEqual(["— Choose —", "86: Rhymes"]);
-    // Mathematics has nothing for Grade 5 on PARAKH: the other grades' Mathematics activities, with a remark
-    expect(names(within(one).getByRole("combobox", { name: "STUDENT ONE, Mathematics, activity" }))).toEqual(["— Choose —", "91: Story (Grade 4)"]);
-    expect(within(one).getByTitle("No Mathematics activity for Grade 5 on PARAKH - showing other grades")).toHaveTextContent("Other grades");
+    // Mathematics has nothing for Grade 5: an empty list that says so, not Grade 4's activities
+    expect(names(within(one).getByRole("combobox", { name: "STUDENT ONE, Mathematics, activity" }))).toEqual(["— Choose —"]);
+    expect(within(one).getByTitle("No Mathematics activity for Grade 5 in your Activity Library")).toHaveTextContent("No activity");
   });
 
   it("offers under each subject only that subject's activities, and marks an older choice from elsewhere", async () => {
-    const fake = fakeGrid([{ key: "P85", label: "85: Pairs", subjects: ["PSLS1"] }, { key: "P91", label: "91: Story", subjects: ["PSLS3"] }]);
+    const fake = fakeGrid([{ key: "P85", label: "85: Pairs", subjects: ["PSLS1"], grade_id: 8 },
+                           { key: "P91", label: "91: Story", subjects: ["PSLS3"], grade_id: 8 }]);
     vi.stubGlobal("fetch", vi.fn(fake.fetch));
     render(<ActivitiesGrid api={api} stage="Preparatory" />);
     const one = (await screen.findByRole("rowheader", { name: /STUDENT ONE/ })).closest("tr")!;
@@ -117,7 +120,7 @@ describe("Activities grid", () => {
     expect(names(within(one).getByRole("combobox", { name: "STUDENT ONE, Mathematics, activity" }))).toEqual(["— Choose —", "91: Story"]);
     const two = screen.getByRole("rowheader", { name: /STUDENT TWO/ }).closest("tr")!;       // P85 everywhere from before
     expect(names(within(two).getByRole("combobox", { name: "STUDENT TWO, Mathematics, activity" })))
-      .toEqual(["— Choose —", "85: Pairs (not for this subject)", "91: Story"]);
+      .toEqual(["— Choose —", "85: Pairs (not for this subject or grade)", "91: Story"]);
   });
 
   it("opens the student named by 'Fix in Activities'", async () => {
@@ -175,7 +178,7 @@ describe("Activities grid", () => {
   it("fills the whole class with one activity after a preview", async () => {
     const { fake, user } = setup();
     await screen.findByText("STUDENT ONE");
-    await user.selectOptions(screen.getByRole("combobox", { name: "Activity" }), "P85");
+    await user.selectOptions(screen.getByRole("combobox", { name: /^Activity/ }), "P85");
     expect(screen.getByRole("button", { name: "Apply" })).toBeDisabled();       // preview first
     await user.click(screen.getByRole("button", { name: "Preview" }));
     expect(await screen.findByText(/Fills/)).toHaveTextContent("Fills 2 cells for 1 student");
@@ -188,6 +191,67 @@ describe("Activities grid", () => {
     await waitFor(() => expect(screen.getByRole("combobox", { name: "STUDENT ONE, Mathematics, activity" })).toHaveValue("P85"));
   });
 
+  it("quick fill gives every subject its own activity with Proficient levels by default", async () => {
+    const fake = fakeGrid([{ key: "P85", label: "Pairs", subjects: ["PSLS1"], grade_id: 7, grade: "Grade 4" },
+                           { key: "P86", label: "Rhymes", subjects: ["PSLS1"], grade_id: 8, grade: "Grade 5" },
+                           { key: "P92", label: "Shapes", subjects: ["PSLS3"], grade_id: 8, grade: "Grade 5" }]);
+    vi.stubGlobal("fetch", vi.fn(fake.fetch));
+    const user = userEvent.setup();
+    render(<ActivitiesGrid api={api} stage="Preparatory" />);
+    await screen.findByText("STUDENT ONE");                                        // every student is in Grade 5
+    const activity = screen.getByRole("combobox", { name: /^Activity/ });
+    expect(activity).toHaveValue("each_subject");
+    // one activity: only this class's grade (no Grade 4 "Pairs")
+    expect(within(activity).getAllByRole("option").map((o) => o.textContent))
+      .toEqual(["Each subject's own activity", "— Only set levels —", "Rhymes", "Shapes"]);
+    for (const a of ["Awareness", "Sensitivity", "Creativity"]) {
+      expect(within(screen.getByRole("radiogroup", { name: `${a} level to fill` })).getByRole("radio", { name: "Proficient" })).toBeChecked();
+    }
+    await user.click(screen.getByRole("button", { name: "Preview" }));
+    await screen.findByText(/Fills/);
+    expect(fake.state.calls.find((c) => c.path.endsWith("/quick-fill"))!.body).toMatchObject({
+      activity_key: "each_subject", grade: null, students: null,
+      levels: { awareness: "Proficient", sensitivity: "Proficient", creativity: "Proficient" } });
+    // one activity that does not fit the subject chosen later falls back to every subject's own
+    await user.selectOptions(activity, "P86");
+    await user.click(screen.getByRole("radio", { name: "Only:" }));
+    await user.selectOptions(screen.getByRole("combobox", { name: "Subject to fill" }), "PSLS3");
+    expect(activity).toHaveValue("each_subject");
+  });
+
+  it("quick fill can change the levels of students chosen by name, and only their levels", async () => {
+    const { fake, user } = setup();
+    await screen.findByText("STUDENT ONE");
+    expect(screen.getByRole("button", { name: "Preview" })).toBeEnabled();
+    await user.click(screen.getByRole("radio", { name: /Choose students/ }));
+    expect(screen.getByRole("button", { name: "Preview" })).toBeDisabled();      // nobody chosen yet
+    expect(screen.getByText("Choose some students above first.")).toBeInTheDocument();
+    await user.type(screen.getByRole("searchbox", { name: "Find a student" }), "two");
+    const list = screen.getByRole("group", { name: "Students to change" });
+    expect(within(list).getAllByRole("checkbox")).toHaveLength(1);
+    await user.click(within(list).getByRole("checkbox", { name: /STUDENT TWO/ }));
+    await user.click(within(screen.getByRole("radiogroup", { name: "Awareness level to fill" })).getByRole("radio", { name: "Advanced" }));
+    expect(screen.getByRole("combobox", { name: /^Activity/ })).toHaveValue("");     // levels only
+    expect(screen.getByRole("radio", { name: "Replace them" })).toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Preview" }));
+    await screen.findByText(/Fills/);
+    expect(fake.state.calls.find((c) => c.path.endsWith("/quick-fill"))!.body).toMatchObject({
+      activity_key: "", students: ["2"], grade: null, replace_filled: true,
+      levels: { awareness: "Advanced", sensitivity: "Proficient", creativity: "Proficient" } });
+  });
+
+  it("quick fill names students with older activities on PARAKH and can replace them", async () => {
+    const { fake, user } = setup();
+    await screen.findByText("STUDENT ONE");
+    await user.click(screen.getByRole("button", { name: "Preview" }));
+    expect(await screen.findByText(/older\s+activities on PARAKH that the new choices no longer use/)).toHaveTextContent("STUDENT THREE");
+    await user.click(screen.getByRole("checkbox", { name: "Replace older activities on PARAKH" }));
+    await user.click(screen.getByRole("button", { name: "Preview" }));
+    await waitFor(() => expect(fake.state.calls.filter((c) => c.path.endsWith("/quick-fill"))).toHaveLength(2));
+    expect(fake.state.calls.filter((c) => c.path.endsWith("/quick-fill"))[1].body).toMatchObject({ replace_on_parakh: true });
+    await waitFor(() => expect(screen.queryByText(/no longer use/)).not.toBeInTheDocument());
+  });
+
   it("can fill only the ticked students, for one subject", async () => {
     const { fake, user } = setup();
     await screen.findByText("STUDENT ONE");
@@ -195,7 +259,7 @@ describe("Activities grid", () => {
     await user.click(screen.getByRole("radio", { name: /Only the 1 ticked/ }));
     await user.click(screen.getByRole("radio", { name: "Only:" }));
     await user.selectOptions(screen.getByRole("combobox", { name: "Subject to fill" }), "PSLS3");
-    await user.selectOptions(screen.getByRole("combobox", { name: "Activity" }), "P91");
+    await user.selectOptions(screen.getByRole("combobox", { name: /^Activity/ }), "P91");
     await user.click(screen.getByRole("button", { name: "Preview" }));
     await screen.findByText(/Fills/);
     const call = fake.state.calls.find((c) => c.path.endsWith("/quick-fill"))!;

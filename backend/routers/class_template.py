@@ -4,13 +4,14 @@ Class settings and the class template (teacher).
   GET  /teacher/settings/{stage}                       the class settings, what is missing, the dropdown choices
   PUT  /teacher/settings/{stage}                       save them (checked; warnings for unusual values)
   POST /teacher/template/{stage}/check                 read the class from PARAKH (GET only) in the background
+  GET  /teacher/template/{stage}/precheck              empty required answers, with where to fix them
   GET  /teacher/template/{stage}/check                 progress, then who is ready and why the others are not
   GET  /teacher/template/{stage}/download?include=ready|all&confirmed=true
 """
 import json
 from typing import Any, Dict, Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
@@ -75,6 +76,19 @@ def start_check(stage: str, teacher: Teacher = Depends(require_teacher)):
     return class_template.job_view(job)
 
 
+@router.get("/template/{stage}/precheck")
+def precheck(stage: str, teacher: Teacher = Depends(require_teacher)):
+    """Before the check: every empty required answer, grouped by question, with where to fix it (read-only)."""
+    stage = _stage(teacher, stage)
+    students = _students(teacher, stage)
+    client = _portal(teacher)
+    try:
+        lookups = hpc_cards.lookups_for(f"teacher_{teacher.id}", client, stage)
+        return class_template.precheck(client, teacher, stage, students, hpc_cards._resolver(teacher.id, stage, lookups))
+    except PortalError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc))
+
+
 @router.get("/template/{stage}/check")
 def check_status(stage: str, teacher: Teacher = Depends(require_teacher)):
     stage = _stage(teacher, stage)
@@ -114,11 +128,14 @@ def download_all(include: Literal["ready", "all"] = "ready", confirmed: bool = F
 
 @router.get("/template/{stage}/download")
 def download(stage: str, include: Literal["ready", "all"] = "ready", confirmed: bool = False,
-             teacher: Teacher = Depends(require_teacher)):
+             students: Optional[str] = Query(None, max_length=20000), teacher: Teacher = Depends(require_teacher)):
+    """students: comma-separated ids - a file with just those (the teacher picked them, ready or not)."""
     stage = _stage(teacher, stage)
-    if include == "all" and not confirmed:
+    only = {s.strip() for s in students.split(",") if s.strip()} if students else None
+    if include == "all" and not confirmed and only is None:
         raise HTTPException(status.HTTP_409_CONFLICT, "Confirm first: students who are not ready will be in the file.")
-    path = hpc_sessions.session_dir("teacher", teacher.id) / f"HPC_{stage}_template{'_all' if include == 'all' else ''}.xlsx"
-    class_template.build_download(teacher, stage, include == "all", path, _labels(teacher, stage))
+    tail = "_chosen" if only is not None else "_all" if include == "all" else ""
+    path = hpc_sessions.session_dir("teacher", teacher.id) / f"HPC_{stage}_template{tail}.xlsx"
+    class_template.build_download(teacher, stage, include == "all", path, _labels(teacher, stage), only)
     return FileResponse(path, filename=path.name,
                         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")

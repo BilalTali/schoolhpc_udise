@@ -11,11 +11,13 @@ Teacher endpoints for working on HPC cards in the web app (instead of, or next t
   GET    /teacher/hpc-cards/{stage}/check                    is the app's copy still what PARAKH holds? (background)
   GET    /teacher/hpc-cards/{stage}/levels                   Part C levels for the whole class
   PUT    /teacher/hpc-cards/{stage}/levels                   save them (drafts)
+  GET    /teacher/hpc-cards/{stage}/progress?part=<code>     per field: how many students have an answer
   GET    /teacher/hpc-cards/{stage}/bulk?field=<key>         one field for the whole class
   PUT    /teacher/hpc-cards/{stage}/bulk                     set that field for many students (drafts)
+  POST   /teacher/hpc-cards/{stage}/bulk-mix                 every listed question at once, mixed answers (drafts)
 Every endpoint takes ?session=<code> (default: the current session). Past sessions are read-only.
 """
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
@@ -39,6 +41,12 @@ class BulkRequest(BaseModel):
     values: Dict[str, Any] = Field(..., description="student_id -> value")
 
 
+class MixRequest(BaseModel):
+    fields: List[str] = Field(..., description="the class-wide questions to fill, e.g. every question on the screen")
+    replace: bool = Field(False, description="also replace answers already filled (default: only empty ones)")
+    apply: bool = Field(False, description="false: only count what would be filled")
+
+
 class LevelsRequest(BaseModel):
     values: Dict[str, Dict[str, Any]] = Field(..., description="student_id -> {Part C level key: value}")
 
@@ -49,7 +57,7 @@ def _ctx(teacher: Teacher, stage: str, session: Optional[str], writing: bool = F
 
 
 def _own_student(client, teacher: Teacher, stage: str, student_id: str, lookups=None) -> None:
-    """Drafts are kept only for students in the teacher's class list (C-2)."""
+    """A card is opened, kept as a draft or saved only for students in the teacher's class list (C-2)."""
     lookups = lookups or _portal_call(hpc_cards.lookups_for, f"teacher_{teacher.id}", client, stage)
     if student_id not in _portal_call(hpc_cards.in_class, client, teacher.id, stage, lookups):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "This student is not in your class list.")
@@ -106,6 +114,20 @@ def levels_write(stage: str, payload: LevelsRequest, session: Optional[str] = No
                         payload.values)
 
 
+@router.get("/hpc-cards/{stage}/progress")
+def part_progress(stage: str, part: str = Query(...), session: Optional[str] = None,
+                  teacher: Teacher = Depends(require_teacher)):
+    client, stage, session = _ctx(teacher, stage, session)
+    return _portal_call(hpc_cards.part_progress, client, f"teacher_{teacher.id}", teacher.id, session, stage, part)
+
+
+@router.post("/hpc-cards/{stage}/bulk-mix")
+def bulk_mix(stage: str, payload: MixRequest, session: Optional[str] = None, teacher: Teacher = Depends(require_teacher)):
+    client, stage, session = _ctx(teacher, stage, session, writing=payload.apply)
+    return _portal_call(hpc_cards.bulk_mix, client, f"teacher_{teacher.id}", teacher.id, session, stage,
+                        payload.fields, payload.replace, payload.apply)
+
+
 @router.get("/hpc-cards/{stage}/bulk")
 def bulk_read(stage: str, field: str = Query(...), session: Optional[str] = None, refresh: bool = False,
               teacher: Teacher = Depends(require_teacher)):
@@ -124,6 +146,7 @@ def bulk_write(stage: str, payload: BulkRequest, session: Optional[str] = None,
 @router.get("/hpc-cards/{stage}/{student_id}")
 def get_card(stage: str, student_id: str, session: Optional[str] = None, teacher: Teacher = Depends(require_teacher)):
     client, stage, session = _ctx(teacher, stage, session)
+    _own_student(client, teacher, stage, student_id)
     return _portal_call(hpc_cards.card, client, f"teacher_{teacher.id}", teacher.id, session, stage, student_id)
 
 
@@ -152,6 +175,7 @@ def discard_draft(stage: str, student_id: str, session: Optional[str] = None,
 @router.post("/hpc-cards/{stage}/{student_id}/submit")
 def submit(stage: str, student_id: str, session: Optional[str] = None, teacher: Teacher = Depends(require_teacher)):
     client, stage, session = _ctx(teacher, stage, session, writing=True)
+    _own_student(client, teacher, stage, student_id)
     return _portal_call(hpc_cards.submit, client, f"teacher_{teacher.id}", teacher.id, session, stage, student_id)
 
 
@@ -159,5 +183,6 @@ def submit(stage: str, student_id: str, session: Optional[str] = None, teacher: 
 def preview(stage: str, student_id: str, session: Optional[str] = None, include_draft: bool = True,
             teacher: Teacher = Depends(require_teacher)):
     client, stage, session = _ctx(teacher, stage, session)
+    _own_student(client, teacher, stage, student_id)
     return _portal_call(hpc_cards.preview, client, f"teacher_{teacher.id}", teacher.id, session, stage, student_id,
                         include_draft)

@@ -1,10 +1,10 @@
 """
 Which Manual activities on students' cards this app wrote itself.
 
-A teacher's own activity (made here, or a bank activity whose texts they edited) goes on a card as PARAKH's
-"Create Manually" kind, which has no bank id. If the teacher later removes their version, the app must
-know which Manual copies are its own, so it can switch exactly those back to the bank activity - and never
-touch a Manual activity a teacher typed on the PARAKH website.
+Every activity chosen in the grid goes on a card as PARAKH's "Create Manually" kind, which has no bank id.
+The app must know which Manual copies are its own (and which library activity each one is), so the grid can
+show them again and a save can update exactly those - and never touch a Manual activity a teacher typed on
+the PARAKH website.
 
 After each successful save the card's activity ids (unique: they start with the card's hpc id) are
 recorded with the library key they came from. Files: data/own_activities/<owner>.json, IDs only.
@@ -33,8 +33,8 @@ def load(owner: str) -> Dict[str, str]:
 
 
 def remember(owner: str, part_b: List[Dict[str, Any]], typed: Dict[str, str]) -> None:
-    """Called after a save: Manual copies of the teacher's own activities are recorded; activities that are
-    linked to the bank again (or gone) need no record."""
+    """Called after a save: the card's Manual copies of library activities are recorded; activities linked to
+    the bank (or gone) need no record."""
     with _lock:
         owned = load(owner)
         before = dict(owned)

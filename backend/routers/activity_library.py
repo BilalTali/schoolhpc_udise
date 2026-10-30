@@ -101,19 +101,23 @@ class SyncRequest(BaseModel):
 @router.get("")
 def list_activities(stage: str, q: str = "", source: str = "", subject: str = "", covers_all: Optional[bool] = None,
                     status_: str = Query("", alias="status"), edited: Optional[bool] = None, upstream: str = "",
-                    mine: Optional[bool] = None, page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=500),
+                    mine: Optional[bool] = None, grade: Optional[int] = None,
+                    page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=500),
                     actor: lib.Actor = Depends(_actor), db: Session = Depends(get_db)):
     stage = lib.check_stage(stage)
     views = lib.list_views(db, actor, stage)
-    found = lib.filter_views(views, q, source, subject, covers_all, status_, edited, upstream, mine)
+    found = lib.filter_views(views, q, source, subject, covers_all, status_, edited, upstream, mine, grade)
     start = (page - 1) * page_size
     return {
-        "stage": stage, "subjects": lib.stage_subjects(stage), "total": len(found), "page": page, "page_size": page_size,
+        "stage": stage, "subjects": lib.stage_subjects(stage),
+        "grades": [{"id": i, "name": n} for i, n in lib.STAGE_GRADES.get(stage, {}).items()],
+        "total": len(found), "page": page, "page_size": page_size,
         "items": found[start:start + page_size],
         "counts": {"all": len(views), "active": sum(v["status"] == "active" for v in views),
                    "disabled": sum(v["status"] == "disabled" for v in views),
                    "covers_all": sum(v["covers_all"] for v in views), "edited": sum(v["edited"] for v in views),
                    "removed": sum(v["upstream_status"] == "removed" for v in views),
+                   "no_grade": sum(v["grade_id"] is None for v in views),
                    "usable_in_excel": sum(v["usable_in_excel"] for v in views)},
         "default_id": lib.default_id(db, actor.school_id, stage),
         "default_label": next((v["label"] for v in views if v["is_default"]), None),

@@ -3,7 +3,8 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-ALLOWED = ("hpc.parakh.ncert.gov.in", "127.0.0.1", "localhost", "example.com", "www.w3.org", "test")
+# udiseplus.gov.in: the Home page's links to the UDISE+ services (opened in a new tab; nothing is loaded from them)
+ALLOWED = ("hpc.parakh.ncert.gov.in", "udiseplus.gov.in", "127.0.0.1", "localhost", "example.com", "www.w3.org", "test")
 
 
 def test_the_web_app_loads_nothing_from_other_websites():

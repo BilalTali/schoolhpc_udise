@@ -21,7 +21,8 @@ export function makeActivity(over: Partial<Activity> & { id: string; code: strin
     source: "portal_global", stage: "Preparatory", portal_id: Number(over.id.replace(/\D/g, "")) || 1, title: "",
     label: over.code, activity_text: "Pairs act out a conversation.", assessment_text: "What did you say?",
     rubric: rubric(), goals: ["CG1"], competencies: ["C1.1"], subjects, subject_names: [], covers_all: true,
-    missing_subjects: [], portal_subject_names: ["Language 1 (R1)"], has_pictures: false, status: "active",
+    missing_subjects: [], portal_subject_names: ["Language 1 (R1)"], grade_id: 7, grade_name: "Grade 4",
+    has_pictures: false, status: "active",
     is_default: false, edited: false, upstream_status: "present", portal_active: true, last_synced_at: "2026-10-25T10:00:00Z",
     share_state: null, is_mine: false, usable_in_excel: true, not_usable_reason: "", can_edit: true, can_manage: isAdmin,
     can_delete: false, can_reset: false, edited_by_school: false, edited_by_me: false, modified: false,
@@ -44,8 +45,9 @@ export function fakeLibraryApi({ isAdmin = true, activities }: { isAdmin?: boole
   const state = {
     activities: activities ?? [
       makeActivity({ id: "a1", code: "L1CG 1, C 1.1" }, isAdmin),
-      makeActivity({ id: "a2", code: "MCG 1, C 1.2", subjects: ["PSLS1", "PSLS2", "PSLS4", "PSLS6", "PSLS7"] }, isAdmin),
-      makeActivity({ id: "a3", code: "TWCG 1, C 1.3", has_pictures: true, usable_in_excel: false,
+      makeActivity({ id: "a2", code: "MCG 1, C 1.2", subjects: ["PSLS1", "PSLS2", "PSLS4", "PSLS6", "PSLS7"],
+                     grade_id: 8, grade_name: "Grade 5" }, isAdmin),
+      makeActivity({ id: "a3", code: "TWCG 1, C 1.3", has_pictures: true, usable_in_excel: false, grade_id: null, grade_name: "",
                      not_usable_reason: "Has pictures - choose it on the PARAKH website instead." }, isAdmin),
     ],
     defaultId: null as string | null,
@@ -84,9 +86,11 @@ export function fakeLibraryApi({ isAdmin = true, activities }: { isAdmin?: boole
       const q = (p.get("q") || "").toLowerCase();
       if (q) items = items.filter((a) => a.code.toLowerCase().includes(q) || a.subject_names.some((n) => n.toLowerCase().includes(q)));
       if (p.get("covers_all")) items = items.filter((a) => String(a.covers_all) === p.get("covers_all"));
+      if (p.get("grade")) items = items.filter((a) => String(a.grade_id) === p.get("grade"));
       if (p.get("status")) items = items.filter((a) => a.status === p.get("status"));
       const listing: Listing = {
         stage: "Preparatory", subjects: SUBJECTS, total: items.length, page: 1, page_size: 50, items,
+        grades: [{ id: 6, name: "Grade 3" }, { id: 7, name: "Grade 4" }, { id: 8, name: "Grade 5" }],
         counts: { all: marked.length, active: marked.filter((a) => a.status === "active").length,
                   disabled: marked.filter((a) => a.status === "disabled").length, covers_all: marked.filter((a) => a.covers_all).length,
                   edited: marked.filter((a) => a.edited).length, removed: 0, usable_in_excel: marked.filter((a) => a.usable_in_excel && a.status === "active").length },
@@ -115,9 +119,6 @@ export function fakeLibraryApi({ isAdmin = true, activities }: { isAdmin?: boole
       return json(200, { changed: body.ids });
     }
     if (method === "PUT" && path === "/activity-library/defaults/Preparatory") {
-      if (body.activity_id && !find(body.activity_id).covers_all && !body.confirm_partial) {
-        return json(409, { detail: { message: "This activity does not cover every subject of the stage.", missing_subjects: find(body.activity_id).missing_subjects } });
-      }
       state.defaultId = body.activity_id;
       return json(200, { stage: "Preparatory", activity_id: body.activity_id });
     }

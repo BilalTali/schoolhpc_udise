@@ -13,6 +13,11 @@
 .qf-field .form-select { width: 100%; }
 .qf-fieldset { border: none; padding: 0; margin: 0; }
 .qf-fieldset legend { margin-bottom: 0.25rem; }
+.qf-pick { grid-column: 1 / -1; }
+.qf-find { max-width: 320px; }
+.qf-pick-actions { display: flex; gap: 1rem; }
+.qf-pick-list { list-style: none; margin: 0; padding: 0.4rem 0.6rem; max-height: 220px; overflow-y: auto; background: #FFFFFF;
+  border: 1px solid var(--border-light); border-radius: var(--radius-sm); display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 0.2rem 1rem; }
 .qf-levels { border: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 0.4rem 1rem; align-items: center; }
 .qf-level { display: flex; align-items: center; gap: 0.5rem; padding: 0.25rem 0.6rem; background: #FFFFFF; border: 1px solid var(--border-light); border-radius: var(--radius-sm); }
 .qf-level > span { font-weight: 700; font-size: 0.84rem; min-width: 80px; }
@@ -152,3 +157,11 @@
 .lv-ticked { display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.2rem 0.3rem 0.2rem 0.7rem; border-radius: 999px; background: var(--brand-50); border: 1px solid var(--brand-200); }
 .lv-who { margin: 0 0 0.6rem; color: var(--ink-2); font-size: 0.86rem; }
 .grid-note { display: block; font-size: 0.7rem; color: var(--muted); margin-top: 0.15rem; }
+
+/* Template panel: choose the students for the file */
+.tp-pick { margin-top: 0.75rem; border: 1px solid var(--border, #e2e8f0); border-radius: 10px; padding: 0.75rem; }
+.tp-pick-bar { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-bottom: 0.5rem; }
+.tp-pick-bar .form-input { flex: 1 1 14rem; min-width: 0; }
+.tp-pick ul { list-style: none; margin: 0; padding: 0; max-height: 18rem; overflow-y: auto; }
+.tp-pick li { padding: 0.3rem 0.2rem; border-bottom: 1px solid var(--border, #f1f5f9); }
+.tp-pick label { cursor: pointer; display: block; }

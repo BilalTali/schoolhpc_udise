@@ -63,6 +63,28 @@ describe("Part C levels grid", () => {
     expect(screen.getByText("6 unsaved changes")).toBeInTheDocument();          // the student not saved keeps their edits
   });
 
+  it("mixes Beginner / Proficient / Advanced into the empty levels, spread across the class, then saves them all", async () => {
+    const { puts, user } = setup();
+    const cell = await screen.findByRole("combobox", { name: "STUDENT ONE, Language 1 (R1), Awareness" });
+    await user.click(screen.getByRole("button", { name: "Mix 11 empty" }));
+    expect(cell).toHaveValue("Advanced");                                     // a level already set stays
+    const levels = ["Beginner", "Proficient", "Advanced"];
+    for (const subject of ["Language 1 (R1)", "Mathematics"]) {
+      for (const ability of ["Awareness", "Sensitivity", "Creativity"]) {
+        const one = (screen.getByRole("combobox", { name: `STUDENT ONE, ${subject}, ${ability}` }) as HTMLSelectElement).value;
+        const two = (screen.getByRole("combobox", { name: `STUDENT TWO, ${subject}, ${ability}` }) as HTMLSelectElement).value;
+        expect(levels).toContain(one);
+        expect(levels).toContain(two);
+        if (!(subject === "Language 1 (R1)" && ability === "Awareness")) expect(one).not.toBe(two);   // spread, not all the same
+      }
+    }
+    expect(screen.getByText("11 unsaved changes")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Save levels/ }));
+    await waitFor(() => expect(puts).toHaveLength(1));
+    expect(Object.keys(puts[0].values["1"])).toHaveLength(5);
+    expect(Object.keys(puts[0].values["2"])).toHaveLength(6);
+  });
+
   it("loads from the app's copy and reads PARAKH again only when asked", async () => {
     const { gets, user } = setup();
     expect(await screen.findByText(/Loaded from the app's copy, read from PARAKH on/)).toBeInTheDocument();
