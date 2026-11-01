@@ -50,8 +50,10 @@ class FakeSchoolParakh:
         return {"hpc_id": str(sid), "stu_info": {"dob": "2016-05-01", "gender": "FEMALE", "school_admission_number": f"A{sid}"}}
 
     def school_teachers(self):
-        return [{"id": 9000 + sec, "name": f"PARAKH Teacher {sec}", "login_id": f"TLOGIN{sec}",
-                 "grade_section_mapping": [{"grd": GRADE, "sec": sec, "ct": 1}]} for sec in (1, 2, 3)]
+        # as PARAKH sends them (live, 2026-11-01): staff_fname/lname, ct 1 = class teacher, ct 0 = subject teacher only
+        return [{"id": 9000 + sec, "staff_fname": "PARAKH", "staff_lname": f"Teacher {sec}", "teacher_code": f"TLOGIN{sec}",
+                 "grade_section_mapping": [{"grd": GRADE, "sec": sec, "ct": 1}, {"grd": GRADE, "sec": 4, "ct": 0}]}
+                for sec in (1, 2, 3)]
 
     def teacher_grade_sections(self, tid):
         return []

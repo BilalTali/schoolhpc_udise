@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from backend.hpc.fields import Field
-from backend.hpc.portal import Portal
+from backend.hpc.portal import Portal, PortalError
 
 MONTHS = ["Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec", "Jan", "Feb", "Mar"]
 MONTH_DAYS = dict(zip(MONTHS, (30, 31, 30, 31, 31, 30, 31, 30, 31, 31, 29, 31)))      # Feb: leap years allowed
@@ -82,7 +82,10 @@ class Lookups:
             self.grades = grades.result().get(stage_code, [])
             self.sections = sections.result()["records"]
             self.domains = domains.result()
-            records = bank.result()["records"] if bank else []
+            try:
+                records = bank.result()["records"] if bank else []
+            except PortalError:                            # a school login may not read the bank: only saves need it
+                records = []
         self.activities: Dict[int, Dict[str, Any]] = dict(stored)
         for a in records:
             a["content"] = json.loads(a.get("activity_data_json") or "{}")

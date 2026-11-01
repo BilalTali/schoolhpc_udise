@@ -164,8 +164,12 @@ def upsert(school_id: str, stage: str, rows: List[Dict[str, Any]], records: List
 
 
 def _pairs(mapping: Iterable[Dict[str, Any]]) -> Set[Tuple[int, int]]:
+    """(grade id, section id) the teacher is CLASS teacher of: PARAKH's mapping marks it ct 1 (ct 0: a subject
+    teacher of that class, which does not make the class theirs)."""
     out = set()
     for m in mapping or []:
+        if str(m.get("ct", 1)) == "0":
+            continue
         g = _int(m.get("grd", m.get("grade_id")))
         s = _int(m.get("sec", m.get("section_id")))
         if g is not None and s is not None:
@@ -202,7 +206,8 @@ def fetch_teacher_classes(school_id: str, client: Portal) -> int:
                     mapping = []
             hints = _hints(t)
             app_id = next((app[h] for h in hints if h in app), None)
-            name = t.get("name") or t.get("staff_name") or t.get("teacher_name") or ""
+            name = t.get("name") or t.get("staff_name") or t.get("teacher_name") or \
+                f"{t.get('staff_fname') or ''} {t.get('staff_lname') or ''}".strip()
             for g, s in _pairs(mapping):
                 db.add(RegisterTeacherClass(school_id=school_id, parakh_teacher_id=str(tid), teacher_name=name,
                                             login_hints=hints, app_teacher_id=app_id, grade_id=g, section_id=s,

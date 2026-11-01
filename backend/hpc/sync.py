@@ -179,9 +179,10 @@ def add_details(student: Dict[str, Any], record: Dict[str, Any]) -> None:
                                                      str(school.get("district_name") or "").strip()) if x)
 
 
-def roster_with_details(portal: Portal, stage: str, lookups: Lookups, workers: int = 6) -> List[Dict[str, Any]]:
+def roster_with_details(portal: Portal, stage: str, lookups: Lookups, workers: int = 6,
+                        records: Optional[List[Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
     """roster() plus gender and admission number (one extra read per student)."""
-    students = roster(portal, stage, lookups)
+    students = roster(portal, stage, lookups, records)
     with ThreadPoolExecutor(max_workers=workers) as pool:
         records = list(pool.map(lambda s: portal.student(stage, s["student_id"]), students))
     for s, record in zip(students, records):
@@ -200,10 +201,11 @@ def not_yours(portal: Portal, stage: str, lookups: Lookups) -> List[Dict[str, An
     return [{"grade": g, "section": s, "count": n} for (g, s), n in counts.items()]
 
 
-def roster(portal: Portal, stage: str, lookups: Lookups) -> List[Dict[str, Any]]:
-    """The teacher's students for a stage, in the shape the workbook and the web app use."""
+def roster(portal: Portal, stage: str, lookups: Lookups, records: Optional[List[Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
+    """The teacher's students for a stage (or the given PARAKH list rows), in the shape the workbook and the web
+    app use."""
     out = []
-    for r in portal.roster(stage):
+    for r in (portal.roster(stage) if records is None else records):
         out.append({
             "student_id": str(r.get("id")),
             "student_name": (r.get("full_name") or f"{r.get('std_fname', '')} {r.get('std_lname', '')}").strip(),

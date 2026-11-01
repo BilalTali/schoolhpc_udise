@@ -391,7 +391,9 @@ def sync_school_roster(stage: str = "Preparatory", admin: School = Depends(requi
     stage = _stage_name(stage)
     client = hpc_sessions.portal_for(KIND, admin.id, admin.hpc_login_id, admin.hpc_password)
     try:
-        students = sync.roster_with_details(client, stage, Lookups(client, stage_code(stage)))
+        from backend.services import school_register   # the school's own list: every student of the stage
+        rows, _ = school_register.school_list(client, stage)
+        students = sync.roster_with_details(client, stage, Lookups(client, stage_code(stage)), records=rows)
     except PortalError as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc))
     path = _roster_file(admin.id, stage)
