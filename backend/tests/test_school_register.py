@@ -196,3 +196,26 @@ def test_10_the_school_sees_where_every_card_stands(world, monkeypatch, tmp_path
     assert card["500009"]["status"] == "Assigned to teacher"
     assert card["500091"]["status"] == "Fetched"                                    # section 4: no teacher
     assert reg["card_status"]["Preparatory"]["Fetched"] == 10
+
+
+def test_13_udise_apaar_parakh_comparison_runs_on_the_register(world, monkeypatch):
+    """Phase 5 (MOCKED UDISE+): the whole school from the register, not the teachers' classes."""
+    _, _, _, school_id, _ = world
+    _fetch(school_id, FakeSchoolParakh())
+    from backend.services import udise_parakh
+
+    def u(name, apaar="", gender="Female", cls=5):
+        return {"name": name, "parent": "", "father": "", "section": "A", "adm_no": "", "class": f"{cls} A",
+                "class_id": cls, "dob": "01/05/2016", "gender": gender, "apaar": apaar, "pen": "", "status": "Form complete"}
+    udise = [u("STUDENT 1-00", apaar="000000500001"),                       # matched by APAAR, same
+             u("STUDENT 1-01", apaar="", gender="Male"),                     # matched by name + DOB: gender differs
+             u("NOT ON PARAKH")]
+    monkeypatch.setattr(udise_parakh, "udise_students", lambda sid: udise)
+    r = udise_parakh.compare(school_id, [])
+    assert r["source"] == "School Register" and r["counts"]["parakh"] == 100 and r["counts"]["matched"] == 2
+    assert r["counts"]["only_udise"] == 1 and r["counts"]["only_parakh"] == 98
+    by_name = {m["udise"]["name"]: m for m in r["matched"]}
+    assert by_name["STUDENT 1-00"]["by"] == "APAAR ID" and by_name["STUDENT 1-00"]["differs"] == []
+    assert "gender" in by_name["STUDENT 1-01"]["differs"]
+    assert r["apaar"]["only_parakh"] == 1                                       # PARAKH has it, UDISE+ does not
+    assert by_name["STUDENT 1-00"]["parakh"]["status"].startswith("Card: ")

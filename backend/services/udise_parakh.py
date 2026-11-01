@@ -71,6 +71,33 @@ def parakh_students(teacher_ids: Iterable[str]) -> List[Dict[str, Any]]:
     return list(seen.values())
 
 
+GENDER = {"MALE": "Male", "FEMALE": "Female", "TRANSGENDER": "Transgender", "OTHER": "Transgender"}
+
+
+def register_students(school_id: str) -> List[Dict[str, Any]]:
+    """The School Register's students (every student PARAKH lists for the school, fetched with the school's login),
+    with the father's name the school entered and where each card stands. [] before the school fetched it."""
+    from backend.services import register_data, school_register
+    reg = school_register.students(school_id)["students"]
+    try:
+        session = register_data.session_of(school_id)
+        entered = register_data.entered(school_id, session)
+    except register_data.Problem:
+        entered = {}
+    out = []
+    for r in reg:
+        if r["missing_on_parakh"]:
+            continue
+        father = (entered.get(r["id"]) or {}).get("father") or ""
+        out.append({"name": r["student_name"], "parent": father, "father": father, "adm_no": r["admission_number"] or "",
+                    "class": f"{r['grade'] or ''} {r['section'] or ''}".strip(), "class_id": PARAKH_GRADES.get(r["grade"]),
+                    "section": str(r["section"] or "").strip(), "dob": _dob(r["dob"]),
+                    "gender": GENDER.get(str(r["gender"] or "").upper(), r["gender"] or ""), "apaar": r["apaar_id"] or "",
+                    "status": "Card: " + ((r.get("card") or {}).get("status") or "—"), "teachers": r["teachers"],
+                    "parakh_id": r["student_id"]})
+    return out
+
+
 def udise_students(school_id: str) -> Optional[List[Dict[str, Any]]]:
     data = load_students(school_id)
     if not data:
@@ -80,6 +107,7 @@ def udise_students(school_id: str) -> Optional[List[Dict[str, Any]]]:
         g, e, a = s["general"], s.get("enrolment") or {}, s.get("apaar") or {}
         apaar = a.get("apaarId") if a.get("apaarId") not in (None, "", "NA") else ""
         out.append({"name": g.get("studentName"), "parent": g.get("fatherName") or g.get("motherName") or "",
+                    "father": g.get("fatherName") or "", "section": str(g.get("sectionDesc") or "").strip(),
                     "adm_no": e.get("admnNumber") or "", "class": f"{g.get('classDesc') or ''} {g.get('sectionDesc') or ''}".strip(),
                     "class_id": g.get("classId"), "dob": _dob(g.get("dob")), "gender": {1: "Male", 2: "Female", 3: "Transgender"}.get(g.get("gender"), ""),
                     "apaar": apaar, "pen": g.get("studentCodeNat") or "",
@@ -94,8 +122,12 @@ KEYS = [("APAAR ID", lambda s: s["apaar"]),
 
 
 def compare(school_id: str, teacher_ids: Iterable[str]) -> Dict[str, Any]:
+    """UDISE+ against PARAKH: the School Register when the school has fetched it (the whole school), else the classes
+    the teachers fetched (as before)."""
     udise = udise_students(school_id)
-    parakh = parakh_students(teacher_ids)
+    parakh = register_students(school_id)
+    source = "School Register" if parakh else "teachers' classes"
+    parakh = parakh or parakh_students(teacher_ids)
     if udise is None:
         return {"ok": False, "error": "Fetch the students from SDMS first (Students (SDMS) page)."}
     if not parakh:
@@ -121,13 +153,23 @@ def compare(school_id: str, teacher_ids: Iterable[str]) -> Dict[str, Any]:
                 u, p = udise[i], parakh[j]
                 differs = [f for f, a, b in (("name", _letters(u["name"]), _letters(p["name"])), ("date of birth", u["dob"], p["dob"]),
                                              ("admission no", _adm(u["adm_no"]), _adm(p["adm_no"])), ("gender", u["gender"], p["gender"]),
-                                             ("APAAR ID", u["apaar"], p["apaar"])) if a and b and a != b]
+                                             ("APAAR ID", u["apaar"], p["apaar"]),
+                                             ("father's name", _letters(u.get("father")), _letters(p.get("father"))),
+                                             ("class", u["class_id"], p["class_id"]),
+                                             ("section", str(u.get("section") or "").upper(), str(p.get("section") or "").upper()))
+                           if a not in (None, "") and b not in (None, "") and a != b]
                 matched.append({"by": label, "udise": u, "parakh": p, "differs": differs})
     order = lambda s: (s["class_id"] if s["class_id"] is not None else 99, s["class"], str(s["name"] or ""))
     only_udise = sorted((udise[i] for i in free_u), key=order)
     only_parakh = sorted((parakh[j] for j in free_p), key=order)
     matched.sort(key=lambda m: order(m["udise"]))
-    return {"ok": True, "counts": {"udise": len(udise), "parakh": len(parakh), "matched": len(matched),
-                                   "only_udise": len(only_udise), "only_parakh": len(only_parakh),
-                                   "differ": sum(1 for m in matched if m["differs"]), "udise_higher_classes": left_out},
-            "only_udise": only_udise, "only_parakh": only_parakh, "matched": matched}
+    apaar = {"missing_both": sum(1 for m in matched if not m["udise"]["apaar"] and not m["parakh"]["apaar"]),
+             "only_udise": sum(1 for m in matched if m["udise"]["apaar"] and not m["parakh"]["apaar"]),
+             "only_parakh": sum(1 for m in matched if m["parakh"]["apaar"] and not m["udise"]["apaar"]),
+             "differ": sum(1 for m in matched if "APAAR ID" in m["differs"]),
+             "unmatched_without": sum(1 for x in only_udise + only_parakh if not x["apaar"])}
+    return {"ok": True, "source": source,
+            "counts": {"udise": len(udise), "parakh": len(parakh), "matched": len(matched),
+                       "only_udise": len(only_udise), "only_parakh": len(only_parakh),
+                       "differ": sum(1 for m in matched if m["differs"]), "udise_higher_classes": left_out},
+            "apaar": apaar, "only_udise": only_udise, "only_parakh": only_parakh, "matched": matched}
