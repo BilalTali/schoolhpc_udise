@@ -219,6 +219,44 @@ def update_teacher(
     )
 
 
+# Teachers from PARAKH: login ID = PARAKH ID; the school sets only this app's password
+
+class ParakhTeacherImport(BaseModel):
+    parakh_id: str = Field(..., max_length=30)
+    password: Optional[str] = Field(None, max_length=128)
+
+
+class ParakhTeachersImportRequest(BaseModel):
+    teachers: List[ParakhTeacherImport] = Field(..., min_length=1, max_length=200)
+
+
+@router.get("/teachers/parakh")
+def parakh_teacher_list(admin: School = Depends(require_school_admin), db: Session = Depends(get_db)):
+    """PARAKH's teachers of the school (school's PARAKH login, read only) and this app's account for each."""
+    from backend.services import parakh_teachers
+    client = hpc_sessions.portal_for(KIND, admin.id, admin.hpc_login_id, admin.hpc_password)
+    try:
+        return {"teachers": parakh_teachers.list_teachers(db, admin.id, client)}
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc))
+
+
+@router.post("/teachers/parakh/import")
+def parakh_teacher_import(payload: ParakhTeachersImportRequest, admin: School = Depends(require_school_admin),
+                          db: Session = Depends(get_db)):
+    """Creates / updates teacher accounts from PARAKH (name, teacher code, classes); login ID = PARAKH ID."""
+    from backend.services import parakh_teachers, school_register
+    client = hpc_sessions.portal_for(KIND, admin.id, admin.hpc_login_id, admin.hpc_password)
+    try:
+        results = parakh_teachers.import_teachers(db, admin.id, client, [t.model_dump() for t in payload.teachers])
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc))
+    school_register.fetch_teacher_classes(admin.id, client)          # who teaches whom, matched to the accounts
+    audit.record(f"school_admin:{admin.id}", "teachers_from_parakh", "teacher", admin.id, None,
+                 {"results": [{"parakh_id": r["parakh_id"], "status": r["status"]} for r in results]})
+    return {"results": results}
+
+
 @router.delete("/teachers/{teacher_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_teacher(
     teacher_id: str,
