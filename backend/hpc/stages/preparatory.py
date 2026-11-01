@@ -6,6 +6,8 @@ Templates, field positions, limits and checks mirror the portal's own page code
 """
 from typing import List
 
+from backend.hpc import notes
+from backend.hpc.suggestions import stock
 from backend.hpc.fields import Field
 from backend.hpc.stages.activity import filled, make_finish_b, rubric_ok
 from backend.hpc.stages.activity_grid import GridSpec
@@ -142,7 +144,18 @@ def feedback_from_levels(dt) -> None:
     dt["tf"] = [to_tf.get(str(dt[k][3]).strip(), "") for k in ("awr", "sen", "cre")]
 
 
-ACTIVITY_GRID = GridSpec(blank=blank_activity, shared=("tfob", "lp", "sa"), derive=feedback_from_levels)
+def write_teacher(dt, name) -> None:
+    """B4: an activity's own observation from its levels; challenges and how they were overcome are left for the
+    teacher (nothing to work them out from)."""
+    dt["tfob"] = notes.activity_observation(dt, name, LIM["b"]["observational_notes"])
+    dt["lp"] = ["", ""]
+
+
+ACTIVITY_GRID = GridSpec(blank=blank_activity, shared=("tfob", "lp", "sa"), derive=feedback_from_levels,
+                         teacher=("tfob", "lp"), write_teacher=write_teacher,
+                         typed_by_teacher=lambda dt: not (stock("b_observation", dt.get("tfob"))
+                                                          and stock("b_challenges", (dt.get("lp") or ["", ""])[0])
+                                                          and stock("b_overcome", (list(dt.get("lp") or []) + ["", ""])[1])))
 
 
 PARTS = [

@@ -6,6 +6,8 @@ Templates, field positions, limits and checks mirror the portal's own page code
 """
 from typing import List
 
+from backend.hpc import notes
+from backend.hpc.suggestions import stock
 from backend.hpc.fields import Field
 from backend.hpc.stages.activity import filled, make_finish_b, rubric_ok
 from backend.hpc.stages.activity_grid import GridSpec
@@ -195,8 +197,18 @@ def from_bank(content) -> dict:
 finish_b = make_finish_b(DOMAINS, blank_activity, TEACHER_KEYS, from_bank=from_bank,
                          complete=activity_complete, prepare=prepare_activity)
 
+def write_teacher(dt, name) -> None:
+    """B4, B7: "How I can help" from the activity's weakest ability, its level and the barriers ticked; the
+    observation from its levels."""
+    lim = LIM["b"]
+    dt["spt"] = [notes.help_progress(dt, lim["student_prog"]), notes.activity_observation(dt, name, lim["teacher_observation"])]
+
+
 ACTIVITY_GRID = GridSpec(blank=blank_activity, from_bank=from_bank, shared_any_other=(1, 2),
-                shared=("slr", "mpa", "mps", "mpc", "ml", "pf", "ppa", "pps", "ppc", "ast", "bar", "spt"))
+                shared=("slr", "mpa", "mps", "mpc", "ml", "pf", "ppa", "pps", "ppc", "ast", "bar", "spt"),
+                teacher=("spt",), write_teacher=write_teacher,
+                typed_by_teacher=lambda dt: not (stock("b_help_progress", (list(dt.get("spt") or []) + ["", ""])[0])
+                                                 and stock("b_observations", (list(dt.get("spt") or []) + ["", ""])[1])))
 
 
 PARTS = [

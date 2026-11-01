@@ -163,7 +163,8 @@ SUGGESTIONS: Dict[str, List[str]] = {
 NO_MIX = {"a1_mother_tongue", "a2_about_1"}
 
 # Several-option questions "Mix" may fill: key -> (the options it may hand out, how many each student gets).
-# Part B's assessment lists and the "child needs support with" areas. Never "Any Other" (it needs its own text), and
+# Part B's assessment lists and the "child needs support with" areas. Never the barriers to success (B7): a barrier
+# handed out at random labels a child without reason - the teacher ticks the ones that apply. Never "Any Other" (it needs its own text), and
 # never an option that says something personal or serious about a student (domestic issues, illness, behaviour,
 # peer pressure, managing difficult emotions, "None") - the teacher ticks those for the students they apply to.
 # Lists of facts (resources at home ...) are not mixed at all.
@@ -176,7 +177,6 @@ MULTI_MIX = {
     "b_strengths": (["Follow Instructions", "Collaboration", "Independent Work", "Responsible", "Communication",
                      "Creative", "Solution-Focused Thinking", "Concentration", "Empathy",
                      "Organization & Prioritization"], 2),
-    "b_barriers": (["Lack of Attention", "Lack of Preparation", "Undefined Goals"], 1),
     "b_grid_awareness": (None, 2),               # None: every option of the question
     "b_grid_sensitivity": (None, 2),
     "b_grid_creativity": (None, 2),
@@ -192,6 +192,12 @@ BY_LABEL: Dict[str, List[str]] = {
 # questions answered from the app's records: label -> what fills it
 RECORD = {"My name is": "name", "Name": "name", "I am ... years old": "age", "Age": "age"}
 FILL_ONLY = {"I live in", "We stay at"}
+
+
+def stock(field_key: str, value) -> bool:
+    """True when a text answer is empty or one of the ready phrases for it (not something the teacher wrote)."""
+    text = str(value if value is not None else "").strip()
+    return not text or text in SUGGESTIONS.get(field_key, [])
 
 
 def record_kind(label: str, key: str = "") -> str:

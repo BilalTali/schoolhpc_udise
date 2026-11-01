@@ -198,9 +198,8 @@ def test_mix_hands_out_only_safe_options_for_several_option_questions():
     fields = {f.key: f for f in next(p for p in get_stage("MIDDLE").PARTS if p.code == "B").fields(None)}
     strengths, pick = multi_mix("b_strengths", fields["b_strengths"].options)
     assert pick == 2 and "Any Other" not in strengths and "Collaboration" in strengths
-    barriers, pick = multi_mix("b_barriers", fields["b_barriers"].options)
-    assert pick == 1 and set(barriers) == {"Lack of Attention", "Lack of Preparation", "Undefined Goals"}
-    assert not {"Domestic Issues", "Severe illness or injury", "Inappropriate behavior in classroom", "None"} & set(barriers)
+    # barriers are never handed out at random (B7): the teacher ticks the ones that apply
+    assert multi_mix("b_barriers", fields["b_barriers"].options) == ([], 0)
     grid, pick = multi_mix("b_grid_awareness", fields["b_grid_awareness"].options)
     assert pick == 2 and grid == list(fields["b_grid_awareness"].options)
     assert multi_mix("a3_resources", ["Books", "TV", "Radio"]) == ([], 0)      # facts are never mixed

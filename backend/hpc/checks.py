@@ -74,3 +74,42 @@ def part_b_vs_c(domains: List[str], names: List[str], row: Dict[str, Any], part_
                 if c and b and abs(notes.RANK[c] - notes.RANK[b]) >= 2:
                     out.append(f"{name}: {ability.capitalize()} is {c} in Part C but {b} in its Part B activity")
     return out
+
+
+POSITIVE = re.compile(r"\b(helpful|kind|good|polite|hard[- ]working|sincere|obedient|active|confident|excellent)\b", re.I)
+# free-text places in an activity, as (dt key, index or None, label)
+FREE_TEXT = [("tfob", None, "Observational notes"), ("cmt", None, "Comments"), ("lp", 0, "Challenges"),
+             ("lp", 1, "How challenges were overcome"), ("ml", 0, "By doing this activity, I learnt"),
+             ("ml", 1, "The most interesting thing"), ("ml", 2, "I need practice on"), ("ml", 3, "I need help with"),
+             ("spt", 0, "How I can help the student"), ("spt", 1, "Teacher's observations"),
+             ("pf", 4, "My peer needs to practice"), ("pf", 5, "My peer needs help with")]
+
+
+def _at(dt: Dict[str, Any], key: str, index: Optional[int]) -> str:
+    value = dt.get(key)
+    if index is not None:
+        value = (list(value or []) + [""] * (index + 1))[index] if isinstance(value, list) else ""
+    return _text(value)
+
+
+def part_b_warnings(part_b: Optional[Iterable[dict]]) -> List[str]:
+    """B7 and the duplicate detector: a barrier 'Any Other' that praises; the same free text in 3+ activities."""
+    acts = [a for a in part_b or [] if (a or {}).get("dt")]
+    out = []
+    for act in acts:
+        other = (list(act["dt"].get("any_other") or []) + ["", "", ""])[2]
+        if other and POSITIVE.search(other):
+            out.append(f"'{act.get('nm') or 'Activity'}': the barrier 'Any Other' says '{other}' - that is not a barrier")
+    for key, index, label in FREE_TEXT:
+        seen: Dict[str, int] = {}
+        shown: Dict[str, str] = {}
+        for act in acts:
+            text = _at(act["dt"], key, index)
+            if text:
+                seen[text.lower()] = seen.get(text.lower(), 0) + 1
+                shown.setdefault(text.lower(), text)
+        for lowered, n in seen.items():
+            text = shown[lowered]
+            if n >= 3:
+                out.append(f"'{label}' is the same in {n} activities (\"{text[:60]}{'...' if len(text) > 60 else ''}\")")
+    return out

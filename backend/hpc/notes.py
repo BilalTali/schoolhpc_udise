@@ -190,3 +190,54 @@ def activity_levels(part_b: Iterable[dict]) -> Dict[str, List[Dict[str, str]]]:
         for domain in dt.get("domain") or []:
             out.setdefault(str(domain), []).append(levels)
     return out
+
+
+# ---------------------------------------------------------------------------
+# Part B teacher texts per activity (B4, B7): from that activity's own three levels (and, for Middle's "How I can
+# help", its ticked barriers). Nothing is said without the levels.
+# ---------------------------------------------------------------------------
+
+BARRIER_HELP = {1: "keep tasks short and check in often", 3: "praise the effort and set small goals",
+                4: "agree one clear goal before starting", 5: "revise the basics before the activity"}
+
+
+def _activity_levels(dt: Dict[str, object]) -> Dict[str, str]:
+    return {a: level_name((list(dt.get(SHORT[a]) or []) + ["", "", "", ""])[3]) for a in ABILITIES}
+
+
+def activity_observation(dt: Dict[str, object], name: str, max_len: Optional[int] = None) -> str:
+    """'In "<activity>": strongest in ... ; ... needs more practice.' from the activity's levels; "" without them."""
+    domain = next((str(d) for d in dt.get("domain") or [] if str(d) in SUBJECT_WORDS), "")
+    levels = _activity_levels(dt)
+    chosen = pick(levels)
+    if not domain or chosen is None:
+        return ""
+    words = SUBJECT_WORDS[domain]
+    strength, improve = chosen
+    text = (f"In '{name.strip()}': strongest in {strength} ({levels[strength]}) - {words[strength]}. "
+            f"{improve.capitalize()} ({levels[improve]}) - {words[improve]}: {IMPROVE[levels[improve]]}.")
+    return text if not max_len or len(text) <= max_len else ""
+
+
+def help_progress(dt: Dict[str, object], max_len: Optional[int] = None) -> str:
+    """Middle's "How I can help the student progress further" from the activity's weakest ability, its level and the
+    barriers ticked (B7): never a harder-work suggestion for a Beginner, never another subject's words."""
+    domain = next((str(d) for d in dt.get("domain") or [] if str(d) in SUBJECT_WORDS), "")
+    levels = _activity_levels(dt)
+    chosen = pick(levels)
+    if not domain or chosen is None:
+        return ""
+    _, improve = chosen
+    words = SUBJECT_WORDS[domain][improve]
+    level = levels[improve]
+    if level == "Beginner":
+        text = f"Give step-by-step guided practice in {words}, with examples and frequent feedback"
+    elif level == "Proficient":
+        text = f"Give more independent practice in {words} and ask the student to explain the steps"
+    else:
+        text = f"Offer more challenging tasks in {words} and chances to guide classmates"
+    extra = [BARRIER_HELP[b] for b in (dt.get("bar") or []) if isinstance(b, int) and b in BARRIER_HELP]
+    if extra:
+        text += "; " + "; ".join(extra)
+    text += "."
+    return text if not max_len or len(text) <= max_len else text[:0]

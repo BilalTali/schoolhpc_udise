@@ -10,6 +10,8 @@ import copy
 from typing import List
 
 from backend.hpc import credit
+from backend.hpc import notes
+from backend.hpc.suggestions import stock
 from backend.hpc.fields import Field
 from backend.hpc.stages.activity import filled, make_finish_b, rubric_ok
 from backend.hpc.stages.activity_grid import GridSpec
@@ -119,7 +121,17 @@ def activity_complete(dt) -> bool:
 finish_b = make_finish_b(DOMAINS, blank_activity, ["domain", "awr", "sen", "cre", "tfob", "sa", "pa", "lt", "cmt"],
                          from_bank=lambda content: {}, complete=activity_complete, prepare=prepare_activity)
 
-ACTIVITY_GRID = GridSpec(blank=blank_activity, shared=("tfob", "sa", "pa", "lt", "cmt"))
+def write_teacher(dt, name) -> None:
+    """B4: an activity's own observation from its levels; the comment is left for the teacher."""
+    prepare_activity(dt)                         # the levels as the page keeps them
+    dt["tfob"] = notes.activity_observation(dt, name, LIM["b"]["observational_notes"])
+    dt["cmt"] = ""
+
+
+ACTIVITY_GRID = GridSpec(blank=blank_activity, shared=("tfob", "sa", "pa", "lt", "cmt"),
+                         teacher=("tfob", "cmt"), write_teacher=write_teacher,
+                         typed_by_teacher=lambda dt: not (stock("b_observation", dt.get("tfob"))
+                                                          and stock("b_comments", dt.get("cmt"))))
 
 
 # ---------------------------------------------------------------------------

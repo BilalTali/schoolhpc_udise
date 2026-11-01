@@ -297,7 +297,8 @@ def card_warnings(stage: str, row: Dict[str, Any], raw_parts: Dict[str, Any]) ->
     values = {k: (", ".join(map(str, v)) if isinstance(v, list) else v) for k, v in row.items()}
     c = checks.part_c_warnings(stage, st.DOMAINS, st.SUBJECTS, values) + \
         checks.part_b_vs_c(st.DOMAINS, st.SUBJECTS, values, _part_b(stage, raw_parts))
-    return {"C": c} if c else {}
+    b = checks.part_b_warnings(_part_b(stage, raw_parts))
+    return {k: v for k, v in (("B", b), ("C", c)) if v}
 
 
 def card(client: Portal, owner: str, teacher_id: str, session: str, stage: str, student_id: str) -> Dict[str, Any]:

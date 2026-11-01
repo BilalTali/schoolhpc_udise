@@ -36,6 +36,11 @@ class GridSpec:
     from_bank: Callable[[Dict[str, Any]], Dict[str, Any]] = lambda content: {}
     shared_any_other: Tuple[int, ...] = ()           # Middle: any_other[1] and [2] are the student's, [0] the activity's
     derive: Callable[[Dict[str, Any]], None] = lambda dt: None    # values the stage computes from the levels
+    # the teacher's own notes about an activity (B4): never copied into another activity; an activity without
+    # them gets what write_teacher works out from its own levels (notes.activity_observation ...)
+    teacher: Tuple[str, ...] = ()
+    write_teacher: Callable[[Dict[str, Any], str], None] = lambda dt, name: None
+    typed_by_teacher: Callable[[Dict[str, Any]], bool] = lambda dt: True    # False: only empty or stock phrases
 
 
 def act_key(subject: str) -> str:
@@ -296,6 +301,7 @@ def plan(subjects: List[str], names: Dict[str, str], spec: GridSpec, fd: List[Di
 
     # 3. build the new list
     shared_src = copy.deepcopy((fd[0] if fd else {"dt": spec.blank()})["dt"])
+    source_taken = False                             # the teacher's typed notes go to one activity only (B4)
     out, changes = [], []
     for gk, subs in groups.items():
         key, levels = gk
@@ -331,10 +337,14 @@ def plan(subjects: List[str], names: Dict[str, str], spec: GridSpec, fd: List[Di
             texts = (list(dt.get(k) or []) + ["", "", "", ""])[:4]
             texts[3] = level
             dt[k] = texts
+        is_source = not source_taken and (first is None or (gk in matched and matched[gk] == first)) \
+            and spec.typed_by_teacher(shared_src)
         if take_shared:
             for k in spec.shared:
-                if k in shared_src:
+                if k in shared_src and (k not in spec.teacher or is_source):
                     dt[k] = copy.deepcopy(shared_src[k])
+            if not is_source:
+                spec.write_teacher(dt, act.get("nm") or "")
             if spec.shared_any_other:
                 other = (list(dt.get("any_other") or []) + ["", "", ""])[:3]
                 src = (list(shared_src.get("any_other") or []) + ["", "", ""])[:3]
@@ -342,6 +352,7 @@ def plan(subjects: List[str], names: Dict[str, str], spec: GridSpec, fd: List[Di
                     other[n] = src[n]
                 dt["any_other"] = other
             spec.derive(dt)
+        source_taken = source_taken or is_source
         out.append(act)
 
     # 4. activities on PARAKH that the grid no longer uses
