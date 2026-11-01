@@ -13,9 +13,15 @@ interface Job { status: "RUNNING" | "COMPLETED" | "FAILED"; step: string; done: 
 interface Student { id: string; stage: string; student_id: string; student_name: string; hpc_login_id: string | null;
   apaar_id: string | null; grade: string | null; section: string | null; gender: string | null; dob: string | null;
   admission_number: string | null; hpc_status: string | null; teachers: string[]; missing_on_parakh: boolean;
+  card: { status: string; detail: string; at: string; teacher: string } | null;
   entered: { present: number; working: number; percent: number | null; months: number; father: string | null;
              mother: string | null; card_name: string | null; marks: number; marks_of: number } | null }
-interface Register { students: Student[]; summary: Record<string, { students: number; assigned: number; unassigned: number; missing_on_parakh: number }> }
+interface Register { students: Student[]; summary: Record<string, { students: number; assigned: number; unassigned: number; missing_on_parakh: number }>;
+  card_status?: Record<string, Record<string, number>> }
+const CARD_STATUSES = ["Verified on PARAKH", "Submitted", "Submission failed", "Requires correction", "Teacher work in progress",
+  "Assigned to teacher", "Fetched", "No longer on PARAKH"];
+const CARD_TONE: Record<string, string> = { "Verified on PARAKH": "", "Submission failed": "sdms-warn", "Requires correction": "sdms-warn",
+  "Fetched": "sdms-warn" };
 
 const STAGES = ["Foundational", "Preparatory", "Middle"];
 const PAGE_SIZE = 25;
@@ -27,6 +33,7 @@ export function RegisterPage({ api }: { api: Api }) {
   const [stage, setStage] = useState("all");
   const [only, setOnly] = useState<"all" | "unassigned" | "missing">("all");
   const [find, setFind] = useState("");
+  const [cardStatus, setCardStatus] = useState("all");
   const [page, setPage] = useState(0);
   const timer = useRef<number | undefined>(undefined);
 
@@ -62,8 +69,9 @@ export function RegisterPage({ api }: { api: Api }) {
     const q = find.trim().toLowerCase();
     return (reg?.students || []).filter((s) => (stage === "all" || s.stage === stage)
       && (only === "all" || (only === "unassigned" ? !s.teachers.length : s.missing_on_parakh))
+      && (cardStatus === "all" || s.card?.status === cardStatus)
       && (!q || `${s.student_name} ${s.student_id} ${s.apaar_id || ""} ${s.admission_number || ""}`.toLowerCase().includes(q)));
-  }, [reg, stage, only, find]);
+  }, [reg, stage, only, find, cardStatus]);
   const pages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
   const at = Math.min(page, pages - 1);
 
@@ -110,6 +118,15 @@ export function RegisterPage({ api }: { api: Api }) {
               {!Object.keys(reg.summary).length && <tr><td colSpan={5} className="lib-muted">Nothing fetched yet.</td></tr>}
             </tbody>
           </table>
+          {reg.card_status && Object.keys(reg.card_status).length > 0 && (
+            <div className="sdms-scroll"><table className="sdms-table" style={{ marginTop: "0.75rem" }}>
+              <thead><tr><th>Cards on PARAKH</th>{CARD_STATUSES.map((c) => <th key={c}>{c}</th>)}</tr></thead>
+              <tbody>{STAGES.filter((st) => reg.card_status![st]).map((st) => (
+                <tr key={st}><td>{st}</td>{CARD_STATUSES.map((c) => (
+                  <td key={c}>{reg.card_status![st][c] ? (
+                    <button type="button" className="portal-link-btn" onClick={() => { setStage(st); setCardStatus(c); setPage(0); }}>
+                      {reg.card_status![st][c]}</button>) : 0}</td>))}</tr>))}
+              </tbody></table></div>)}
           <div className="reg-toolbar" style={{ marginTop: "0.75rem" }}>
             <label className="reg-field"><span>Stage</span>
               <select className="reg-box" value={stage} onChange={(e) => { setStage(e.target.value); setPage(0); }}>
@@ -120,13 +137,17 @@ export function RegisterPage({ api }: { api: Api }) {
                 <option value="all">All students</option><option value="unassigned">No teacher</option>
                 <option value="missing">No longer on PARAKH</option>
               </select></label>
+            <label className="reg-field"><span>Card on PARAKH</span>
+              <select className="reg-box" value={cardStatus} onChange={(e) => { setCardStatus(e.target.value); setPage(0); }}>
+                <option value="all">Any</option>{CARD_STATUSES.map((c) => <option key={c} value={c}>{c}</option>)}
+              </select></label>
             <label className="reg-field" style={{ flex: "1 1 18rem" }}><span>Find</span>
               <input className="reg-box" placeholder="Name, PARAKH id, APAAR, admission no." value={find}
                      onChange={(e) => { setFind(e.target.value); setPage(0); }} /></label>
           </div>
           <div className="sdms-scroll"><table className="sdms-table sdms-fit">
             <thead><tr><th>Stage</th><th>Class</th><th>Name (as on PARAKH)</th><th>PARAKH id</th><th>APAAR</th><th>Admission no.</th>
-              <th>DOB</th><th>Teacher</th><th>Attendance</th><th>Parents</th><th>Marks</th><th>HPC on PARAKH</th></tr></thead>
+              <th>DOB</th><th>Teacher</th><th>Attendance</th><th>Parents</th><th>Marks</th><th>Card on PARAKH</th></tr></thead>
             <tbody>{rows.slice(at * PAGE_SIZE, (at + 1) * PAGE_SIZE).map((s) => (
               <tr key={s.id} className={s.missing_on_parakh ? "lib-muted" : ""}>
                 <td>{s.stage}</td><td>{s.grade} {s.section}</td><td><b>{s.student_name}</b></td><td>{s.student_id}</td>
@@ -135,7 +156,9 @@ export function RegisterPage({ api }: { api: Api }) {
                 <td>{s.entered?.months ? `${s.entered.present}/${s.entered.working}${s.entered.percent != null ? ` (${s.entered.percent}%)` : ""}` : "—"}</td>
                 <td>{s.entered?.father || s.entered?.mother ? [s.entered.father, s.entered.mother].filter(Boolean).join(" / ") : "—"}</td>
                 <td>{s.entered && s.entered.marks_of ? `${s.entered.marks} of ${s.entered.marks_of}` : "—"}</td>
-                <td>{s.missing_on_parakh ? "No longer listed" : s.hpc_status || "—"}</td></tr>))}
+                <td className={CARD_TONE[s.card?.status || ""] || ""}>{s.card?.status || "—"}
+                  {s.card && (s.card.detail || s.card.teacher || s.card.at) && <small>{[s.card.detail, s.card.teacher,
+                    s.card.at && new Date(s.card.at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })].filter(Boolean).join(" · ")}</small>}</td></tr>))}
             </tbody>
           </table></div>
           {pages > 1 && (

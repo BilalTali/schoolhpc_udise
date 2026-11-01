@@ -266,13 +266,17 @@ def students(school_id: str, stage: Optional[str] = None) -> Dict[str, Any]:
         rows = [_view(r, classes.get((r.grade_id, r.section_id), [])) for r in q]
     rows.sort(key=lambda r: (STAGES.index(r["stage"]) if r["stage"] in STAGES else 9, r["grade_id"] or 0,
                              str(r["section"] or ""), r["student_name"]))
+    from backend.services import register_status         # where each card stands (phase 4)
+    cards = register_status.statuses(school_id, rows)
+    for r in rows:
+        r["card"] = cards.get(r["id"])
     summary: Dict[str, Dict[str, int]] = {}
     for r in rows:
         s = summary.setdefault(r["stage"], {"students": 0, "assigned": 0, "unassigned": 0, "missing_on_parakh": 0})
         s["students"] += 1
         s["assigned" if r["teachers"] else "unassigned"] += 1
         s["missing_on_parakh"] += r["missing_on_parakh"]
-    return {"students": rows, "summary": summary}
+    return {"students": rows, "summary": summary, "card_status": register_status.counts(rows)}
 
 
 def teacher_classes(teacher: Teacher) -> Set[Tuple[int, int]]:

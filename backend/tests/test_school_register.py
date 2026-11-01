@@ -160,3 +160,39 @@ def test_the_school_dashboard_counts_come_from_the_register(world):
     stats = client.get(f"{API}/school/stats", headers=a).json()
     assert stats["from_register"] is True and stats["total_students"] == 100            # not the teachers' rosters
     assert stats["total_teachers"] == 3 and stats["teacher_accounts"] == 3              # PARAKH's teachers, logins
+
+
+def test_10_the_school_sees_where_every_card_stands(world, monkeypatch, tmp_path):
+    """Phase 4: from what actually happened - upload results, card saves, drafts, PARAKH's own status."""
+    client, a, _, school_id, _ = world
+    rows = FakeSchoolParakh.make_students()
+    rows[5]["hpc_status"] = "COMPLETED"                                            # PARAKH itself: complete
+    _fetch(school_id, FakeSchoolParakh(rows))
+    from backend.models.entities import StudentRecord, UploadJob
+    from backend.services import audit, hpc_sessions
+    with SessionLocal() as db:
+        t1 = db.query(Teacher).filter_by(username="regteach1").one()
+        job = UploadJob(teacher_id=t1.id, original_filename="class.xlsx", detected_stage="Preparatory", status="PARTIAL_SUCCESS")
+        db.add(job)
+        db.flush()
+        for sid, state, err in (("500001", "SUCCESS", None), ("500002", "FAILED", "PARAKH refused: timeout"),
+                                ("500003", "PENDING", None), ("500004", "INVALID", "Mother Tongue: required")):
+            db.add(StudentRecord(job_id=job.id, admission_number=sid, student_name=sid, status=state, error_message=err))
+        db.commit()
+        t1_id = t1.id
+    audit.record(f"teacher:{t1_id}", "save_to_parakh", "student", "500007", None, {"status": "COMPLETED", "via": "card"})
+    monkeypatch.setattr(hpc_sessions, "session_dir", lambda kind, i: tmp_path / i)
+    (tmp_path / t1_id / "drafts" / "2627").mkdir(parents=True)
+    (tmp_path / t1_id / "drafts" / "2627" / "preparatory_500008.json").write_text("{}")
+    reg = client.get(f"{API}/school/register", headers=a).json()
+    card = {s["student_id"]: s["card"] for s in reg["students"]}
+    assert card["500001"]["status"] == "Verified on PARAKH" and card["500001"]["teacher"] == "regteach1"
+    assert card["500002"]["status"] == "Submission failed" and "timeout" in card["500002"]["detail"]
+    assert card["500003"]["status"] == "Submitted"
+    assert card["500004"]["status"] == "Requires correction"
+    assert card["500006"]["status"] == "Verified on PARAKH" and "PARAKH lists" in card["500006"]["detail"]
+    assert card["500007"]["status"] == "Verified on PARAKH"                         # saved from the card editor
+    assert card["500008"]["status"] == "Teacher work in progress"
+    assert card["500009"]["status"] == "Assigned to teacher"
+    assert card["500091"]["status"] == "Fetched"                                    # section 4: no teacher
+    assert reg["card_status"]["Preparatory"]["Fetched"] == 10
