@@ -94,6 +94,8 @@ class Field:
                 return values, f"{self.label}: unknown choice(s) {bad}"
             return values, None
 
+        from backend.hpc.part_a_checks import strip_template_options
+        text = strip_template_options(text)      # A4: "...(sometimes, most times, all the time)" is the template's
         if self.max_len and len(text) > self.max_len:
             return text, f"{self.label}: {len(text)} characters, the portal allows {self.max_len}"
         return text, None

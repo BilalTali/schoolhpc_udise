@@ -31,6 +31,32 @@ def clean(text: Any) -> str:
     return " ".join(str(text or "").split())
 
 
+def tidy_case(text: Any) -> str:
+    """A11: a name typed all in small or all in capital letters as Title Case ('kashmiri' -> 'Kashmiri');
+    mixed case is the person's own and stays."""
+    t = clean(text)
+    return t.title() if t and (t.islower() or t.isupper()) else t
+
+
+def record_name(stu: Dict[str, Any], max_len: Optional[int] = None) -> str:
+    """A1: the student's name as PARAKH's record has it (Title Case); the first name when the box is too short."""
+    name = " ".join(w.capitalize() for w in str(stu.get("student_name") or "").split())
+    if max_len and len(name) > max_len:
+        name = name.split()[0][:max_len] if name else ""
+    return name
+
+
+def record_age(stu: Dict[str, Any], today: Optional[Any] = None) -> str:
+    """A1: age in whole years from the date of birth on PARAKH's record; "" without one."""
+    from datetime import date, datetime
+    try:
+        born = datetime.strptime(str(stu.get("dob") or "")[:10], "%Y-%m-%d").date()
+    except ValueError:
+        return ""
+    today = today or date.today()
+    return str(today.year - born.year - ((today.month, today.day) < (born.month, born.day)))
+
+
 # Where Lookups gets the Activity Bank: set by backend.services.activity_library to read the app's own copy
 # (kept up to date by the school's sync). PARAKH's bank is read only while that copy is empty.
 ACTIVITY_SOURCE: Optional[Callable[[str], Dict[int, Dict[str, Any]]]] = None

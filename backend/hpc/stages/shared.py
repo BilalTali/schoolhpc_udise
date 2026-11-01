@@ -12,7 +12,7 @@ from backend.hpc import credit
 from backend.hpc.credit import _round2, js_num
 from backend.hpc.fields import Field, series
 from backend.hpc.stages.common import (GUARDIAN, MONTH_DAYS, MONTH_NAMES, MONTHS, RATING_1_3, Lookups, Part, StudentContext,
-                                       clean, required)
+                                       clean, required, tidy_case)
 
 LIMITS = json.loads((Path(__file__).parent.parent / "reference" / "field_limits.json").read_text())
 
@@ -27,9 +27,10 @@ def blank_a1():
 
 
 def make_part_a1(stage_key: str) -> Part:
-    """Foundational stores blank attendance as 0; the other stages keep blanks (see finish_a1)."""
+    """A month without data stays blank in every stage (A9: Foundational's page writes 0 there, which the card then
+    shows as 0 days and 0%; the app no longer copies that)."""
     lim = LIMITS[stage_key]["a1"]
-    zero_blanks = stage_key == "foundational"
+    zero_blanks = False
 
     def fields(lk: Lookups) -> List[Field]:
         return [
@@ -65,7 +66,8 @@ def finish_a1(fd: Dict[str, Any], ctx: StudentContext, zero_blanks: bool = False
     gen[4] = stu.get("dob", "")
     gen[22] = stu.get("school_admission_number", "")
     gen[25] = stu.get("gender", "")
-    gen[16], gen[24] = clean(gen[16]), clean(gen[24])
+    gen[16], gen[24] = tidy_case(gen[16]), tidy_case(gen[24])       # A11: 'kashmiri' -> 'Kashmiri'
+
     gen[23] = gen[23] or "FATHER"                 # the page pre-selects Father
 
     errors: List[str] = []

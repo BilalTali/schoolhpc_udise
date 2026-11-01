@@ -133,9 +133,10 @@ def test_bulk_entry(teacher_client):
                        "a3_resources_other", "d_1_obtained"}
     # name and age are class-wide too: "Mix all" fills them from the class list and the date of birth
     assert meta["a2_name"]["from_records"] == "name" and meta["a2_age"]["from_records"] == "age"
-    # Preparatory's "Things about me" (the hand) has its own short phrases, not Middle's "I live with my"
-    assert "I can draw" in meta["a2_about_1"]["suggestions"] and "My parents" not in meta["a2_about_1"]["suggestions"]
-    assert meta["a2_about_1"]["mixable"] is True
+    # Preparatory's hand (A7): each finger its own prompt and short phrases; facts about the child, never mixed
+    assert meta["a2_about_1"]["label"] == "Things about me: I am good at"
+    assert "Drawing" in meta["a2_about_1"]["suggestions"] and "My parents" not in meta["a2_about_1"]["suggestions"]
+    assert meta["a2_about_1"]["mixable"] is False
     # mother tongue: suggestions to pick from, but never handed out at random
     assert "Kashmiri" in meta["a1_mother_tongue"]["suggestions"] and meta["a1_mother_tongue"]["mixable"] is False
     # Part C notes: no stock phrases (C1) - "Mix all" writes each from the student's own levels for the subject
@@ -349,16 +350,14 @@ def test_mix_every_question_at_once(teacher_client):
     assert client.post(url, json={"fields": fields, "replace": True}).json()["cells"] == done["cells"]
 
 
-def test_mix_all_fills_name_and_age_from_records_and_never_repeats_a_phrase(teacher_client):
+def test_mix_all_fills_name_and_age_from_records_and_never_the_hand(teacher_client):
     client, _ = teacher_client
     url = f"{API}/teacher/hpc-cards/Preparatory/bulk-mix"
     hand = [f"a2_about_{i}" for i in range(1, 6)]
     done = client.post(url, json={"fields": ["a2_name", "a2_age", *hand], "apply": True}).json()
-    assert {f["key"] for f in done["fields"] if f["filled"]} >= {"a2_name", "a2_age", *hand}
+    assert {f["key"] for f in done["fields"] if f["filled"]} == {"a2_name", "a2_age"}
+    assert {s["key"] for s in done["skipped"]} == set(hand)                  # A7: facts about the child, not mixed
     rows = {k: client.get(f"{API}/teacher/hpc-cards/Preparatory/bulk", params={"field": k}).json()["rows"][0]
-            for k in ["a2_name", "a2_age", *hand]}
+            for k in ["a2_name", "a2_age"]}
     assert rows["a2_name"]["value"] == "Test Student"                       # the class list's name
     assert rows["a2_age"]["value"].isdigit() and 5 <= int(rows["a2_age"]["value"]) <= 20      # from the date of birth
-    things = [rows[k]["value"] for k in hand]
-    assert len(set(things)) == 5                                              # never the same phrase twice
-

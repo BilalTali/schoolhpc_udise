@@ -160,7 +160,7 @@ SUGGESTIONS: Dict[str, List[str]] = {
 }
 
 # facts about a student: a suggestion helps typing, but handing them out at random would be wrong
-NO_MIX = {"a1_mother_tongue", "a2_about_1"}
+NO_MIX = {"a1_mother_tongue", "a2_about_1", "a2_avatar"}     # A14: an avatar is the child's own choice
 
 # Several-option questions "Mix" may fill: key -> (the options it may hand out, how many each student gets).
 # Part B's assessment lists and the "child needs support with" areas. Never the barriers to success (B7): a barrier
@@ -183,10 +183,13 @@ MULTI_MIX = {
 }
 
 
-# Preparatory's "Things about me 1-5": the fingers of a hand drawing, 13-24 characters each
+# Preparatory's hand drawing (A7): one finger each, 13-24 characters. Facts about the child: offered, never mixed.
 BY_LABEL: Dict[str, List[str]] = {
-    "Things about me": ["I am kind", "I can sing", "I can draw", "I like books", "I help others", "I love maths",
-                        "I am honest", "I can dance", "I love games", "I am helpful"],
+    "Things about me: I am good at": ["Drawing", "Running", "Reading", "Counting", "Singing", "Cricket"],
+    "Things about me: I am not so good at": ["Spellings", "Handwriting", "Tables", "Speaking up", "Drawing"],
+    "Things about me: I would like to improve my skill of": ["Reading", "Writing", "Handwriting", "English", "Drawing"],
+    "Things about me: I like to": ["Play cricket", "Draw pictures", "Read stories", "Help at home", "Sing songs"],
+    "Things about me: I don't like to": ["Waste food", "Fight with friends", "Be late for school", "Sit idle"],
 }
 
 # questions answered from the app's records: label -> what fills it
@@ -212,9 +215,8 @@ def record_kind(label: str, key: str = "") -> str:
 
 
 def _by_label(label: str) -> Optional[List[str]]:
-    for prefix, phrases in BY_LABEL.items():
-        if (label or "").startswith(prefix):
-            return phrases
+    if label in BY_LABEL:
+        return BY_LABEL[label]
     if label in RECORD or label in FILL_ONLY or record_kind(label or ""):
         return []                                    # a fact: never another stage's phrases for the same key
     return None
@@ -238,8 +240,8 @@ def has_suggestions(key: str, label: str = "") -> bool:
 
 
 def mixable(key: str, label: str = "") -> bool:
-    if label.startswith("Things about me"):
-        return True                                  # Preparatory's hand: not Middle's "I live with my"
+    if label in BY_LABEL:
+        return False                                 # A7: what the child is good at / likes is a fact about them
     return key not in NO_MIX and label not in FILL_ONLY
 
 

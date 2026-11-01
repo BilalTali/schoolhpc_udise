@@ -11,7 +11,7 @@ from backend.hpc.suggestions import stock
 from backend.hpc.fields import Field
 from backend.hpc.stages.activity import filled, make_finish_b, rubric_ok
 from backend.hpc.stages.activity_grid import GridSpec
-from backend.hpc.stages.common import Lookups, Part, required
+from backend.hpc.stages.common import Lookups, Part, record_age, record_name, required
 from backend.hpc.stages.shared import LIMITS, make_part_a1, make_part_c, make_part_d
 
 LIM = LIMITS["preparatory"]
@@ -32,13 +32,25 @@ def blank_a2():
             "grow_up": [""], "thing_learn": [""] * 3, "idol": [""]}
 
 
+# A7: the hand drawing's fingers, thumb first (PARAKH's img_pre_hand_things_about_me: things_about_me[0..4])
+HAND = ["I am good at", "I am not so good at", "I would like to improve my skill of", "I like to", "I don't like to"]
+
+
+def finish_a2(fd, ctx):
+    """A1: name and age always as PARAKH's record has them."""
+    lim = LIM["a2"]
+    fd["gen"][0] = record_name(ctx.stu, lim["name"]) or fd["gen"][0]
+    fd["gen"][1] = record_age(ctx.stu) or fd["gen"][1]
+    return {}, []
+
+
 def fields_a2(lk: Lookups) -> List[Field]:
     lim = LIM["a2"]
     return [
         Field("a2_name", "My name is", ("gen", 0), max_len=lim["name"]),
         Field("a2_age", "I am ... years old", ("gen", 1), max_len=lim["age"]),
-        *[Field(f"a2_about_{i + 1}", f"Things about me {i + 1}", ("things_about_me", i), max_len=lim[f"hands_{i}"])
-          for i in range(5)],
+        *[Field(f"a2_about_{i + 1}", f"Things about me: {finger}", ("things_about_me", i), max_len=lim[f"hands_{i}"])
+          for i, finger in enumerate(HAND)],
         Field("a2_fav_food", "My favourite food", ("favorites", 0), max_len=lim["favorites"]),
         Field("a2_fav_games", "My favourite games", ("favorites", 1), max_len=lim["favorites"]),
         Field("a2_fav_festival", "My favourite festival", ("favorites", 2), max_len=lim["favorites"]),
@@ -92,9 +104,16 @@ def fields_a3(lk: Lookups) -> List[Field]:
 
 
 def finish_a3(fd, ctx):
+    """A8: on each peer sheet "My Friend's Name" is the student the sheet is about (PARAKH's record); "My Name" is
+    the classmate's and stays as typed. 'Other subject area' needs its own words."""
     errors = []
     for i, q in enumerate(FEEL_QUESTIONS):
         required(errors, fd["feel"][i], f"How I feel: {q}")
+    for sheet in ("pr1", "pr2"):
+        if any(str(v or "").strip() for v in fd[sheet][2:]):            # a sheet that was filled in
+            fd[sheet][1] = record_name(ctx.stu, LIM["a3"]["myFriendName"]) or fd[sheet][1]
+    if SUPPORT["Other subject area"] in (fd.get("supp") or []) and not str(fd.get("supp_oth") or "").strip():
+        errors.append("'Other subject area' is ticked: write which one in 'Support: other subject area'")
     return {}, errors
 
 
@@ -160,7 +179,7 @@ ACTIVITY_GRID = GridSpec(blank=blank_activity, shared=("tfob", "lp", "sa"), deri
 
 PARTS = [
     make_part_a1("preparatory"),
-    Part("A2", "part_a2", "Part A2 - All About Me", blank_a2, fields_a2),
+    Part("A2", "part_a2", "Part A2 - All About Me", blank_a2, fields_a2, finish_a2),
     Part("A3", "part_a3", "Part A3 - Feelings, Peer & Parent", blank_a3, fields_a3, finish_a3),
     Part("B", "part_b", "Part B - Activity", lambda: [{"nm": "", "dt": blank_activity()}], fields_b, finish_b,
          as_json_string=False),

@@ -291,14 +291,21 @@ def _part_b(stage: str, raw_parts: Dict[str, Any]) -> List[Dict[str, Any]]:
     return loaded if isinstance(loaded, list) else []
 
 
-def card_warnings(stage: str, row: Dict[str, Any], raw_parts: Dict[str, Any]) -> Dict[str, List[str]]:
-    """{part code: warnings} - content PARAKH accepts but that reads wrong (checks.py); they never block a save."""
+def card_warnings(stage: str, row: Dict[str, Any], raw_parts: Dict[str, Any], fields: Optional[List[Field]] = None,
+                  student: Optional[Dict[str, Any]] = None) -> Dict[str, List[str]]:
+    """{part code: warnings} - content PARAKH accepts but that reads wrong (checks.py, part_a_checks.py); they never
+    block a save."""
+    from backend.hpc import part_a_checks
     st = get_stage(stage)
     values = {k: (", ".join(map(str, v)) if isinstance(v, list) else v) for k, v in row.items()}
     c = checks.part_c_warnings(stage, st.DOMAINS, st.SUBJECTS, values) + \
         checks.part_b_vs_c(st.DOMAINS, st.SUBJECTS, values, _part_b(stage, raw_parts))
     b = checks.part_b_warnings(_part_b(stage, raw_parts))
-    return {k: v for k, v in (("B", b), ("C", c)) if v}
+    out = part_a_checks.part_a_warnings(stage, row, fields or [], student or {})
+    for k, v in (("B", b), ("C", c)):
+        if v:
+            out[k] = out.get(k, []) + v
+    return out
 
 
 def card(client: Portal, owner: str, teacher_id: str, session: str, stage: str, student_id: str) -> Dict[str, Any]:
@@ -311,7 +318,8 @@ def card(client: Portal, owner: str, teacher_id: str, session: str, stage: str, 
     index = _field_index(stage, lookups)
     errors = _part_errors(stage, data, {**portal_row, **_cell_values(stage, index, (draft or {}).get("values") or {})},
                           lookups, _resolver(teacher_id, stage, lookups))
-    warnings = card_warnings(stage, row, data.raw_parts)
+    warnings = card_warnings(stage, row, data.raw_parts, [f for p in get_stage(stage).PARTS for f in p.fields(lookups)],
+                             data.record.get("stu_info") or {})
     parts = []
     for p in get_stage(stage).PARTS:
         fields = []

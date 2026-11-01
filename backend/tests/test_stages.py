@@ -92,7 +92,7 @@ def test_foundational_parts_follow_the_portal_pages():
     assert errors == []
     a1, a2, b, c, d = payloads
     att = json.loads(a1["formdata"])["attn"]
-    assert att["1"][11] == 0 and att["3"][11] == 0          # blank month stored as 0, 0%
+    assert att["1"][11] == "" and att["3"][11] == ""        # A9: a month without data stays blank, never 0 / 0%
     assert att["1"][12] == 242 and att["3"][12] == 90.91
     dt = b["formdata"][0]["dt"]
     assert dt["prof"] == ["S", "A", "C"]                      # sensitivity advanced, awareness proficient, creativity beginner

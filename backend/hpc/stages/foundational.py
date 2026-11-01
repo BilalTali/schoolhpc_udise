@@ -15,7 +15,7 @@ from backend.hpc.suggestions import stock
 from backend.hpc.fields import Field
 from backend.hpc.stages.activity import filled, make_finish_b, rubric_ok
 from backend.hpc.stages.activity_grid import GridSpec
-from backend.hpc.stages.common import Lookups, Part, StudentContext
+from backend.hpc.stages.common import Lookups, Part, StudentContext, record_age
 from backend.hpc.stages.shared import LIMITS, make_part_a1
 
 LIM = LIMITS["foundational"]
@@ -45,6 +45,12 @@ def fields_a2(lk: Lookups) -> List[Field]:
     for i, thing in enumerate(["colour", "flower", "food", "sport", "animal", "subject"]):
         out.append(Field(f"a2_fav_{thing}", f"My favourite {thing}", ("myf", i), max_len=lim["favorites"]))
     return out
+
+
+def finish_a2(fd, ctx):
+    """A1: the age always from PARAKH's record."""
+    fd["pa_2"][0] = record_age(ctx.stu) or fd["pa_2"][0]
+    return {}, []
 
 
 # ---------------------------------------------------------------------------
@@ -177,7 +183,7 @@ def finish_d(fd, ctx: StudentContext):
 
 PARTS = [
     make_part_a1("foundational"),
-    Part("A2", "part_a2", "Part A2 - All About Me", blank_a2, fields_a2),
+    Part("A2", "part_a2", "Part A2 - All About Me", blank_a2, fields_a2, finish_a2),
     Part("B", "part_b", "Part B - Activity", lambda: [{"nm": "", "dt": blank_activity()}], fields_b, finish_b,
          as_json_string=False),
     Part("C", "part_c", "Part C - Domain Assessment", blank_c, fields_c),

@@ -11,7 +11,8 @@ from backend.hpc.suggestions import stock
 from backend.hpc.fields import Field
 from backend.hpc.stages.activity import filled, make_finish_b, rubric_ok
 from backend.hpc.stages.activity_grid import GridSpec
-from backend.hpc.stages.common import Lookups, Part
+from backend.hpc.part_a_checks import strip_template_options
+from backend.hpc.stages.common import Lookups, Part, record_age, record_name
 from backend.hpc.stages.shared import LIMITS, make_part_a1, make_part_c, make_part_d
 
 LIM = LIMITS["middle"]
@@ -50,6 +51,18 @@ def fields_a2(lk: Lookups) -> List[Field]:
     out += [Field("a2_teacher_help", "I would like my teacher to help me with", ("teacher", 0), max_len=lim["teacher"]),
             Field("a2_teacher_know", "I would like my teacher to know", ("teacher", 1), max_len=lim["teacher"])]
     return out
+
+
+def finish_a2(fd, ctx):
+    """A1: name and age always as PARAKH's record has them (never a typed or mixed name); A4: the template's own
+    options "(sometimes, most times, all the time)" are not part of an answer."""
+    lim = LIM["a2"]
+    about = fd["allAboutMe"]
+    for i, value in enumerate(about):
+        about[i] = strip_template_options(value)
+    about[8] = record_name(ctx.stu, lim["name"]) or about[8]
+    about[9] = record_age(ctx.stu) or about[9]
+    return {"state_code_internal": ctx.lookups.portal.state}, []
 
 
 # ---------------------------------------------------------------------------
@@ -104,6 +117,13 @@ def fields_a4(lk: Lookups) -> List[Field]:
         Field("a4_support_other", "Support: any other", ("supp_oth",), max_len=lim["otherSubjectArea"]),
         Field("a4_home_support", "I will support my child at home by", ("supp_child",), max_len=lim["supp_child"]),
     ]
+
+
+def finish_a4(fd, ctx):
+    """'Any other' support needs its own words (A8)."""
+    if SUPPORT["Any other"] in (fd.get("supp") or []) and not str(fd.get("supp_oth") or "").strip():
+        return {}, ["'Any other' support is ticked: write what it is in 'Support: any other'"]
+    return {}, []
 
 
 # ---------------------------------------------------------------------------
@@ -213,10 +233,9 @@ ACTIVITY_GRID = GridSpec(blank=blank_activity, from_bank=from_bank, shared_any_o
 
 PARTS = [
     make_part_a1("middle"),
-    Part("A2", "part_a2", "Part A2 - All About Me & Goals", blank_a2, fields_a2,
-         lambda fd, ctx: ({"state_code_internal": ctx.lookups.portal.state}, [])),
+    Part("A2", "part_a2", "Part A2 - All About Me & Goals", blank_a2, fields_a2, finish_a2),
     Part("A3", "part_a3", "Part A3 - My Ambition", blank_a3, fields_a3, finish_a3),
-    Part("A4", "part_a4", "Part A4 - Parent-Teacher Partnership", blank_a4, fields_a4),
+    Part("A4", "part_a4", "Part A4 - Parent-Teacher Partnership", blank_a4, fields_a4, finish_a4),
     Part("B", "part_b", "Part B - Activity", lambda: [{"nm": "", "dt": blank_activity()}], fields_b, finish_b,
          as_json_string=False),
     make_part_c("middle", DOMAINS, SUBJECTS),
