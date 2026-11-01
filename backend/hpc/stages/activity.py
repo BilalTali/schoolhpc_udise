@@ -107,7 +107,12 @@ def make_finish_b(all_domains: List[str], blank: Callable[[], Dict[str, Any]], t
                 act_bank_map.append({"id": act["id"], "bank_id": str(dt["act_bank_id"]),
                                      "is_modified": bool(act["is_modified"]), "is_global": bool(dt.get("is_global", True))})
             if not act["is_complete"]:
-                errors.append(f"activity '{act.get('nm') or n}' is not finished - fill every required Part B column")
+                gaps = [label for ok, label in ((dt.get("gl"), "no curricular goal"), (dt.get("cpt"), "no competency"),
+                                                ("activity" not in dt or dt.get("activity"), "no approach ticked"))
+                        if not ok]
+                why = (" (" + ", ".join(gaps) + " - set it in the Activity Library)") if gaps else \
+                    " - fill every required Part B column"
+                errors.append(f"activity '{act.get('nm') or n}' is not finished{why}")
         missing = [d for d in all_domains if d not in covered]
         if missing:
             names = {d["ent_code"]: d["ent_caption"].strip() for d in ctx.lookups.domains}

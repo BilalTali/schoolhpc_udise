@@ -480,19 +480,26 @@ def filter_views(views: List[Dict[str, Any]], q: str = "", source: str = "", sub
 
 
 def library_entries(db: Session, actor: Actor, stage: str) -> Dict[str, Dict[str, Any]]:
-    """Grid key -> what a save needs to put the activity on a card. Texts are the ones used here: PARAKH's
+    """Grid key -> what a save needs to put the activity on a card (as activity_texts.for_card shows it: codes PARAKH
+    cannot print written into the text, Middle's approach from the activity). Texts are the ones used here: PARAKH's
     original with the school's and this teacher's edits ("modified" when they differ, so the card's copy is
     marked edited, as the PARAKH page does). Activities made in this app have no PARAKH id; they go on the
     card as a typed activity once finished. Turned-off or picture activities are not usable."""
+    from backend.hpc import activity_texts
     acts = _visible_query(db, actor, stage)
     settings = _settings_for(db, actor.school_id, [a.id for a in acts])
     mine = _mine_for(db, actor, [a.id for a in acts])
+    # the codes PARAKH has in its own list: the ones its own activities use (it prints no others on a card)
+    known = {str(c) for a in acts if a.source != "local" for f in ("gl", "cpt") for c in (a.content or {}).get(f) or []}
     out = {}
     for a in acts:
         v = view(a, settings.get(a.id), actor, mine=mine.get(a.id))
         caption = a.title if a.source == "local" else (a.original_snapshot or {}).get("activity_caption") or a.code
+        content = activity_texts.for_card(stage, effective_content(a, settings.get(a.id), mine.get(a.id)),
+                                          v["subjects"] or list(a.portal_subjects or []), known,
+                                          school_made=a.source == "local")
         out[_key(v)] = {"portal_id": a.portal_id, "caption": caption, "label": v["label"],
-                        "content": effective_content(a, settings.get(a.id), mine.get(a.id)),
+                        "content": content,
                         "is_global": a.source == "portal_global", "modified": v["modified"],
                         "usable": v["usable_in_excel"], "reason": v["not_usable_reason"], "key": _key(v),
                         "subjects": v["subjects"], "grade_id": a.grade_id, "activity_id": a.id}
