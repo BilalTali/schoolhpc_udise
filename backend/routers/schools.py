@@ -304,16 +304,28 @@ def get_school_stats(
             on_rosters |= {str(x.get("student_id")) for x in (body.get("students") if isinstance(body, dict) else body) or []
                            if isinstance(x, dict) and x.get("student_id")}
 
+    # the School Register (database) when the school has fetched it: every student PARAKH lists for the school and
+    # PARAKH's own teachers; the teachers' fetched classes (files) only for a school that has not fetched it yet
+    from backend.models.register import RegisterStudent, RegisterTeacherClass
+    register_ids = {sid for (sid,) in db.query(RegisterStudent.parakh_student_id).filter(
+        RegisterStudent.school_id == admin.id, RegisterStudent.missing_since.is_(None))}
+    parakh_teachers = {tid for (tid,) in db.query(RegisterTeacherClass.parakh_teacher_id).filter(
+        RegisterTeacherClass.school_id == admin.id, RegisterTeacherClass.source == "parakh_school").distinct()}
+    if register_ids:
+        on_rosters = register_ids
     if on_rosters:                                        # uploads of students no longer in a class (old ids) don't count
         outcomes = {sid: states for sid, states in outcomes.items() if sid in on_rosters}
     total_students = len(on_rosters) or len(outcomes)
+    accounts = sum(1 for t in teachers if t.is_active)
     success_students = sum(1 for states in outcomes.values() if "SUCCESS" in states)
     failed_students = sum(1 for states in outcomes.values() if "SUCCESS" not in states and states & {"FAILED", "INVALID"})
 
     return {
         "school_name": admin.school_name,
         "udise_code": admin.udise_code,
-        "total_teachers": total_teachers,
+        "total_teachers": len(parakh_teachers) or total_teachers,     # PARAKH's teachers once the register has them
+        "teacher_accounts": accounts,                                   # of them, with a login in this app
+        "from_register": bool(register_ids),
         "total_jobs": total_jobs,
         "total_students": total_students,
         "submitted_and_verified": success_students,

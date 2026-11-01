@@ -152,3 +152,11 @@ def test_parakh_refusing_the_school_list_falls_back_and_says_so(world):
     job = _fetch(school_a, fake)
     assert job["status"] == "COMPLETED" and job["stages"]["Preparatory"]["listed"] == 100
     assert any("refused the school list" in n for n in job["notes"]) and ("roster", "Preparatory") in fake.calls
+
+
+def test_the_school_dashboard_counts_come_from_the_register(world):
+    client, a, _, school_id, _ = world
+    _fetch(school_id, FakeSchoolParakh())
+    stats = client.get(f"{API}/school/stats", headers=a).json()
+    assert stats["from_register"] is True and stats["total_students"] == 100            # not the teachers' rosters
+    assert stats["total_teachers"] == 3 and stats["teacher_accounts"] == 3              # PARAKH's teachers, logins
