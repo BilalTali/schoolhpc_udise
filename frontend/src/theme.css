@@ -563,3 +563,15 @@ h1, h2, h3, h4 { font-family: var(--font-heading); letter-spacing: -0.02em; }
 .hub-open { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; font-weight: 600; color: #0b5fa5; }
 .hub-back { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
 .hub-detail-title { margin: 0; font-size: 17px; }
+
+/* School Register: boxes that are clearly visible (settings, stage choice, filters) */
+.reg-box { border: 1.5px solid #94A3B8; background: #FFFFFF; border-radius: 8px; padding: 0.45rem 0.6rem;
+  font-size: 0.95rem; color: var(--ink, #0F172A); min-height: 2.4rem; }
+.reg-box:focus { outline: none; border-color: var(--brand-600); box-shadow: 0 0 0 3px var(--brand-100); }
+select.reg-box { padding-right: 1.8rem; font-weight: 600; cursor: pointer; }
+.reg-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(6.2rem, 1fr)); gap: 0.6rem; margin: 0.6rem 0 1rem; }
+.reg-grid.wide { grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr)); }
+.reg-field { display: flex; flex-direction: column; gap: 0.25rem; }
+.reg-field > span { font-size: 0.8rem; font-weight: 700; color: var(--ink-2, #475569); }
+.reg-field .reg-box { width: 100%; }
+.reg-toolbar { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: flex-end; margin: 0.4rem 0 0.8rem; }

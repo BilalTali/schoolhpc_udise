@@ -157,3 +157,39 @@ def test_apply_needs_confirmation_and_the_latest_check(world):
     assert client.post(f"{API}/school/register/data/apply", headers=h, json={"import_id": second["id"]}).status_code == 400
     stale = client.post(f"{API}/school/register/data/apply", headers=h, json={"import_id": first["id"], "confirm": True})
     assert stale.status_code == 422 and "not the latest" in stale.text
+
+
+def test_fetch_parents_from_udise_reaches_students_admitted_since_the_full_fetch(world, monkeypatch, tmp_path):
+    """MOCKED UDISE+: a quick read of SDMS's student list; a new admission gets its parents by name + date of birth."""
+    client, h, _, school_id = world
+    from backend.services import hpc_sessions, udise_sessions
+    monkeypatch.setattr(hpc_sessions, "session_dir", lambda kind, i: tmp_path)
+    monkeypatch.setattr("backend.services.sdms_data.load", lambda sid: None)       # no full SDMS fetch yet
+    monkeypatch.setattr(udise_sessions, "_load", lambda sid: {"services": {"sdms": {"connected": True}}})
+
+    class FakeSdms:
+        def __init__(self, saved):
+            pass
+
+        def school_id(self):
+            return 1
+
+        def students(self, sid):
+            return [{"studentId": 7, "studentName": "STUDENT 1-00", "dob": "01/05/2016", "fatherName": "NEW FATHER",
+                     "motherName": "NEW MOTHER"}]
+    monkeypatch.setattr("backend.udise.sdms.Sdms", FakeSdms)
+    assert client.get(f"{API}/school/register/data", headers=h).json()["parents_source"]["kind"] is None
+    r = client.post(f"{API}/school/register/parents/fetch", headers=h)
+    assert r.status_code == 200 and r.json()["students"] == 1, r.text
+    assert client.get(f"{API}/school/register/data", headers=h).json()["parents_source"]["kind"] == "quick"
+    ws = _book(client, h)["Preparatory"]
+    row = next(r for r in range(3, ws.max_row + 1) if ws.cell(row=r, column=3).value == "STUDENT 1-00")
+    assert ws.cell(row=row, column=9).value == "NEW FATHER" and ws.cell(row=row, column=10).value == "NEW MOTHER"
+
+
+def test_fetch_parents_says_when_udise_is_not_connected(world, monkeypatch):
+    client, h, *_ = world
+    from backend.services import udise_sessions
+    monkeypatch.setattr(udise_sessions, "_load", lambda sid: {"services": {}})
+    r = client.post(f"{API}/school/register/parents/fetch", headers=h)
+    assert r.status_code == 422 and "not connected" in r.text

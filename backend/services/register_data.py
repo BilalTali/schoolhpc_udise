@@ -155,19 +155,84 @@ def _dob(text: Any) -> str:
     return f"{m.group(3)}/{m.group(2)}/{m.group(1)}" if m else t
 
 
+PARENTS_FILE = "udise_parents.json"
+
+
+def _parents_path(school_id: str):
+    from backend.services.hpc_sessions import session_dir
+    return session_dir("school", school_id) / PARENTS_FILE
+
+
+def fetch_parents(school_id: str) -> Dict[str, Any]:
+    """Reads UDISE+ (SDMS) again for the parents' names - one request: every student's basic details, students added
+    since the last full SDMS fetch included. Kept apart from the full SDMS copy (which other pages use)."""
+    from backend.services import secrets_box, udise_sessions
+    from backend.udise.client import UdiseError
+    from backend.udise.sdms import Sdms, SessionEnded
+    saved = udise_sessions._load(school_id)
+    if not (saved.get("services", {}).get("sdms") or {}).get("connected"):
+        raise Problem("UDISE+ (SDMS) is not connected: press 'Connect UDISE+' on the Home page, then try again.")
+    try:
+        sdms = Sdms(saved)
+        rows = sdms.students(sdms.school_id())
+    except SessionEnded as exc:
+        raise Problem(str(exc))
+    except UdiseError as exc:
+        raise Problem(f"UDISE+ did not answer: {exc}")
+    keep = ("studentId", "studentName", "fatherName", "motherName", "dob", "classDesc", "sectionDesc", "apaarId")
+    body = {"fetched_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+            "students": [{k: r.get(k) for k in keep} for r in rows if isinstance(r, dict)]}
+    path = _parents_path(school_id)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(secrets_box.encrypt(json.dumps(body, ensure_ascii=False)), encoding="utf-8")
+    tmp.replace(path)
+    return {"fetched_at": body["fetched_at"], "students": len(body["students"])}
+
+
+def _fresh_parents(school_id: str) -> Optional[Dict[str, Any]]:
+    from backend.services import secrets_box
+    path = _parents_path(school_id)
+    if not path.exists():
+        return None
+    try:
+        return json.loads(secrets_box.decrypt(path.read_text(encoding="utf-8")))
+    except Exception:
+        return None
+
+
+def _sdms_rows(school_id: str) -> Tuple[List[Tuple[Dict, Dict, Dict]], Optional[str], str]:
+    """(SDMS students as (general, enrolment, apaar), when read, "full" | "quick") - the newer of the full SDMS
+    fetch and the quick parents read; a quick read keeps the full fetch's admission numbers and APAAR IDs."""
+    from backend.services.sdms_data import load as load_sdms
+    full = load_sdms(school_id) or {}
+    quick = _fresh_parents(school_id)
+    if quick and quick.get("fetched_at", "") > (full.get("fetched_at") or ""):
+        old = {s["general"].get("studentId"): s for s in full.get("students", [])}
+        rows = []
+        for g in quick["students"]:
+            before = old.get(g.get("studentId")) or {}
+            rows.append(({**(before.get("general") or {}), **g}, before.get("enrolment") or {}, before.get("apaar") or {}))
+        return rows, quick["fetched_at"], "quick"
+    return ([(s["general"], s.get("enrolment") or {}, s.get("apaar") or {}) for s in full.get("students", [])],
+            full.get("fetched_at"), "full")
+
+
+def parents_source(school_id: str) -> Dict[str, Any]:
+    rows, when, kind = _sdms_rows(school_id)
+    return {"fetched_at": when, "kind": kind if rows else None, "students": len(rows)}
+
+
 def udise_parents(school_id: str, students: List[RegisterStudent]) -> Dict[str, Dict[str, str]]:
     """register id -> {"father", "mother"} from UDISE+ for the students that match one SDMS student - by APAAR ID,
     else admission number, else name and date of birth (a key two students share matches nobody)."""
-    from backend.services.sdms_data import load as load_sdms
-    data = load_sdms(school_id)
-    if not data:
+    sdms, _, _ = _sdms_rows(school_id)
+    if not sdms:
         return {}
-    keys = [("apaar", lambda g, e, a: str(a.get("apaarId") or "") if a.get("apaarId") not in (None, "", "NA") else "",
+    keys = [("apaar", lambda g, e, a: next((str(v) for v in (a.get("apaarId"), g.get("apaarId")) if v not in (None, "", "NA")), ""),
              lambda r: r.apaar_id or ""),
             ("adm", lambda g, e, a: _adm(e.get("admnNumber") or g.get("admnNumber")), lambda r: _adm(r.admission_number)),
             ("namedob", lambda g, e, a: _letters(g.get("studentName")) + "|" + _dob(g.get("dob")) if g.get("dob") else "",
              lambda r: _letters(r.student_name) + "|" + _dob(r.dob) if r.dob else "")]
-    sdms = [(s["general"], s.get("enrolment") or {}, s.get("apaar") or {}) for s in data["students"]]
     out: Dict[str, Dict[str, str]] = {}
     free = set(range(len(sdms)))
     for _, of_sdms, of_reg in keys:
@@ -220,13 +285,15 @@ def workbook(school_id: str) -> Tuple[bytes, str]:
             raise Problem("The register is empty: fetch the students from PARAKH first.")
         stored = {d.student_id: d for d in db.query(RegisterStudentData).filter_by(school_id=school_id, session=session)}
         parents = udise_parents(school_id, students)
+        parents_when = (parents_source(school_id)["fetched_at"] or "")[:16].replace("T", " ")
     wb = Workbook()
     info = wb.active
     info.title = "Instructions"
     lines = [f"School Data, academic year {session[:2]}-{session[2:]} (template {TEMPLATE})", "",
              "1. One sheet per stage, one row per student as PARAKH lists them. Do not change the grey columns: "
              "the PARAKH ID and name identify the student.",
-             "2. Parents: father's and mother's names (filled from UDISE+ where the student was found there). "
+             f"2. Parents: father's and mother's names (filled from UDISE+ as read on {parents_when or 'never'}, where "
+             "the student was found there). "
              "'Name on the HPC card' says whose name PARAKH's card shows; choose Guardian to give another name.",
              "3. Days present per month: a whole number, at most the month's working days (in the column heading, "
              "set by the school in the app). Leave a month empty when there is no data - it is never taken as 0.",

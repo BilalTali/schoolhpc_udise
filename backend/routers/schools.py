@@ -561,7 +561,20 @@ def register_data_apply(payload: RegisterApplyRequest, admin: School = Depends(r
 @router.get("/register/data")
 def register_data_status(admin: School = Depends(require_school_admin)):
     from backend.services import register_data
-    return {"check": register_data.latest_check(admin.id), "history": register_data.history(admin.id)}
+    return {"check": register_data.latest_check(admin.id), "history": register_data.history(admin.id),
+            "parents_source": register_data.parents_source(admin.id)}
+
+
+@router.post("/register/parents/fetch")
+def register_parents_fetch(admin: School = Depends(require_school_admin)):
+    """Reads UDISE+ (SDMS) again for the parents' names (new admissions included), before a download."""
+    from backend.services import register_data
+    try:
+        out = register_data.fetch_parents(admin.id)
+    except register_data.Problem as exc:
+        raise _register_problem(exc)
+    audit.record(f"school_admin:{admin.id}", "register_parents_fetch", "register", admin.id, None, {"students": out["students"]})
+    return out
 
 
 # ---------------------------------------------------------------------------
