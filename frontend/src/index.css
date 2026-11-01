@@ -1180,6 +1180,7 @@ textarea.card-input { resize: vertical; min-height: 4.5rem; }
 }
 .problem-list { margin: 0.3rem 0 0 1.1rem; font-size: 0.82rem; }
 .part-problems { color: #B45309; background: #FFFBEB; border: 1px solid #FDE68A; border-radius: var(--radius-sm); padding: 0.5rem 0.75rem 0.5rem 1.6rem; margin: 0 0 0.9rem; }
+.part-warnings { color: #1E40AF; background: #EFF6FF; border: 1px solid #BFDBFE; border-radius: var(--radius-sm); padding: 0.5rem 0.75rem 0.5rem 1.6rem; margin: 0 0 0.9rem; }
 
 .choice-chips { display: flex; flex-wrap: wrap; gap: 0.4rem; }
 .choice-chip {

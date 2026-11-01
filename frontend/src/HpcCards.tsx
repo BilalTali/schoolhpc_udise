@@ -38,12 +38,14 @@ interface FieldMeta {
   mixable?: boolean;               // false: a fact about the student (mother tongue ...), never handed out at random
   mix_pool?: string[];             // a several-option question Mix may fill: the options it may hand out ...
   mix_pick?: number;               // ... and how many each student gets
+  from_records?: string;           // "levels": a Part C note, written from the subject's own three levels
 }
 
 interface CardField extends FieldMeta {
   value: FieldValue;
   portal_value: FieldValue;
   changed: boolean;
+  from_levels?: string;            // a Part C note: what the subject's levels give ("" without all three)
 }
 
 interface CardPart {
@@ -51,6 +53,7 @@ interface CardPart {
   title: string;
   fields: CardField[];
   problems: string[];
+  warnings?: string[];             // reads wrong but PARAKH accepts it (never blocks a save)
   complete: boolean;
 }
 
@@ -88,6 +91,7 @@ interface BulkRow {
   value: FieldValue;
   portal_value: FieldValue;
   in_draft: boolean;
+  from_levels?: string;            // a Part C note: what this student's levels give ("" without all three)
 }
 
 type SaveState = "idle" | "pending" | "saving" | "saved" | "conflict" | "error";
@@ -447,6 +451,10 @@ export function HpcCardEditor({ api, stage, studentId, studentName, onClose, onS
                   {p.problems.length > 0 && (
                     <ul className="problem-list part-problems">{p.problems.map((e, i) => <li key={i}>{e}</li>)}</ul>
                   )}
+                  {!!p.warnings?.length && (
+                    <ul className="problem-list part-warnings" aria-label="Check these">
+                      {p.warnings.map((e, i) => <li key={i}>{e}</li>)}</ul>
+                  )}
                   <div className="card-fields">
                     {p.fields.map((f) => {
                       const v = values[f.key];
@@ -459,6 +467,12 @@ export function HpcCardEditor({ api, stage, studentId, studentName, onClose, onS
                             {changed && <span className="changed-dot" title={`On PARAKH: ${Array.isArray(f.portal_value) ? f.portal_value.join(", ") : f.portal_value || "(blank)"}`}>edited</span>}
                           </label>
                           <FieldInput field={f} value={v} onChange={(nv) => setValue(f.key, nv)} disabled={submitting} />
+                          {f.from_records === "levels" && (f.from_levels
+                            ? f.from_levels !== v && (
+                              <button type="button" className="btn btn-outline btn-sm" disabled={submitting}
+                                      onClick={() => setValue(f.key, f.from_levels!)}
+                                      title={f.from_levels}>Write from this subject's levels</button>)
+                            : <div className="form-hint">Tick all three levels to write this note from them.</div>)}
                           {problems[f.key] && <div className="field-problem">{problems[f.key]}</div>}
                         </div>
                       );
@@ -787,7 +801,7 @@ export function HpcBulkEntry({ api, stage, parts: only = ["A1", "A2", "A3", "A4"
       <p className="form-hint" style={{ fontSize: "0.85rem", marginBottom: "1rem" }}>
         {intro ?? <>Answers where most of the class has the same choice and only a few differ: mother tongue, the
           Yes/Sometimes/No questions, "all about me", goals and ambition, resources and support, and each subject's Part C
-          remark (the levels are in the grid above). Each question says how many students are left. Use "Fill empty with" for
+          note (written from that student's own levels for the subject - never a shared sentence). Each question says how many students are left. Use "Fill empty with" for
           the usual answer, "Apply to all" to replace every answer, or <b>Mix</b> to give students different suggested
           answers; change the few who differ, and save. Text boxes offer <b>Suggestions…</b>. Answers are pre-filled in the
           Excel file you download on tab 5, where you can still change any student. Medium of instruction and rural/urban
@@ -809,7 +823,8 @@ export function HpcBulkEntry({ api, stage, parts: only = ["A1", "A2", "A3", "A4"
                 {mixPreview.cells === 0
                   ? <>Nothing to fill: every question already has an answer{mixReplace ? "" : " (tick 'Replace answers already filled' to mix them again)"}.</>
                   : <>Fills <b>{mixPreview.cells}</b> answers in <b>{mixPreview.fields.filter((f) => f.filled).length}</b> questions
-                      for <b>{mixPreview.students}</b> students, each with one of the suggested answers at random.</>}
+                      for <b>{mixPreview.students}</b> students, each with one of the suggested answers at random
+                      (Part C notes: written from each student's levels).</>}
                 {mixPreview.skipped.length > 0 && (
                   <> Not mixed (fill them yourself): {mixPreview.skipped.map((x) => `${x.label} - ${x.reason}`).join("; ")}.</>
                 )}
@@ -835,7 +850,21 @@ export function HpcBulkEntry({ api, stage, parts: only = ["A1", "A2", "A3", "A4"
             </optgroup>
           ))}
         </select>
-        {field && rows.length > 0 && (
+        {field && rows.length > 0 && field.from_records === "levels" && (
+          <div className="bulk-fill">
+            <span className="form-hint">Each student's note is written from their own three levels for this subject
+              ({rows.filter((r) => !r.from_levels).length} without all three levels stay blank).</span>
+            <button className="btn btn-outline" style={{ padding: "0.5rem 0.9rem" }}
+                    onClick={() => setEdits({ ...edits, ...Object.fromEntries(rows.filter((r) => r.from_levels && isBlank(valueOf(r)))
+                      .map((r) => [r.student_id, r.from_levels!])) })}
+                    title="Fills only the students whose note is empty">Write empty notes from levels</button>
+            <button className="btn btn-outline" style={{ padding: "0.5rem 0.9rem" }}
+                    onClick={() => setEdits({ ...edits, ...Object.fromEntries(rows.filter((r) => r.from_levels)
+                      .map((r) => [r.student_id, r.from_levels!])) })}
+                    title="Writes every note again from the levels (saved only when you press Save)">Write all from levels</button>
+          </div>
+        )}
+        {field && rows.length > 0 && field.from_records !== "levels" && (
           <div className="bulk-fill">
             <span className="form-label" style={{ whiteSpace: "nowrap" }}>Fill empty with</span>
             <FieldInput field={field} value={fillValue} onChange={setFillValue} compact />

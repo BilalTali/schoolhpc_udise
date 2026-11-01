@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from backend.hpc import sync
 from backend.hpc.fields import Field
+from backend.hpc import checks, notes
 from backend.hpc.suggestions import FILL_ONLY, has_suggestions, mixable, multi_mix, record_kind, suggestions_for
 from backend.hpc.portal import Portal, stage_code
 from backend.hpc.stages import activity_grid, get_stage
@@ -156,7 +157,7 @@ def field_meta(f: Field) -> Dict[str, Any]:
             "max_len": f.max_len, "required": f.required, "multiple": f.kind in LIST_KINDS,
             "suggestions": suggestions_for(f.key, f.max_len, f.label) if not f.options else [],
             "mixable": mixable(f.key, f.label),  # "Mix" may hand answers out at random (not for facts like mother tongue)
-            "from_records": record_kind(f.label),   # name / age / friend: "Mix all" fills it from the app's records
+            "from_records": record_kind(f.label, f.key),   # name / age / friend / levels (Part C notes): from the records
             # a several-option question Mix may fill: which options, and how many each student gets
             "mix_pool": multi_mix(f.key, f.options)[0] if f.kind in LIST_KINDS else [],
             "mix_pick": multi_mix(f.key, f.options)[1] if f.kind in LIST_KINDS else 0}
@@ -193,7 +194,7 @@ COMMON_KINDS = ("choice", "inlist", "multi", "flags")
 
 def is_common(part_code: str, f: Field) -> bool:
     return part_code == "B" or (part_code == "A2" and f.kind == "choice") \
-        or (f.kind == "text" and (has_suggestions(f.key, f.label) or bool(record_kind(f.label)) or f.label in FILL_ONLY)) \
+        or (f.kind == "text" and (has_suggestions(f.key, f.label) or bool(record_kind(f.label, f.key)) or f.label in FILL_ONLY)) \
         or (part_code in COMMON_PARTS and f.kind in COMMON_KINDS)
 
 
@@ -284,6 +285,21 @@ def _part_errors(stage: str, data: sync.StudentData, row: Dict[str, Any], lookup
     return by_part
 
 
+def _part_b(stage: str, raw_parts: Dict[str, Any]) -> List[Dict[str, Any]]:
+    b = next((p for p in get_stage(stage).PARTS if p.code == "B"), None)
+    loaded = b.load((raw_parts or {}).get(b.col)) if b else []
+    return loaded if isinstance(loaded, list) else []
+
+
+def card_warnings(stage: str, row: Dict[str, Any], raw_parts: Dict[str, Any]) -> Dict[str, List[str]]:
+    """{part code: warnings} - content PARAKH accepts but that reads wrong (checks.py); they never block a save."""
+    st = get_stage(stage)
+    values = {k: (", ".join(map(str, v)) if isinstance(v, list) else v) for k, v in row.items()}
+    c = checks.part_c_warnings(stage, st.DOMAINS, st.SUBJECTS, values) + \
+        checks.part_b_vs_c(st.DOMAINS, st.SUBJECTS, values, _part_b(stage, raw_parts))
+    return {"C": c} if c else {}
+
+
 def card(client: Portal, owner: str, teacher_id: str, session: str, stage: str, student_id: str) -> Dict[str, Any]:
     """The form: every part's fields with portal values, the teacher's draft on top, and per-part status."""
     lookups = lookups_for(owner, client, stage)
@@ -294,6 +310,7 @@ def card(client: Portal, owner: str, teacher_id: str, session: str, stage: str, 
     index = _field_index(stage, lookups)
     errors = _part_errors(stage, data, {**portal_row, **_cell_values(stage, index, (draft or {}).get("values") or {})},
                           lookups, _resolver(teacher_id, stage, lookups))
+    warnings = card_warnings(stage, row, data.raw_parts)
     parts = []
     for p in get_stage(stage).PARTS:
         fields = []
@@ -301,8 +318,12 @@ def card(client: Portal, owner: str, teacher_id: str, session: str, stage: str, 
             fields.append({**field_meta(f), "value": to_api_value(f, row.get(f.key)),
                            "portal_value": to_api_value(f, portal_row.get(f.key)),
                            "changed": draft is not None and f.key in draft["values"]})
+            if record_kind(f.label, f.key) == "levels":       # the note the levels give, to use or compare
+                fields[-1]["from_levels"] = notes.note(notes.note_key(f.key), notes.levels_from_row(row, notes.note_key(f.key)),
+                                                       f.max_len, notes.activity_names(_part_b(stage, data.raw_parts))
+                                                       .get(notes.note_key(f.key), ""))
         parts.append({"code": p.code, "title": p.title, "fields": fields, "problems": errors.get(p.code, []),
-                      "complete": not errors.get(p.code)})
+                      "warnings": warnings.get(p.code, []), "complete": not errors.get(p.code)})
     return {"student": _student_summary(stage, data, lookups),
             "session": {"code": session, "label": session_label(session)},
             "parts": parts, "ready": all(p["complete"] for p in parts),
@@ -424,7 +445,7 @@ def bulk_mix(client: Portal, owner: str, teacher_id: str, session: str, stage: s
             skipped.append({"key": key, "label": key, "reason": "not a class-wide question"})
             continue
         pick = 1
-        if record_kind(f.label):
+        if record_kind(f.label, f.key):
             mixed[key] = (f, [], 1)                      # from the records, worked out per student below
             continue
         if f.kind in LIST_KINDS:
@@ -443,8 +464,11 @@ def bulk_mix(client: Portal, owner: str, teacher_id: str, session: str, stage: s
             mixed[key] = (f, pool, pick)
     students = class_list(client, teacher_id, stage, lookups)
     wants_age = any(record_kind(f.label) == "age" for f, _, _ in mixed.values())
+    wants_notes = any(record_kind(f.label, f.key) == "levels" for f, _, _ in mixed.values())
     a1 = next((p for p in get_stage(stage).PARTS if p.code == "A1"), None)
-    cols = sorted({part_of[k].col for k in mixed} | ({a1.col} if wants_age and a1 else set()))
+    b_part = next((p for p in get_stage(stage).PARTS if p.code == "B"), None)
+    cols = sorted({part_of[k].col for k in mixed} | ({a1.col} if wants_age and a1 else set())
+                  | ({b_part.col} if wants_notes and b_part else set()))
     raw, _ = card_store.class_parts(client, owner, session, stage, [s["student_id"] for s in students], cols, False) \
         if cols else ({s["student_id"]: {} for s in students}, None)
     rng = random.Random()
@@ -522,6 +546,7 @@ def bulk_mix(client: Portal, owner: str, teacher_id: str, session: str, stage: s
                     _dob_seen[(owner, session, stage, sid)] = dob
 
     parts_by_col = {part_of[k].col: part_of[k] for k in mixed}
+    no_levels: Dict[str, List[str]] = {}                  # Part C notes left blank: the subject has no levels yet
     changes: Dict[str, Dict[str, Any]] = {}
     filled = {k: 0 for k in mixed}
     for s in students:
@@ -530,22 +555,47 @@ def bulk_mix(client: Portal, owner: str, teacher_id: str, session: str, stage: s
         if wants_age and a1 is not None:
             loaded[a1.col] = a1.load(raw[s["student_id"]].get(a1.col))
         taken: List[str] = []                             # what this student already got in this go
-        for key, (f, _, _) in mixed.items():
+        notes_last = sorted(mixed.items(), key=lambda kv: record_kind(kv[1][0].label, kv[0]) == "levels")
+        for key, (f, _, _) in notes_last:              # notes after levels: a level mixed now counts for its note
             current = draft[key] if key in draft else to_api_value(f, f.read(loaded[part_of[key].col]))
             if not replace and not _blank(current):
                 continue
-            value = from_records(f, s, loaded, taken) if record_kind(f.label) else next_value(key, taken)
+            if record_kind(f.label, f.key) == "levels":
+                part_b = b_part.load(raw[s["student_id"]].get(b_part.col)) if b_part else []
+                value = note_from_levels(f, {**draft, **changes.get(s["student_id"], {})}, loaded[part_of[key].col],
+                                         index, part_b)
+                if _blank(value):
+                    no_levels.setdefault(key, []).append(s.get("student_name", ""))
+            else:
+                value = from_records(f, s, loaded, taken) if record_kind(f.label) else next_value(key, taken)
             if _blank(value):
-                continue                                  # no record for it (no date of birth ...)
+                continue                                  # no record for it (no date of birth, no levels ...)
             changes.setdefault(s["student_id"], {})[key] = value
             taken.append(value if isinstance(value, str) else "")
             filled[key] += 1
     if apply:
         for sid, values in changes.items():
             save_draft(teacher_id, session, stage, sid, values)
+    for key, names in no_levels.items():                  # reported, never filled with a stock sentence
+        skipped.append({"key": key, "label": mixed[key][0].label,
+                        "reason": f"left blank for {len(names)} student(s) without all three levels for this subject"
+                                  f" ({', '.join(n for n in names[:5] if n)}{' ...' if len(names) > 5 else ''})"})
     return {"applied": apply, "students": len(changes), "cells": sum(filled.values()),
             "fields": [{"key": k, "label": mixed[k][0].label, "filled": filled[k]} for k in mixed],
             "skipped": skipped}
+
+
+def note_from_levels(f: Field, draft: Dict[str, Any], part_c: Any, index: Dict[str, Field], part_b: Any) -> str:
+    """A Part C note written from the subject's three levels: the draft's where set, else PARAKH's (notes.note)."""
+    domain = notes.note_key(f.key)
+    row = {}
+    for ability in notes.ABILITIES:
+        for key in (f"c_{domain}_{ability}", f"c_{domain}_{notes.SHORT[ability]}"):
+            lf = index.get(key)
+            if lf is not None:
+                row[key] = draft[key] if key in draft else lf.read(part_c)
+    activity = notes.activity_names(part_b if isinstance(part_b, list) else []).get(domain, "")
+    return notes.note(domain, notes.levels_from_row(row, domain), f.max_len, activity)
 
 
 def bulk_read(client: Portal, owner: str, teacher_id: str, session: str, stage: str, key: str,
@@ -554,17 +604,25 @@ def bulk_read(client: Portal, owner: str, teacher_id: str, session: str, stage: 
     _common_only(stage, lookups, key)
     part, f = _part_of(stage, lookups, key)
     students = class_list(client, teacher_id, stage, lookups)
+    from_levels = record_kind(f.label, f.key) == "levels"
+    b_part = next((p for p in get_stage(stage).PARTS if p.code == "B"), None) if from_levels else None
     raw, read_at = card_store.class_parts(client, owner, session, stage, [s["student_id"] for s in students],
-                                          [part.col], refresh)
+                                          [part.col] + ([b_part.col] if b_part else []), refresh)
+    index = _common_fields(stage, lookups) if from_levels else {}
 
     def value_for(s):
-        portal_value = f.read(part.load(raw[s["student_id"]][part.col]))
+        loaded = part.load(raw[s["student_id"]][part.col])
+        portal_value = f.read(loaded)
         draft = load_draft(teacher_id, session, stage, s["student_id"])
         in_draft = bool(draft and key in draft["values"])
         value = draft["values"][key] if in_draft else to_api_value(f, portal_value)
-        return {"student_id": s["student_id"], "student_name": s["student_name"], "grade": s["grade"],
-                "section": s["section"], "status": s["status"], "value": value,
-                "portal_value": to_api_value(f, portal_value), "in_draft": in_draft}
+        out = {"student_id": s["student_id"], "student_name": s["student_name"], "grade": s["grade"],
+               "section": s["section"], "status": s["status"], "value": value,
+               "portal_value": to_api_value(f, portal_value), "in_draft": in_draft}
+        if from_levels:                                # the note this student's levels give ("" without them)
+            part_b = b_part.load(raw[s["student_id"]].get(b_part.col)) if b_part else []
+            out["from_levels"] = note_from_levels(f, (draft or {}).get("values") or {}, loaded, index, part_b)
+        return out
 
     check = card_store.start_check(client, owner, session, stage, [s["student_id"] for s in students], [part.col])
     meta = {**field_meta(f), "part": part.code, "part_title": part.title}

@@ -138,7 +138,8 @@ def test_bulk_entry(teacher_client):
     assert meta["a2_about_1"]["mixable"] is True
     # mother tongue: suggestions to pick from, but never handed out at random
     assert "Kashmiri" in meta["a1_mother_tongue"]["suggestions"] and meta["a1_mother_tongue"]["mixable"] is False
-    assert meta["c_PSLS1_remark"]["mixable"] is True and meta["c_PSLS1_remark"]["suggestions"]
+    # Part C notes: no stock phrases (C1) - "Mix all" writes each from the student's own levels for the subject
+    assert meta["c_PSLS1_remark"]["from_records"] == "levels" and meta["c_PSLS1_remark"]["suggestions"] == []
     part_b = {f["key"] for p in common if p["code"] == "B" for f in p["fields"]}
     assert {"b_self_1", "b_self_8", "b_observation", "b_challenges"} <= part_b         # every Part B answer, text too
     # the Part C levels grid holds only the levels; the remarks are bulk entry's

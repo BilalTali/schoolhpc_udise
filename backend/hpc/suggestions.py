@@ -9,9 +9,12 @@ suggestions is a class-wide field (Common answers / the Activities tab).
 Some facts are filled from the app's own records instead (RECORD): a student's name (the class list), age (the
 date of birth on PARAKH) and, in Foundational, five classmates as friends. Others have no record and no sensible
 suggestion (FILL_ONLY: where the student lives): class-wide so "Apply to all" can fill a village, never mixed.
+Part C notes are written from each student's own levels for that subject (record_kind "levels", notes.py).
 """
 from typing import Dict, List, Optional
 
+# Part C stock notes: no longer offered or mixed (C1 - a note must follow the subject's levels); kept so the checks
+# can recognise them on cards filled earlier (backend/hpc/checks.py)
 _REMARK = [
     "Shows good understanding of the concepts taught.",
     "Takes part actively; needs more practice in written work.",
@@ -191,8 +194,12 @@ RECORD = {"My name is": "name", "Name": "name", "I am ... years old": "age", "Ag
 FILL_ONLY = {"I live in", "We stay at"}
 
 
-def record_kind(label: str) -> str:
-    """'name' / 'age' / 'friend' when the answer comes from the app's records, else ''."""
+def record_kind(label: str, key: str = "") -> str:
+    """'name' / 'age' / 'friend' when the answer comes from the app's records, 'levels' for a Part C note (written
+    from the subject's own levels, backend/hpc/notes.py), else ''."""
+    from backend.hpc.notes import note_key
+    if note_key(key):
+        return "levels"
     if label.startswith("My friend "):
         return "friend"
     return RECORD.get(label, "")
@@ -213,11 +220,7 @@ def _phrases(key: str, label: str = "") -> List[str]:
         return own
     if key in SUGGESTIONS:
         return SUGGESTIONS[key]
-    if key.startswith("c_") and key.endswith("_remark"):
-        return _REMARK
-    if key.startswith("c_") and key.endswith("_descriptor"):
-        return _DESCRIPTOR
-    return []
+    return []                     # Part C notes: written from each student's own levels (record_kind "levels")
 
 
 def suggestions_for(key: str, max_len: Optional[int], label: str = "") -> List[str]:
