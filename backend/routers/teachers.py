@@ -276,6 +276,22 @@ def sync_roster_status(teacher: Teacher = Depends(require_teacher)):
     return {"job": _fetch_view(_fetch_jobs.get(teacher.id))}
 
 
+@router.get("/register/students")
+def register_students(stage: Optional[str] = Query(None), teacher: Teacher = Depends(require_teacher)):
+    """The teacher's students from the School Register: only the classes PARAKH maps to this teacher. No PARAKH
+    request is made here."""
+    from backend.services import school_register
+    if not school_register.teacher_classes(teacher):
+        sess = hpc_sessions.load_session(KIND, teacher.id)
+        if sess:                                   # the classes the teacher's own PARAKH sign-in carries
+            school_register.remember_teacher_mapping(teacher, sess.staff)
+    stage = _stage(teacher, stage) if stage else None
+    rows = school_register.for_teacher(teacher, stage)
+    return {"students": rows, "total": len(rows),
+            "note": "" if rows or school_register.teacher_classes(teacher) else
+            "Your classes are not known yet: ask the school to fetch from PARAKH, or connect to PARAKH once."}
+
+
 @router.get("/roster")
 def cached_roster(stage: Optional[str] = Query(None), teacher: Teacher = Depends(require_teacher)):
     stage = _stage(teacher, stage)

@@ -20,6 +20,7 @@ def init_db() -> None:
     import backend.models.entities  # noqa: F401  (registers the models)
     import backend.models.library   # noqa: F401
     import backend.models.settings  # noqa: F401
+    import backend.models.register  # noqa: F401
     try:
         Base.metadata.create_all(bind=engine)
     except Exception as exc:
@@ -36,6 +37,7 @@ def migrate(engine) -> None:
     import backend.models.entities  # noqa: F401
     import backend.models.library   # noqa: F401
     import backend.models.settings  # noqa: F401
+    import backend.models.register  # noqa: F401
     inspector = inspect(engine)
     with engine.begin() as conn:
         for table in Base.metadata.sorted_tables:

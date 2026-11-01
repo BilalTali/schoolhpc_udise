@@ -333,6 +333,49 @@ class Portal:
         self.not_yours[stage] = [r for r in records if not self.owns(r)]
         return [r for r in records if self.owns(r)]
 
+    # -- School level (the school login; read only) - paths from PARAKH's own page code ---------------------
+    def _school_path(self, rest: str) -> str:
+        return f"/states/{self.state}/districts/{self.district_id}/schools/{self.school_id}{rest}"
+
+    def school_hpc_page(self, stage: str, page_no: int, page_size: int = 100) -> Dict[str, Any]:
+        """One page of the school's HPC list for a stage (every student of the school in that stage)."""
+        return self._request("GET", self._school_path(f"/hpc/{stage_code(stage)}"),
+                             params={"page_no": page_no, "page_size": page_size}).get("data") or {}
+
+    def school_roster(self, stage: str) -> List[Dict[str, Any]]:
+        """Every student of the school in a stage, assigned to a teacher or not."""
+        records, seen, page_no = [], set(), 1
+        while page_no <= 100:
+            data = self.school_hpc_page(stage, page_no)
+            page = (data.get("records") if isinstance(data, dict) else data) or []
+            new = [r for r in page if str(r.get("id")) not in seen]
+            seen.update(str(r.get("id")) for r in new)
+            records.extend(new)
+            total = data.get("total_count") or data.get("total_records") or data.get("count") if isinstance(data, dict) else None
+            if not new or len(page) < 100 or (total and len(records) >= int(total)):
+                break
+            page_no += 1
+        return records
+
+    def school_teachers(self) -> List[Dict[str, Any]]:
+        """PARAKH's teachers of the school."""
+        out, page_no = [], 1
+        while page_no <= 20:
+            data = self._request("GET", self._school_path("/teachers"), params={"page_no": page_no, "page_size": 100}).get("data")
+            page = (data.get("records") if isinstance(data, dict) else data) or []
+            out.extend(page)
+            if len(page) < 100:
+                break
+            page_no += 1
+        return out
+
+    def teacher_grade_sections(self, teacher_id: Any) -> List[Dict[str, Any]]:
+        """The grades and sections PARAKH maps a teacher to."""
+        data = self._request("GET", self._school_path(f"/teachers/{teacher_id}/grade_sections")).get("data")
+        if isinstance(data, dict):
+            data = data.get("records") or data.get("grade_sections") or data.get("grade_section_mapping") or []
+        return data or []
+
     def student(self, stage: str, student_id: str, hpc_col: Optional[str] = None) -> Dict[str, Any]:
         """A student's HPC record; with hpc_col, just that part (its data has 'formdata')."""
         params = {"hpc_col": hpc_col} if hpc_col else None

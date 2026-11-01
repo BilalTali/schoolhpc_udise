@@ -401,6 +401,39 @@ def sync_school_roster(stage: str = "Preparatory", admin: School = Depends(requi
 
 
 # ---------------------------------------------------------------------------
+# School Register (docs/school_register_plan.md): every student from PARAKH, and who teaches whom
+# ---------------------------------------------------------------------------
+
+class RegisterFetchRequest(BaseModel):
+    stages: Optional[List[str]] = Field(None, description="default: every stage")
+
+
+@router.post("/register/fetch")
+def register_fetch(payload: RegisterFetchRequest, admin: School = Depends(require_school_admin)):
+    """Starts reading every student of the school from PARAKH (school login; read only, in the background)."""
+    from backend.services import school_register
+    client = hpc_sessions.portal_for(KIND, admin.id, admin.hpc_login_id, admin.hpc_password)
+    stages = [_stage_name(s) for s in payload.stages] if payload.stages else None
+    result = school_register.start(admin.id, client, stages)
+    if not result.get("started"):
+        raise HTTPException(status.HTTP_409_CONFLICT, result["error"])
+    return result
+
+
+@router.get("/register/fetch")
+def register_fetch_progress(admin: School = Depends(require_school_admin)):
+    from backend.services import school_register
+    return school_register.progress(admin.id)
+
+
+@router.get("/register")
+def register_students(stage: Optional[str] = None, admin: School = Depends(require_school_admin)):
+    """The school's register: every student (assigned or not), their PARAKH identity and teachers."""
+    from backend.services import school_register
+    return school_register.students(admin.id, _stage_name(stage) if stage else None)
+
+
+# ---------------------------------------------------------------------------
 # UDISE+: one sign-in, a saved session for each of its four services
 # ---------------------------------------------------------------------------
 
