@@ -31,6 +31,20 @@ SUBJECT_LABELS = {
     "positive-learning-habits": "Positive Learning Habits",
 }
 RATING_NAMES = {1: "Beginner", 2: "Proficient", 3: "Advance"}
+
+# C2: PARAKH's page looks Vocational/Skill Education up under "vocational-skill-education", but its credit table has
+# the subject as "skill-education-middle" - so on PARAKH the subject earns 0 credits and 0 marks whatever its levels.
+# False: the app saves what PARAKH's own page would (0). True: the app uses the subject's real credit table.
+SKILL_KEY_FIX = False
+CREDIT_ALIASES = {"vocational-skill-education": "skill-education-middle"}
+
+
+def credit_row(stage: str, key: str) -> Dict[str, Any]:
+    """A subject's credit constants ({} when PARAKH has none for its key)."""
+    table = TABLES[stage]["credits"]
+    if key not in table and SKILL_KEY_FIX and CREDIT_ALIASES.get(key) in table:
+        return table[CREDIT_ALIASES[key]]
+    return table.get(key, {})
 RATING_LABELS = {"Beginner": "Beginner", "Proficient": "Proficient", "Advance": "Advanced"}
 
 
@@ -68,7 +82,7 @@ def subjects(stage: str) -> List[Dict[str, Any]]:
 def sa_applicable(stage: str, index: int) -> bool:
     """Whether a subject has summative-assessment marks (otherwise its mark cells stay blank)."""
     subject = subjects(stage)[index]
-    sa_credits = TABLES[stage]["credits"].get(subject["key"], {}).get("saCredits", 0)
+    sa_credits = credit_row(stage, subject["key"]).get("saCredits", 0)
     return subject.get("saApplicable", True) and sa_credits > 0
 
 
@@ -90,7 +104,6 @@ def build_tables(stage: str, part_c: Dict[str, Any], domains: List[str],
     grade_code e.g. 'grd5'
     Returns {"table2": [...], "table3": [...]} as the portal stores them.
     """
-    credits = TABLES[stage]["credits"]
     level = next((g["nationalCreditLevel"] for g in TABLES[stage]["grades"] if grade_code in g["classCodes"]), 0)
     subs = subjects(stage)
 
@@ -99,7 +112,7 @@ def build_tables(stage: str, part_c: Dict[str, Any], domains: List[str],
         ratings = part_c.get(domains[i], []) if i < len(domains) else []
         names = [RATING_NAMES.get(int(_number(r)) if _number(r) == _number(r) else 0, "")
                  for r in (list(ratings) + ["", "", ""])[:3]]
-        per = credits.get(key, {}).get("formativeCreditsPerCompetency", {})
+        per = credit_row(stage, key).get("formativeCreditsPerCompetency", {})
         parts = [_round2(float(per.get(n, 0) or 0)) if n else 0 for n in names]
         total = _round2(sum(parts))
         return names, total
@@ -110,10 +123,10 @@ def build_tables(stage: str, part_c: Dict[str, Any], domains: List[str],
         mx, got = (_number(v) for v in (marks[i] + ["", ""])[:2])
         if not (math.isfinite(mx) and math.isfinite(got)) or mx <= 0 or got < 0:
             return 0
-        return _round2(min(1, max(0, got / mx)) * credits[subs[i]["key"]]["saCredits"])
+        return _round2(min(1, max(0, got / mx)) * credit_row(stage, subs[i]["key"])["saCredits"])
 
     def percent(key, earned):
-        c = credits.get(key, {})
+        c = credit_row(stage, key)
         out_of = c.get("hpcMaxCredits", 0) + c.get("saCredits", 0)
         return _js_round(earned / out_of * 100) if out_of > 0 and math.isfinite(earned) else 0
 
@@ -147,6 +160,43 @@ def build_tables(stage: str, part_c: Dict[str, Any], domains: List[str],
     table3.append(["Total", js_str(sums["f"] / 100), js_str(sums["sa"] / 100), js_str(sums["earned"] / 100),
                    js_str(sums["points"] / 100), str(marks_total)])
     return {"table2": table2, "table3": table3}
+
+
+# ---------------------------------------------------------------------------
+# The rule, as PARAKH's hpc-credit page applies it (Preparatory, Middle), per subject row:
+#   HPC credit      = sum over Awareness, Sensitivity, Creativity of formativeCreditsPerCompetency[level]
+#                     (each subject's own table; the NCF hours are already in these numbers - hpcMaxCredits is
+#                     the subject's share of the year's hours - so nothing is weighted by hours again)
+#   summative (SA)  = marks obtained / max marks x saCredits (0 when the subject has no SA)
+#   total credit    = HPC credit + SA credit
+#   credit points   = total credit x the grade's nationalCreditLevel (Grade 3/4/5: 0.6/0.8/1.0,
+#                     Grade 6/7/8: 1.33/1.67/2.0)
+#   marks           = round(total credit / (hpcMaxCredits + saCredits) x 100)
+# and the Total row is the sum of the rows (credit points too: rounded per row, then added, as PARAKH does - so it
+# can differ by 0.01 from total credit x the factor). Example (Middle, Bagless days, Beginner/Proficient/Beginner):
+# 0.59 + 1.18 + 0.59 = 2.36 credits, 2.36 / 5.33 = 44 marks.
+# PARAKH's own page lists Vocational/Skill Education under the key "vocational-skill-education" but keeps its credits
+# under "skill-education-middle", so the subject earns 0 there; SKILL_KEY_FIX (above) decides whether the app follows it.
+# ---------------------------------------------------------------------------
+
+def verify_tables(stage: str, tables: Dict[str, Any], grade_code: str) -> List[str]:
+    """Problems with a built table3 (Preparatory, Middle): each row's total and points, and the Total row against the
+    sum of the rows. [] when it all adds up."""
+    level = next((g["nationalCreditLevel"] for g in TABLES[stage]["grades"] if grade_code in g["classCodes"]), 0)
+    rows = [r for r in tables.get("table3") or [] if r and r[0] != "Total"]
+    total = next((r for r in tables.get("table3") or [] if r and r[0] == "Total"), None)
+    out = []
+    for name, hpc, sa, earned, points, _marks in rows:
+        if abs(_round2(float(hpc) + float(sa)) - float(earned)) > 0.005:
+            out.append(f"{name}: total credit {earned} is not HPC {hpc} + SA {sa}")
+        if abs(_round2(float(earned) * level) - float(points)) > 0.005:
+            out.append(f"{name}: credit points {points} are not {earned} x {level}")
+    if total is not None:
+        for col, label in ((1, "HPC credit"), (2, "SA credit"), (3, "total credit"), (4, "credit points"), (5, "marks")):
+            summed = sum(_js_round(float(r[col]) * 100) for r in rows) / 100
+            if abs(summed - float(total[col])) > 0.005:
+                out.append(f"Total {label} {total[col]} is not the sum of the rows ({js_str(summed)})")
+    return out
 
 
 # ---------------------------------------------------------------------------

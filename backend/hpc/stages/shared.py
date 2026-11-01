@@ -198,6 +198,7 @@ def make_part_d(stage_key: str, domains: List[str]) -> Part:
         if fd.get("declaration") is not True:
             errors.append("the declaration must be accepted (Yes)")
         fd.update(credit.build_tables(stage_key, ctx.parts.get("part_c") or {}, domains, fd["credit"], ctx.grade_code))
+        errors += credit.verify_tables(stage_key, fd, ctx.grade_code)     # rows and totals add up (C2)
         return {}, errors
 
     return Part("D", "hpc_credit", "HPC Credit", blank, fields, finish)
