@@ -666,3 +666,23 @@ def for_cards(school_id: str, stage: str, session: str, parakh_student_id: str) 
     if relation and name:
         out["a1_guardian_relation"], out["a1_guardian_name"] = relation, name
     return out
+
+
+def card_values(stage: str, record: Dict[str, Any], student_id: str) -> Dict[str, Any]:
+    """common.SCHOOL_VALUES: the school's values for a student's card, found from PARAKH's record (its school UDISE
+    code and academic year). {} when the school has none."""
+    from backend.hpc.portal import stage_code
+    from backend.models.entities import School
+    udise = str((record.get("sch_info") or {}).get("school_udise") or "").strip()
+    session = str((record.get("stu_info") or {}).get("school_cur_ay_code") or record.get("school_cur_ay_code") or "").strip()
+    if not udise or not session:
+        return {}
+    with SessionLocal() as db:
+        school = db.query(School).filter_by(udise_code=udise).first()
+    if school is None:
+        return {}
+    return for_cards(school.id, stage_code(stage).capitalize(), session, student_id)
+
+
+from backend.hpc.stages import common as _common   # noqa: E402  (registered when this module is imported)
+_common.SCHOOL_VALUES = card_values

@@ -61,6 +61,11 @@ def record_age(stu: Dict[str, Any], today: Optional[Any] = None) -> str:
 # (kept up to date by the school's sync). PARAKH's bank is read only while that copy is empty.
 ACTIVITY_SOURCE: Optional[Callable[[str], Dict[int, Dict[str, Any]]]] = None
 
+# What the school has set for a student in the School Register (working days, days present, the parent/guardian on the
+# card, max and obtained marks): set by backend.services.register_data. (stage, PARAKH record, student id) -> {key:
+# value}; these values win over the teacher's (sync.build_payloads), so a teacher cannot change them.
+SCHOOL_VALUES: Optional[Callable[[str, Dict[str, Any], str], Dict[str, Any]]] = None
+
 
 class Lookups:
     """Dropdown lists the portal pages load from its API, fetched once per run."""

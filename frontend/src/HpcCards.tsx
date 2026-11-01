@@ -46,6 +46,7 @@ interface CardField extends FieldMeta {
   portal_value: FieldValue;
   changed: boolean;
   from_levels?: string;            // a Part C note: what the subject's levels give ("" without all three)
+  set_by_school?: boolean;         // the School Register's value (attendance, parent, marks): read only for the teacher
 }
 
 interface CardPart {
@@ -466,7 +467,8 @@ export function HpcCardEditor({ api, stage, studentId, studentName, onClose, onS
                             {f.label}{f.required && <span className="req" title="Required">*</span>}
                             {changed && <span className="changed-dot" title={`On PARAKH: ${Array.isArray(f.portal_value) ? f.portal_value.join(", ") : f.portal_value || "(blank)"}`}>edited</span>}
                           </label>
-                          <FieldInput field={f} value={v} onChange={(nv) => setValue(f.key, nv)} disabled={submitting} />
+                          <FieldInput field={f} value={v} onChange={(nv) => setValue(f.key, nv)} disabled={submitting || !!f.set_by_school} />
+                          {f.set_by_school && <div className="form-hint">Set by the school (School Register)</div>}
                           {f.from_records === "levels" && (f.from_levels
                             ? f.from_levels !== v && (
                               <button type="button" className="btn btn-outline btn-sm" disabled={submitting}

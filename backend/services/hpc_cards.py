@@ -218,8 +218,9 @@ def _common_only(stage: str, lookups: Lookups, key: str) -> None:
 
 
 def common_values(teacher_id: str, session: str, stage: str, student_id: str, lookups) -> Dict[str, Any]:
-    """Bulk-entry answers in a student's draft, as cell values (they prefill the Excel template)."""
-    index = _common_fields(stage, lookups)
+    """Every answer in a student's draft - bulk entry and the card editor alike - as cell values (they go into the
+    class file: the Excel template, and the class sent to PARAKH straight from the app)."""
+    index = _field_index(stage, lookups)
     draft = (load_draft(teacher_id, session, stage, student_id) or {}).get("values") or {}
     return {k: to_cell_value(index[k], v) for k, v in draft.items() if k in index}
 
@@ -314,7 +315,8 @@ def card(client: Portal, owner: str, teacher_id: str, session: str, stage: str, 
     data = sync.fetch_student(client, stage, student_id)
     portal_row = sync.to_row(stage, data, lookups)
     draft = load_draft(teacher_id, session, stage, student_id)
-    row = {**portal_row, **((draft or {}).get("values") or {})}
+    locked = sync.school_values(stage, data)              # set by the school in the School Register: read only here
+    row = {**portal_row, **((draft or {}).get("values") or {}), **locked}
     index = _field_index(stage, lookups)
     errors = _part_errors(stage, data, {**portal_row, **_cell_values(stage, index, (draft or {}).get("values") or {})},
                           lookups, _resolver(teacher_id, stage, lookups))
@@ -326,7 +328,9 @@ def card(client: Portal, owner: str, teacher_id: str, session: str, stage: str, 
         for f in p.fields(lookups):
             fields.append({**field_meta(f), "value": to_api_value(f, row.get(f.key)),
                            "portal_value": to_api_value(f, portal_row.get(f.key)),
-                           "changed": draft is not None and f.key in draft["values"]})
+                           "changed": (draft is not None and f.key in draft["values"]) or
+                                      (f.key in locked and str(locked[f.key]) != str(portal_row.get(f.key, ""))),
+                           **({"set_by_school": True} if f.key in locked else {})})
             if record_kind(f.label, f.key) == "levels":       # the note the levels give, to use or compare
                 fields[-1]["from_levels"] = notes.note(notes.note_key(f.key), notes.levels_from_row(row, notes.note_key(f.key)),
                                                        f.max_len, notes.activity_names(_part_b(stage, data.raw_parts))

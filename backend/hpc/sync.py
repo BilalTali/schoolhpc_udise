@@ -75,6 +75,17 @@ def to_row(stage: str, data: StudentData, lookups: Lookups) -> Dict[str, Any]:
     return row
 
 
+def school_values(stage: str, data: "StudentData") -> Dict[str, Any]:
+    """The card values the school set for this student in the School Register ({} when none, or no register)."""
+    from backend.hpc.stages import common
+    if common.SCHOOL_VALUES is None:
+        return {}
+    try:
+        return common.SCHOOL_VALUES(stage, data.record or {}, str(data.student_id)) or {}
+    except Exception:                                   # the register must never stop a save
+        return {}
+
+
 def build_payloads(stage: str, data: StudentData, row: Dict[str, Any], lookups: Lookups,
                    resolve: Optional[activity_grid.Resolver] = None):
     """Returns (payloads in save order, errors). Pure: does not touch the portal.
@@ -82,6 +93,7 @@ def build_payloads(stage: str, data: StudentData, row: Dict[str, Any], lookups: 
     st = get_stage(stage)
     errors: List[str] = []
     parts = {}
+    row = {**row, **school_values(stage, data)}         # the School Register's values win (the teacher cannot change them)
     for part in st.PARTS:
         fd = part.load(data.raw_parts.get(part.col))
         for f in part.fields(lookups):

@@ -25,6 +25,7 @@ from backend.routers.platform import router as platform_router
 from backend.routers.schools import router as schools_router
 from backend.routers.teachers import router as teachers_router
 from backend.services.activity_library import recover_interrupted_syncs
+import backend.services.register_data  # noqa: F401,E402  (the School Register's values reach every card save)
 from backend.services.safe_paths import UnsafePath
 from backend.services.upload_jobs import recover_interrupted_jobs
 

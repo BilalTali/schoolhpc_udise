@@ -122,7 +122,8 @@ def assess(stage: str, data: sync.StudentData, lookups, dashboard: Dict[str, Any
     st = get_stage(stage)
     part_b = next(p for p in st.PARTS if p.code == "B")
     portal_row = sync.to_row(stage, data, lookups)
-    row = {**portal_row, **class_settings.row_values(stage, settings), **(common or {}), **dashboard}
+    row = {**portal_row, **class_settings.row_values(stage, settings), **(common or {}), **dashboard,
+           **sync.school_values(stage, data)}                 # the School Register's values win, as in every save
     _, errors = sync.build_payloads(stage, data, row, lookups, resolve)
     prefix = f"{part_b.title}: "
     part_b_problems = [e[len(prefix):] for e in errors if e.startswith(prefix)]

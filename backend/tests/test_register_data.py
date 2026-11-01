@@ -210,3 +210,39 @@ def test_mother_as_the_name_on_the_card_uses_the_one_name_column(world):
     assert cards["a1_guardian_relation"] == "Mother" and cards["a1_guardian_name"] == "SHAHEENA BEGUM"
     again = _book(client, h)["Preparatory"]                                           # shown again in the next download
     assert again.cell(row=3, column=10).value == "Mother" and again.cell(row=3, column=11).value == "SHAHEENA BEGUM"
+
+
+def test_phase3_a_save_to_parakh_carries_the_schools_values_over_the_teachers(world):
+    """Every save path (card editor, workbook upload, class check) goes through sync.build_payloads: the School
+    Register's values win there, so a teacher cannot change attendance, the parent on the card or marks."""
+    import json as _json
+    import backend.services.register_data  # noqa: F401  (registers the hook, as the app does at start)
+    from backend.hpc import sync
+    from backend.tests.conftest import blank_student, filled_row
+    client, h, _, school_id = world
+    _settings(client, h)
+    wb = _book(client, h)
+    ws = wb["Preparatory"]
+    ws.cell(row=3, column=9, value="ABDUL RASHID")
+    ws.cell(row=3, column=12, value=18)                                              # April present
+    ws.cell(row=3, column=28, value=75)                                              # R1 marks
+    sid = ws.cell(row=3, column=2).value
+    check = _upload(client, h, wb).json()
+    client.post(f"{API}/school/register/data/apply", headers=h, json={"import_id": check["id"], "confirm": True})
+
+    data = blank_student("PREPARATORY")
+    data.student_id = sid
+    data.record.setdefault("sch_info", {})["school_udise"] = "44444444401"
+    data.record.setdefault("stu_info", {})["school_cur_ay_code"] = "2627"
+    row = filled_row("PREPARATORY")
+    row.update({"a1_present_1": 5, "a1_guardian_name": "TEACHER TYPED", "d_1_obtained": 10})   # the teacher's values
+    payloads, _ = sync.build_payloads("PREPARATORY", data, row, make_lookups("PREPARATORY"))
+    a1 = _json.loads(next(p for p in payloads if p["hpc_col"] == "part_a1")["formdata"])
+    assert a1["attn"]["1"][0] == 20 and a1["attn"]["2"][0] == 18                    # school's working days, present
+    assert a1["gen"][24] == "Abdul Rashid" and a1["gen"][23] == "FATHER"           # capitals tidied (A11)
+    d = next(p for p in payloads if p["hpc_col"] == "hpc_credit")["formdata"]
+    d = _json.loads(d) if isinstance(d, str) else d
+    assert [str(v) for v in d["credit"][0]] == ["100", "75"]                         # school's max and marks
+    other = blank_student("PREPARATORY")                                              # another school: untouched
+    payloads, _ = sync.build_payloads("PREPARATORY", other, row, make_lookups("PREPARATORY"))
+    assert _json.loads(next(p for p in payloads if p["hpc_col"] == "part_a1")["formdata"])["attn"]["2"][0] == 5

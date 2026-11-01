@@ -379,6 +379,12 @@ def validate_upload(file: UploadFile = File(...), teacher: Teacher = Depends(req
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Only .xlsx files are supported.")
     path = _upload_path(teacher, file.filename)
     _save_upload(file, path)
+    return ValidationReportResponse(**_check_file(teacher, path, file.filename))
+
+
+def _check_file(teacher: Teacher, path: Path, file_name: str) -> Dict[str, Any]:
+    """Checks a workbook on the server against PARAKH (nothing written) and keeps the result for Sync: who is
+    ready, who is held back and why. The uploaded file and the class sent straight from the app share this."""
     _workbook_stages(teacher, path)
     try:
         report = upload_jobs.check_workbook(_portal(teacher), path, teacher.id)
@@ -389,12 +395,12 @@ def validate_upload(file: UploadFile = File(...), teacher: Teacher = Depends(req
         if e.get("student_id") and e["student_id"] not in report["ready_students"]:
             held.setdefault(e["student_id"], []).append(f"{e.get('column') or e.get('sheet')}: {e['message']}")
     shown = {k: v for k, v in report.items() if k != "ready_students"}
-    shown.update(file_name=file.filename, checked_at=datetime.utcnow().isoformat(timespec="seconds") + "Z")
-    _checked_path(teacher, file.filename).write_text(json.dumps({   # Sync sends exactly these students
+    shown.update(file_name=file_name, checked_at=datetime.utcnow().isoformat(timespec="seconds") + "Z")
+    _checked_path(teacher, file_name).write_text(json.dumps({   # Sync sends exactly these students
         "file_hash": hashlib.sha256(path.read_bytes()).hexdigest(), "ready": report["ready_students"],
         "held": {sid: "; ".join(m)[:4000] for sid, m in held.items()}, "report": shown,
         "blocked": bool(report["ready_students"]) and not report["is_valid"]}), encoding="utf-8")   # Settings sheet
-    return ValidationReportResponse(**shown)
+    return shown
 
 
 @router.get("/upload/checked")
@@ -445,6 +451,31 @@ def submit_upload(file_name: str, background_tasks: BackgroundTasks, teacher: Te
     if not ready:
         raise HTTPException(status.HTTP_409_CONFLICT, "Every complete student in this file is already saved with these answers.")
     return _start_job(teacher, db, background_tasks, file_name, path, only=ready, held=found.get("held") or {})
+
+
+@router.post("/send/{stage}", response_model=UploadJobResponse)
+def send_class(stage: str, background_tasks: BackgroundTasks, teacher: Teacher = Depends(require_teacher),
+               db: Session = Depends(get_db)):
+    """Saves the class to PARAKH straight from what is chosen in the app - no Excel to download or upload. Needs the
+    class check (Download template -> Check) finished: its ready students are put in a file on the server, checked
+    against PARAKH exactly like an uploaded file, then saved by the usual upload (progress, verify, retry). The
+    School Register's values (attendance, parent on the card, marks) go in with every save."""
+    from backend.routers.class_template import _labels
+    from backend.services import class_template
+    stage = _stage(teacher, stage)
+    job = class_template.latest(teacher.id, stage)
+    if not job or job.get("status") != "COMPLETED":
+        raise HTTPException(status.HTTP_409_CONFLICT, "Check the class first (Excel & upload -> Check the class), "
+                                                      "then send it to PARAKH.")
+    if not any(r.get("ready") for r in job.get("results") or []):
+        raise HTTPException(status.HTTP_409_CONFLICT, "No student is ready yet: the class check lists what is missing.")
+    file_name = f"HPC_{stage}_sent_from_app.xlsx"
+    path = _upload_path(teacher, file_name)
+    class_template.build_download(teacher, stage, False, path, _labels(teacher, stage), None)
+    _check_file(teacher, path, file_name)
+    from backend.services import audit
+    audit.record(f"teacher:{teacher.id}", "send_class", "upload", stage, None, {"stage": stage})
+    return submit_upload(file_name, background_tasks, teacher, db)
 
 
 def _start_job(teacher: Teacher, db: Session, background_tasks: BackgroundTasks, file_name: str, path,

@@ -534,3 +534,30 @@ def test_a_file_with_only_the_students_the_teacher_chose(world, tmp_path):
     assert set(workbook.read(path)) == {"3001", "3003"}                    # 3003 is not ready: in, because chosen
     assert client.get(f"{API}/teacher/template/Preparatory/download",
                       params={"students": "9999"}).status_code == 409    # nobody chosen is in the check
+
+
+# ---------------------------------------------------------------------------
+# Send the class to PARAKH straight from the app (no Excel)
+# ---------------------------------------------------------------------------
+
+def test_send_class_needs_a_finished_check(world):
+    client, *_ = world
+    r = client.post(f"{API}/teacher/send/Preparatory")
+    assert r.status_code == 409 and "Check the class first" in r.json()["detail"]
+
+
+def test_send_class_saves_the_ready_students_through_the_usual_upload(world):
+    client, portal, lookups, teacher, _ = world
+    client.put(f"{API}/teacher/settings/Preparatory", json={"values": SETTINGS})
+    whole = {k: v for k, v in filled_row("PREPARATORY").items() if not k.startswith(("b_act_", "b_lvl_", "b_replace"))}
+    hpc_cards.save_draft(teacher.id, portal.ay, "Preparatory", "3001", {**whole, **grid(), **ANSWERS})   # every part
+    hpc_cards.save_draft(teacher.id, portal.ay, "Preparatory", "3003", grid())                        # not ready
+    job = run_check(client)
+    assert {s["student_id"] for s in job["students"] if s["ready"]} == {"3001", "3004"}
+    sent = client.post(f"{API}/teacher/send/Preparatory")
+    assert sent.status_code == 200, sent.text
+    job_id = sent.json()["job_id"]
+    saved_ids = {sid for _, sid, _ in portal.saved}
+    assert "3001" in saved_ids and "3003" not in saved_ids                         # only complete cards reach PARAKH
+    after = next(j for j in client.get(f"{API}/teacher/upload/jobs").json() if j["job_id"] == job_id)
+    assert after["status"] in ("COMPLETED", "PARTIAL_SUCCESS") and after["success_count"] >= 1

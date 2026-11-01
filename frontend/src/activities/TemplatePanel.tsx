@@ -131,6 +131,28 @@ export function TemplatePanel({ api, stage, total, onFix, onOpenSettings }: {
     }
   };
 
+  // the ready students straight to PARAKH: the server makes the class file, checks it against PARAKH exactly like
+  // an upload, and saves it with the usual upload (its progress shows under Excel & upload)
+  const [sent, setSent] = useState<string | null>(null);
+  const send = async () => {
+    const ready = status?.job?.ready ?? 0;
+    const ok = await confirm({ title: "Save to PARAKH now?", confirmLabel: "Save to PARAKH",
+      message: `The ${ready} ready student${ready === 1 ? "" : "s"} are checked against PARAKH and saved there, with what you chose in the app and the school's attendance and marks. A card that is not complete is not sent.` });
+    if (!ok) return;
+    setBusy(true);
+    setError(null);
+    setSent(null);
+    try {
+      const r = await call<{ total_students: number }>(api, "POST", `/teacher/send/${stage}`);
+      setSent(`Saving ${r.total_students} student${r.total_students === 1 ? "" : "s"} to PARAKH - the progress and any problems show in the upload list below.`);
+      window.dispatchEvent(new CustomEvent("hpc-upload-started"));
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const job = status?.job;
   const running = job?.status === "RUNNING";
   const settingsOk = !!status?.settings_complete;
@@ -178,6 +200,10 @@ export function TemplatePanel({ api, stage, total, onFix, onOpenSettings }: {
       </div>
 
       <div className="tp-row">
+        <button type="button" className="btn btn-primary" onClick={send} disabled={!!why || busy}
+                title="No Excel: the ready students go to PARAKH straight from what is chosen in the app">
+          <CheckCircle2 size={15} aria-hidden="true" /> Save ready students to PARAKH ({job?.status === "COMPLETED" ? job.ready : "?"})
+        </button>
         <button type="button" className="btn btn-green" onClick={() => download(false)} disabled={!!why || busy}
                 aria-describedby={why ? "tp-why" : undefined}>
           <Download size={15} aria-hidden="true" /> Download template ({job?.status === "COMPLETED" ? `${job.ready} of ${job.total}` : `? of ${total}`} students)
@@ -192,6 +218,7 @@ export function TemplatePanel({ api, stage, total, onFix, onOpenSettings }: {
         </button>
         {why && <span id="tp-why" className="lib-muted">{why}</span>}
       </div>
+      {sent && <p className="tp-summary" role="status"><CheckCircle2 size={16} color="#046A38" aria-hidden="true" /> {sent}</p>}
 
       {picking && job?.status === "COMPLETED" && (
         <div className="tp-pick" role="group" aria-label="Choose the students for the file">
