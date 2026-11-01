@@ -196,6 +196,8 @@ class HpcSessionStatusResponse(BaseModel):
     school: Optional[str] = None
     role: Optional[str] = None
     reason: Optional[str] = None
+    checked: bool = False                        # PARAKH was asked just now (a saved session alone is not proof)
+    ended: bool = False                          # PARAKH no longer accepts the saved session
     has_credentials: bool = False
     saved_hpc_login_id: Optional[str] = None
     stages: List[str] = []          # stages the teacher can work with (app + portal)

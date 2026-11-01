@@ -343,7 +343,7 @@ KIND = "school"
 
 @router.get("/hpc/status", response_model=HpcSessionStatusResponse)
 def get_school_hpc_status(admin: School = Depends(require_school_admin)):
-    result = hpc_sessions.status_of(KIND, admin.id)
+    result = hpc_sessions.status_of(KIND, admin.id, check=True)
     return HpcSessionStatusResponse(
         logged_in=result["logged_in"], user=result.get("user"), school=result.get("school"),
         role=result.get("role"), reason=result.get("reason"), captcha_mode=result.get("captcha_mode", "typed"),

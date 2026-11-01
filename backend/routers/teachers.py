@@ -75,7 +75,7 @@ def _workbook_path(teacher: Teacher):
 
 @router.get("/hpc/status", response_model=HpcSessionStatusResponse)
 def hpc_status(teacher: Teacher = Depends(require_teacher)):
-    result = hpc_sessions.status_of(KIND, teacher.id)
+    result = hpc_sessions.status_of(KIND, teacher.id, check=True)
     return HpcSessionStatusResponse(
         logged_in=result["logged_in"], user=result.get("user"), school=result.get("school"),
         role=result.get("role"), reason=result.get("reason"), captcha_mode=result.get("captcha_mode", "typed"),

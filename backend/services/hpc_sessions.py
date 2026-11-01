@@ -10,7 +10,7 @@ With HPC_AUTO_CAPTCHA (unsupported) the app reads the captcha itself instead.
 import json
 import time
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 from fastapi import HTTPException, status
 
@@ -71,6 +71,7 @@ def save_session(kind: str, entity_id: str, sess: portal.Session) -> None:
     tmp = path.with_suffix(".tmp")
     tmp.write_text(secrets_box.encrypt(json.dumps(sess.__dict__)), encoding="utf-8")
     tmp.replace(path)
+    _LIVE.pop(f"{kind}_{entity_id}", None)        # a new or renewed session: check it afresh
 
 
 def load_session(kind: str, entity_id: str) -> Optional[portal.Session]:
@@ -106,12 +107,60 @@ def prune_uploads() -> int:
     return removed
 
 
-def status_of(kind: str, entity_id: str) -> Dict[str, Any]:
+LIVE_TTL = 90                                   # seconds a live check of a PARAKH session is trusted
+_LIVE: Dict[str, Tuple[float, Optional[bool], str]] = {}
+
+
+def check_live(kind: str, entity_id: str, sess: portal.Session) -> Tuple[Optional[bool], str]:
+    """Asks PARAKH whether the saved session still works (one small read; a renewal with its refresh token is tried
+    and saved). (True, ""), (False, why) when PARAKH refuses it - the saved session is then removed - or
+    (None, why) when PARAKH did not answer. Remembered for LIVE_TTL seconds."""
+    key = f"{kind}_{entity_id}"
+    hit = _LIVE.get(key)
+    if hit and time.time() - hit[0] < LIVE_TTL:
+        return hit[1], hit[2]
+    client = portal.Portal(sess, on_refresh=lambda s: save_session(kind, entity_id, s))
+    client.READ_TRIES = 1                       # a status check must answer quickly
+    try:
+        if (sess.staff.get("role") or "").upper() == "SCHOOL":
+            client.school_hpc_page("Preparatory", page_no=1, page_size=1)
+        else:
+            stages = sess.staff.get("hpc_stage") or []
+            client.roster_page(next((s for s in ("Preparatory", "Middle", "Foundational") if s.upper() in stages), "Preparatory"),
+                               page_no=1, page_size=1)
+        result = (True, "")
+    except portal.PortalError as exc:
+        if getattr(client, "last_status", None) == 401:
+            end(kind, entity_id)                # PARAKH refused it even after a renewal: it has ended
+            result = (False, "The PARAKH session has ended (PARAKH no longer accepts it). Connect again.")
+        else:
+            result = (None, str(exc))
+    _LIVE[key] = (time.time(), *result)
+    return result
+
+
+def status_of(kind: str, entity_id: str, check: bool = False) -> Dict[str, Any]:
+    """The saved PARAKH session; with check, as PARAKH says now (a saved file alone is not a working session).
+    Without check, a recent live check is still used."""
     sess = load_session(kind, entity_id)
     mode = "automatic (unsupported)" if AUTO_CAPTCHA else "typed"
     if not sess:
-        return {"logged_in": False, "reason": "No HPC session yet. Click 'Start Session'.", "captcha_mode": mode}
-    return {"logged_in": True, "user": sess.name, "school": sess.school_name, "role": sess.role, "captcha_mode": mode}
+        return {"logged_in": False, "reason": "Not connected to PARAKH.", "captcha_mode": mode, "checked": True}
+    hit = _LIVE.get(f"{kind}_{entity_id}")
+    recent = bool(hit) and time.time() - hit[0] < LIVE_TTL
+    if check:
+        ok, why = check_live(kind, entity_id, sess)
+    elif recent:
+        ok, why = hit[1], hit[2]
+    else:
+        ok, why = True, ""                     # not asked (lists of many teachers): the saved session as it is
+    if ok is False:
+        return {"logged_in": False, "reason": why, "captcha_mode": mode, "checked": True, "ended": True}
+    out = {"logged_in": True, "user": sess.name, "school": sess.school_name, "role": sess.role, "captcha_mode": mode,
+           "checked": ok is True and (check or recent)}
+    if ok is None:
+        out["reason"] = f"Could not check with PARAKH just now: {why}"
+    return out
 
 
 def start(kind: str, entity_id: str, login_id: str, password: str) -> Dict[str, Any]:
@@ -218,6 +267,7 @@ def verify_otp(kind: str, entity_id: str, otp: str) -> Dict[str, Any]:
 
 
 def end(kind: str, entity_id: str) -> Dict[str, Any]:
+    _LIVE.pop(f"{kind}_{entity_id}", None)
     path = session_path(kind, entity_id)
     if path.exists():
         path.unlink()
