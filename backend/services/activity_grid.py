@@ -413,3 +413,68 @@ def import_old_layout(client: Portal, teacher, stage: str, students: List[Dict[s
                      {"cells": cells, "students": len(plans)})
     return {"applied": apply, "cells": cells, "students": len(plans),
             "not_available": unknown, "names": [s.get("student_name", "") for s, _ in plans]}
+
+
+def mix_all(client: Portal, teacher, stage: str, students: List[Dict[str, Any]], apply: bool,
+            seed: Optional[str] = None) -> Dict[str, Any]:
+    """Global Mix, the Activities grid part: every empty cell of every student is filled - each subject an activity
+    of that subject and the student's grade from the library (when there are several, they are dealt in turn over
+    the students, so each is used about equally) and each empty level Beginner / Proficient / Advanced dealt the
+    same way. A cell the teacher chose is kept; a student whose activities on PARAKH share subjects is skipped (as in
+    quick fill). Without apply it only counts."""
+    session = hpc_cards.check_session(client, None, writing=apply)
+    st, subjects, names = _stage_info(stage)
+    entries, labels, resolve = _context(client, teacher, stage)
+    seed = seed or secrets.token_hex(4)
+    raw = _portal_parts(client, teacher.id, stage, students, False)
+    pools: Dict[tuple, List[str]] = {}
+    any_subject: List[str] = []                        # PARAKH's own lists (no library yet): subjects not known
+    for e in entries:
+        if e.get("subjects") is None:
+            any_subject.append(e["key"])
+        for subj in e.get("subjects") or []:
+            pools.setdefault((e.get("grade_id"), subj), []).append(e["key"])
+    rounds: Dict[tuple, List[str]] = {}
+
+    def deal(pool_key: tuple, pool: List[str]) -> str:
+        if not rounds.get(pool_key):
+            rounds[pool_key] = sorted(pool)
+            random.Random(f"{seed}:{stage}:{pool_key}:{len(rounds)}").shuffle(rounds[pool_key])
+        return rounds[pool_key].pop()
+
+    plans, skipped, no_activity, cells = [], [], set(), 0
+    for s in sorted(students, key=lambda x: str(x["student_id"])):
+        sid = s["student_id"]
+        row = student_row(stage, s, raw[sid], hpc_cards.load_draft(teacher.id, session, stage, sid), resolve, labels)
+        if row["locked"] and not row["replace"]:
+            skipped.append({"student_id": sid, "student_name": row["student_name"],
+                            "reason": "Its activities on PARAKH share subjects. Tick 'Replace' for this student first."})
+            continue
+        change: Dict[str, str] = {}
+        for subj in subjects:
+            key = grid.act_key(subj)
+            current = row["values"].get(key)
+            entry = next((e for e in entries if e["key"] == current), None)
+            kept = current and row["source"].get(key) != "default" and entry is not None \
+                and (entry.get("subjects") is None or subj in entry["subjects"]) and not wrong_grade(stage, entry, row["grade_id"])
+            if not kept:
+                pool = pools.get((row["grade_id"], subj)) or any_subject
+                if not pool:                                   # the library has none: the grid's own default, if any
+                    fallback = (grid.defaults_for(resolve, row["grade_id"]) or {}).get(subj)
+                    if fallback:
+                        change[key] = fallback
+                    else:
+                        no_activity.add(f"{row['grade'] or 'no grade'}: {names[subj]}")
+                elif current != (chosen := deal((row["grade_id"], subj), pool)) or row["source"].get(key) == "default":
+                    change[key] = chosen
+            for ability, _ in grid.ABILITIES:
+                lkey = grid.level_key(subj, ability)
+                if not row["values"].get(lkey):
+                    change[lkey] = deal(("level", subj, ability), list(grid.LEVEL_TO_PORTAL))
+        if change:
+            plans.append((s, change))
+            cells += len(change)
+    if apply:
+        for s, change in plans:
+            hpc_cards.save_draft(teacher.id, session, stage, s["student_id"], change)
+    return {"cells": cells, "students": len(plans), "skipped": skipped, "no_activity": sorted(no_activity), "seed": seed}

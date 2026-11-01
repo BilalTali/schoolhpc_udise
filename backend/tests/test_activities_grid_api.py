@@ -293,3 +293,40 @@ def test_quick_fill_mixed_levels_apply_exactly_what_the_preview_showed(grid_clie
     for subj in SUBJ:                                    # two students, a shuffled round: never the same twice
         assert by_id["1001"]["values"][f"b_lvl_{subj}_awareness"] != by_id["1002"]["values"][f"b_lvl_{subj}_awareness"]
     assert client.post(url, json={**body, "levels": {"awareness": "Random"}}).status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# Global Mix (emergency): every empty answer of the class in one go
+# ---------------------------------------------------------------------------
+
+def test_global_mix_fills_every_empty_answer_and_keeps_what_was_chosen(grid_client, monkeypatch):
+    import copy as _copy
+    client, portal, _ = grid_client
+    lookups = hpc_cards.lookups_for(None, None, "Preparatory")
+    lookups.activities[86] = {**_copy.deepcopy(lookups.activities[85]), "id": 86, "activity_caption": "Bank 86"}
+    grade = activity_grid.grade_id_of("Preparatory", {"grade": "Grade 5"})
+    entries = [{"key": k, "label": k, "subjects": list(SUBJ), "grade_id": grade} for k in ("P85", "P86")]
+    from backend.hpc.stages import activity_grid as grid_rules
+    monkeypatch.setattr(activity_grid, "_context", lambda c, t, st: (entries, {e["key"]: e["key"] for e in entries},
+                                                                         grid_rules.resolver_from_lookups(lookups)))
+    url = f"{API}/teacher/activities-grid/Preparatory/global-mix"
+    preview = client.post(url, json={}).json()
+    assert preview["applied"] is False and preview["grid"]["cells"] > 0 and preview["answers"]["cells"] > 0
+    done = client.post(url, json={"apply": True, "seed": preview["seed"]}).json()
+    assert done["applied"] is True and done["grid"]["cells"] == preview["grid"]["cells"]
+    assert [s["student_id"] for s in done["grid"]["skipped"]] == ["1003"]          # shares subjects on PARAKH
+    _, by_id = rows(client)
+    empty = by_id["1001"]["values"]
+    assert {empty[f"b_act_{s}"] for s in SUBJ} <= {"P85", "P86"}                    # an activity for every subject
+    assert all(empty[f"b_lvl_{s}_{a}"] in ("Beginner", "Proficient", "Advanced")
+               for s in SUBJ for a in ("awareness", "sensitivity", "creativity"))
+    assert by_id["1002"]["values"]["b_act_PSLS1"] == "P85"                          # PARAKH's activity kept
+    fields = {f["key"] for f in done["answers"]["fields"]}
+    assert "c_PSLS1_awareness" in fields and "c_PSLS1_remark" in fields and "a2_fav_festival" in fields
+    assert "a1_mother_tongue" not in fields                                          # a fact: left to the teacher
+    note = client.get(f"{API}/teacher/hpc-cards/Preparatory/bulk", params={"field": "c_PSLS1_remark"}).json()["rows"]
+    assert all(r["value"].startswith("Strength - ") for r in note)                  # written from the mixed levels
+    festival = client.get(f"{API}/teacher/hpc-cards/Preparatory/bulk", params={"field": "a2_fav_festival"}).json()["rows"]
+    assert {r["value"] for r in festival} <= {"Eid ul Fitr", "Eid ul Zuha"}
+    again = client.post(url, json={"apply": True}).json()                           # nothing empty is left
+    assert again["grid"]["cells"] == 0 and again["answers"]["cells"] == 0

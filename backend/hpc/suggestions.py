@@ -50,7 +50,7 @@ SUGGESTIONS: Dict[str, List[str]] = {
     "a2_fav_animal": ["Dog", "Cat", "Cow", "Rabbit", "Parrot"],
     "a2_fav_subject": ["Maths", "English", "Drawing", "Urdu", "Science"],
     "a2_fav_games": ["Cricket and hide-and-seek", "Football", "Kabaddi", "Carrom and chess", "Running races"],
-    "a2_fav_festival": ["Eid", "Diwali", "Holi", "Lohri", "Christmas", "Independence Day"],
+    "a2_fav_festival": ["Eid ul Fitr", "Eid ul Zuha"],
     "a2_learn_1": _LEARN, "a2_learn_2": _LEARN, "a2_learn_3": _LEARN,
     "a2_idol": ["My mother", "My father", "My teacher", "My grandfather", "Dr A. P. J. Abdul Kalam"],
     # Part A2 - all about me and goals (Middle)

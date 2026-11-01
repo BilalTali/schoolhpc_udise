@@ -157,6 +157,39 @@ export function TemplatePanel({ api, stage, total, onFix, onOpenSettings }: {
   const running = job?.status === "RUNNING";
   const settingsOk = !!status?.settings_complete;
   const notReady = job?.status === "COMPLETED" ? job.students.filter((s) => !s.ready) : [];
+  // Global Mix (emergency): every EMPTY answer of the class in one go - activities from the library (dealt across
+  // students), levels, every class-wide question and Part C (notes from its levels). Facts and anything already
+  // entered are kept. Preview first, then apply, then the class is checked.
+  const [mixMsg, setMixMsg] = useState<string | null>(null);
+  const globalMix = async () => {
+    setError(null);
+    setMixMsg(null);
+    setBusy(true);
+    try {
+      type Mix = { seed: string; grid: { cells: number; students: number; skipped: { student_name: string }[]; no_activity: string[] };
+                   answers: { cells: number; students: number; skipped: { label: string; reason: string }[] } };
+      const preview = await call<Mix>(api, "POST", `/teacher/activities-grid/${stage}/global-mix`, {});
+      if (!preview.grid.cells && !preview.answers.cells) {
+        setMixMsg("Nothing to mix: every answer that can be mixed is already filled.");
+        return;
+      }
+      const notes = [preview.grid.skipped.length ? `${preview.grid.skipped.length} student(s) skipped (their activities on PARAKH share subjects)` : "",
+                     preview.grid.no_activity.length ? `no library activity for: ${preview.grid.no_activity.join(", ")}` : ""].filter(Boolean);
+      const ok = await confirm({ title: "Global Mix: fill every empty answer?", confirmLabel: "Mix and fill",
+        message: `Fills ${preview.grid.cells} activity/level cells and ${preview.answers.cells} answers at random for the whole class. `
+          + "Only empty answers are filled; nothing you entered changes. Mother tongue, names and other facts are not filled. "
+          + "Use it only when there is no time to fill the cards properly." + (notes.length ? ` (${notes.join("; ")})` : "") });
+      if (!ok) return;
+      const done = await call<Mix>(api, "POST", `/teacher/activities-grid/${stage}/global-mix`, { apply: true, seed: preview.seed });
+      setMixMsg(`Filled ${done.grid.cells} activity/level cells and ${done.answers.cells} answers. Checking the class now - then "Save ready students to PARAKH".`);
+      await startCheck();
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const why = !settingsOk ? "Finish the class settings first." : !job || job.status !== "COMPLETED" ? "Check the class first."
     : job.ready === 0 ? "No student's Part B is complete yet - see the list below." : "";
 
@@ -174,6 +207,10 @@ export function TemplatePanel({ api, stage, total, onFix, onOpenSettings }: {
       )}
 
       <div className="tp-row">
+        <button type="button" className="btn btn-outline" onClick={globalMix} disabled={running || preBusy || busy}
+                title="Emergency: fills every empty answer of the class at random (activities, levels, A-C)">
+          <RefreshCw size={14} aria-hidden="true" className={busy ? "spin" : ""} /> Global Mix (fill all empty)
+        </button>
         <button type="button" className="btn btn-outline" onClick={check} disabled={running || preBusy}>
           <RefreshCw size={14} aria-hidden="true" className={running || preBusy ? "spin" : ""} />
           {preBusy ? " Looking for empty answers…" : job ? " Check the class again" : " Check the class"}
@@ -218,6 +255,7 @@ export function TemplatePanel({ api, stage, total, onFix, onOpenSettings }: {
         </button>
         {why && <span id="tp-why" className="lib-muted">{why}</span>}
       </div>
+      {mixMsg && <p className="tp-summary" role="status"><CheckCircle2 size={16} color="#046A38" aria-hidden="true" /> {mixMsg}</p>}
       {sent && <p className="tp-summary" role="status"><CheckCircle2 size={16} color="#046A38" aria-hidden="true" /> {sent}</p>}
 
       {picking && job?.status === "COMPLETED" && (

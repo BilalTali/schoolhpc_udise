@@ -109,3 +109,33 @@ def quick_fill(stage: str, payload: QuickFillRequest, teacher: Teacher = Depends
     return _call(activity_grid.quick_fill, _portal(teacher), teacher, stage, students, payload.activity_key,
                  payload.subjects, dict(payload.levels), payload.replace_filled, payload.apply, payload.expected_cells,
                  payload.replace_on_parakh, payload.mix_seed)
+
+
+class GlobalMixRequest(BaseModel):
+    apply: bool = False
+    seed: Optional[str] = Field(None, max_length=32, description="the seed the preview returned")
+
+
+@router.post("/{stage}/global-mix")
+def global_mix(stage: str, payload: GlobalMixRequest, teacher: Teacher = Depends(require_teacher)):
+    """Global Mix (for emergencies): fills every EMPTY answer of the whole class in one go - an activity per subject
+    from the library (dealt across students when there are several), every level, and every class-wide question
+    (A1-A4, Part B's answers, Part C's levels and notes - written from those levels). Facts about a student (mother
+    tongue, names ...) are never mixed. Nothing typed or chosen is changed. Without apply it only counts; afterwards
+    'Check the class' and 'Save ready students to PARAKH' as usual."""
+    from backend.services import audit, hpc_cards
+    stage = _stage(teacher, stage)
+    students = _students(teacher, stage)
+    client = _portal(teacher)
+    grid_part = _call(activity_grid.mix_all, client, teacher, stage, students, payload.apply, payload.seed)
+    session = hpc_cards.check_session(client, None, writing=payload.apply)
+    owner = f"teacher_{teacher.id}"
+    lookups = hpc_cards.lookups_for(owner, client, stage)
+    keys = list(hpc_cards._common_fields(stage, lookups))
+    answers = _call(hpc_cards.bulk_mix, client, owner, teacher.id, session, stage, keys, False, payload.apply)
+    if payload.apply:
+        audit.record(f"teacher:{teacher.id}", "global_mix", "activities_grid", stage, None,
+                     {"grid_cells": grid_part["cells"], "answers": answers["cells"]})
+    return {"applied": payload.apply, "seed": grid_part["seed"], "grid": grid_part,
+            "answers": {"cells": answers["cells"], "students": answers["students"],
+                        "fields": [f for f in answers["fields"] if f["filled"]], "skipped": answers["skipped"]}}
