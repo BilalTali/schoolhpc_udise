@@ -4,7 +4,7 @@ School Register, phase 2 (docs/school_register_plan.md): what the school sets an
 settings   per stage and session: working days per month (April..March) and summative max marks per subject.
            Teachers read them. Every save is a new version (the older ones are kept).
 workbook   "School Data" Excel: an Instructions sheet, one sheet per stage with every register student - their PARAKH
-           identity (locked), father's / mother's name (from UDISE+ where a student matches, else what was entered),
+           identity (locked), father's name (from UDISE+ where a student matches, else what was entered),
            whose name the HPC card shows, days present per month (absent and % worked out), marks obtained. A hidden
            sheet names the template, school and session.
 check      an uploaded workbook (nothing saved yet): every row matched to its register student by the register id and
@@ -29,14 +29,14 @@ from backend.hpc.stages.common import MONTH_DAYS, MONTH_NAMES, MONTHS
 from backend.models.register import (RegisterImport, RegisterSetting, RegisterSettingVersion, RegisterStudent,
                                      RegisterStudentData)
 
-TEMPLATE = "school-data-v1"
+TEMPLATE = "school-data-v2"            # v2: no mother's name column (one name column for Mother / Guardian)
 STAGES = ["Foundational", "Preparatory", "Middle"]
 RELATIONS = ["Father", "Mother", "Guardian"]
 NAME_MAX = 50                                         # PARAKH's limit for the parent/guardian name on the card
 NAME_RULE = re.compile(r"^[A-Za-z][A-Za-z .'\-]*$")
 IDENTITY = ["Register ID", "PARAKH ID", "Student name (PARAKH)", "Class", "Section", "APAAR ID", "Date of birth",
             "Admission no."]
-PARENTS = ["Father's name", "Mother's name", "Name on the HPC card", "Guardian's name (if Guardian)"]
+PARENTS = ["Father's name", "Name on the HPC card", "Mother's or guardian's name (if chosen)"]
 
 
 class Problem(ValueError):
@@ -292,9 +292,10 @@ def workbook(school_id: str) -> Tuple[bytes, str]:
     lines = [f"School Data, academic year {session[:2]}-{session[2:]} (template {TEMPLATE})", "",
              "1. One sheet per stage, one row per student as PARAKH lists them. Do not change the grey columns: "
              "the PARAKH ID and name identify the student.",
-             f"2. Parents: father's and mother's names (filled from UDISE+ as read on {parents_when or 'never'}, where "
+             f"2. Parents: the father's name (filled from UDISE+ as read on {parents_when or 'never'}, where "
              "the student was found there). "
-             "'Name on the HPC card' says whose name PARAKH's card shows; choose Guardian to give another name.",
+             "'Name on the HPC card' says whose name PARAKH's card shows (empty: the father); for Mother or Guardian "
+             "write that name in the next column.",
              "3. Days present per month: a whole number, at most the month's working days (in the column heading, "
              "set by the school in the app). Leave a month empty when there is no data - it is never taken as 0.",
              "4. Marks obtained: at most the subject's max marks (in the heading). Leave empty when not yet known.",
@@ -345,8 +346,8 @@ def workbook(school_id: str) -> Tuple[bytes, str]:
             udise = parents.get(s.id, {})
             values = [s.id, s.parakh_student_id, s.student_name, s.grade, s.section, s.apaar_id, s.dob, s.admission_number,
                       (d.father_name if d and d.father_name else udise.get("father")) or None,
-                      (d.mother_name if d and d.mother_name else udise.get("mother")) or None,
-                      (d.guardian_relation if d else None) or None, (d.guardian_name if d else None) or None]
+                      (d.guardian_relation if d else None) or None,
+                      ({"Mother": d.mother_name, "Guardian": d.guardian_name}.get(d.guardian_relation or "") if d else None) or None]
             present = list((d.present if d else None) or []) + [None] * 12
             values += present[:12]
             for c, v in enumerate(values, start=1):
@@ -368,7 +369,7 @@ def workbook(school_id: str) -> Tuple[bytes, str]:
                 cell = ws.cell(row=r, column=total_col + 4 + k, value=marks.get(n))
                 cell.protection, cell.fill = Protection(locked=False), entry
         last = len(rows) + 2
-        rel_col = get_column_letter(len(IDENTITY) + 3)
+        rel_col = get_column_letter(len(IDENTITY) + 2)
         dv = DataValidation(type="list", formula1=f"{quote_sheetname('Lists')}!$A$1:$A$3", allow_blank=True,
                             showErrorMessage=True, errorTitle="Choose from the list", error="Father, Mother or Guardian")
         dv.add(f"{rel_col}3:{rel_col}{last}")
@@ -490,18 +491,15 @@ def check(school_id: str, content: bytes, file_name: str, by: str) -> Dict[str, 
             seen[student.id] = r
             problems: List[str] = []
             father = _name(row[8], "Father's name", problems)
-            mother = _name(row[9], "Mother's name", problems)
-            relation = _text(row[10]).title() or None
+            relation = _text(row[9]).title() or None
             if relation and relation not in RELATIONS:
                 problems.append("Name on the HPC card: Father, Mother or Guardian")
                 relation = None
-            guardian = _name(row[11], "Guardian's name", problems)
-            if relation == "Guardian" and not guardian:
-                problems.append("Name on the HPC card is Guardian: write the guardian's name")
+            other = _name(row[10], "Mother's or guardian's name", problems)
+            if relation in ("Mother", "Guardian") and not other:
+                problems.append(f"Name on the HPC card is {relation}: write the {relation.lower()}'s name")
             if relation == "Father" and not father:
                 problems.append("Name on the HPC card is Father: write the father's name")
-            if relation == "Mother" and not mother:
-                problems.append("Name on the HPC card is Mother: write the mother's name")
             present: List[Optional[int]] = []
             for i, month in enumerate(MONTHS):
                 v = row[first_month + i]
@@ -534,8 +532,10 @@ def check(school_id: str, content: bytes, file_name: str, by: str) -> Dict[str, 
                 elif not 0 <= m <= mx:
                     problems.append(f"{sub}: {m:g} marks, but the max is {mx}")
                 marks[n] = int(m) if m.is_integer() else m
-            new = {"father_name": father, "mother_name": mother, "guardian_relation": relation,
-                   "guardian_name": guardian if relation == "Guardian" else None, "present": present, "marks": marks}
+            new = {"father_name": father, "guardian_relation": relation,
+                   "guardian_name": other if relation == "Guardian" else None, "present": present, "marks": marks}
+            if relation == "Mother":                       # the mother's name only when the card shows it
+                new["mother_name"] = other
             old = stored.get(student.id)
             before = {"father_name": old.father_name if old else None, "mother_name": old.mother_name if old else None,
                       "guardian_relation": old.guardian_relation if old else None,
@@ -661,7 +661,8 @@ def for_cards(school_id: str, stage: str, session: str, parakh_student_id: str) 
     for n, m in (d.marks or {}).items():
         if m is not None:
             out[f"d_{n}_obtained"] = m
-    name = {"Father": d.father_name, "Mother": d.mother_name, "Guardian": d.guardian_name}.get(d.guardian_relation or "")
-    if d.guardian_relation and name:
-        out["a1_guardian_relation"], out["a1_guardian_name"] = d.guardian_relation, name
+    relation = d.guardian_relation or ("Father" if d.father_name else None)      # PARAKH's page pre-selects Father
+    name = {"Father": d.father_name, "Mother": d.mother_name, "Guardian": d.guardian_name}.get(relation or "")
+    if relation and name:
+        out["a1_guardian_relation"], out["a1_guardian_name"] = relation, name
     return out

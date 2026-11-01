@@ -85,15 +85,16 @@ def test_2_3_4_5_the_workbook_round_trip_saves_linked_to_the_parakh_ids(world):
     wb = _book(client, h)
     ws = wb["Preparatory"]
     heads = [c.value for c in ws[2]]
-    assert heads[:3] == ["Register ID", "PARAKH ID", "Student name (PARAKH)"] and heads[12] == "Apr present (20)"
+    assert heads[:3] == ["Register ID", "PARAKH ID", "Student name (PARAKH)"] and heads[11] == "Apr present (20)"
+    assert "Mother's name" not in heads and heads[8:11] == ["Father's name", "Name on the HPC card",
+                                                             "Mother's or guardian's name (if chosen)"]
     assert ws.max_row == 102                                                         # every student, exact names
     assert {ws.cell(row=r, column=3).value for r in range(3, 103)} >= {"STUDENT 1-00", "STUDENT 4-09"}
     for r in range(3, 103):                                                          # test 3: the school fills in
         ws.cell(row=r, column=9, value="ABDUL RASHID")
-        ws.cell(row=r, column=10, value="SHAHEENA")
-        ws.cell(row=r, column=11, value="Father")
-        ws.cell(row=r, column=13, value=18)                                          # April present
-        ws.cell(row=r, column=29, value=75)                                          # R1 marks
+        ws.cell(row=r, column=10, value="Father" if r % 2 else None)               # empty: the father (PARAKH's default)
+        ws.cell(row=r, column=12, value=18)                                          # April present
+        ws.cell(row=r, column=28, value=75)                                          # R1 marks
     filled = _bytes(wb)
     check = _upload(client, h, filled).json()
     assert check["summary"]["ready"] == 100 and check["summary"]["problem"] == 0, check["summary"]
@@ -116,10 +117,10 @@ def test_identity_edits_bad_numbers_duplicates_and_left_out_rows_are_reported(wo
     wb = _book(client, h)
     ws = wb["Preparatory"]
     ws.cell(row=3, column=3, value="SOMEONE ELSE")                                   # name edited in Excel
-    ws.cell(row=4, column=13, value=25)                                              # 25 present of 20
-    ws.cell(row=5, column=29, value=120)                                             # 120 of 100
-    ws.cell(row=6, column=11, value="Guardian")                                      # Guardian without a name
-    ws.cell(row=7, column=15, value=3)                                               # June: 0 working days
+    ws.cell(row=4, column=12, value=25)                                              # 25 present of 20
+    ws.cell(row=5, column=28, value=120)                                             # 120 of 100
+    ws.cell(row=6, column=10, value="Guardian")                                      # Guardian without a name
+    ws.cell(row=7, column=14, value=3)                                               # June: 0 working days
     ws.delete_rows(100, 3)                                                           # three students left out
     for c in range(1, 12):                                                           # row 99 a copy of row 8
         ws.cell(row=99, column=c, value=ws.cell(row=8, column=c).value)
@@ -184,7 +185,7 @@ def test_fetch_parents_from_udise_reaches_students_admitted_since_the_full_fetch
     assert client.get(f"{API}/school/register/data", headers=h).json()["parents_source"]["kind"] == "quick"
     ws = _book(client, h)["Preparatory"]
     row = next(r for r in range(3, ws.max_row + 1) if ws.cell(row=r, column=3).value == "STUDENT 1-00")
-    assert ws.cell(row=row, column=9).value == "NEW FATHER" and ws.cell(row=row, column=10).value == "NEW MOTHER"
+    assert ws.cell(row=row, column=9).value == "NEW FATHER"                         # (no mother's name column)
 
 
 def test_fetch_parents_says_when_udise_is_not_connected(world, monkeypatch):
@@ -193,3 +194,19 @@ def test_fetch_parents_says_when_udise_is_not_connected(world, monkeypatch):
     monkeypatch.setattr(udise_sessions, "_load", lambda sid: {"services": {}})
     r = client.post(f"{API}/school/register/parents/fetch", headers=h)
     assert r.status_code == 422 and "not connected" in r.text
+
+
+def test_mother_as_the_name_on_the_card_uses_the_one_name_column(world):
+    client, h, _, school_id = world
+    _settings(client, h)
+    wb = _book(client, h)
+    ws = wb["Preparatory"]
+    ws.cell(row=3, column=10, value="Mother")
+    ws.cell(row=3, column=11, value="SHAHEENA BEGUM")
+    sid = ws.cell(row=3, column=2).value
+    check = _upload(client, h, wb).json()
+    client.post(f"{API}/school/register/data/apply", headers=h, json={"import_id": check["id"], "confirm": True})
+    cards = register_data.for_cards(school_id, "Preparatory", "2627", sid)
+    assert cards["a1_guardian_relation"] == "Mother" and cards["a1_guardian_name"] == "SHAHEENA BEGUM"
+    again = _book(client, h)["Preparatory"]                                           # shown again in the next download
+    assert again.cell(row=3, column=10).value == "Mother" and again.cell(row=3, column=11).value == "SHAHEENA BEGUM"
