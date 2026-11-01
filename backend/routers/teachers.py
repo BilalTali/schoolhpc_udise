@@ -292,6 +292,16 @@ def register_students(stage: Optional[str] = Query(None), teacher: Teacher = Dep
             "Your classes are not known yet: ask the school to fetch from PARAKH, or connect to PARAKH once."}
 
 
+@router.get("/register/settings")
+def register_settings(stage: str = Query(...), teacher: Teacher = Depends(require_teacher)):
+    """The school's working days and max marks for a stage - read only for teachers."""
+    from backend.services import register_data
+    try:
+        return register_data.get_settings(teacher.school_id, _stage(teacher, stage), register_data.session_of(teacher.school_id))
+    except register_data.Problem as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc))
+
+
 @router.get("/roster")
 def cached_roster(stage: Optional[str] = Query(None), teacher: Teacher = Depends(require_teacher)):
     stage = _stage(teacher, stage)

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AlertCircle, RefreshCw } from "lucide-react";
-import { call } from "./api";
+import { AlertCircle, Download, RefreshCw, Upload } from "lucide-react";
+import { apiFetch, call } from "./api";
+import { downloadSheet } from "./downloadSheet";
 import type { Api } from "./api";
 
 // School Register (docs/school_register_plan.md): the school fetches every student from PARAKH with its own login
@@ -11,7 +12,9 @@ interface Job { status: "RUNNING" | "COMPLETED" | "FAILED"; step: string; done: 
   notes: string[]; stages: Record<string, { added: number; updated: number; missing: number; listed: number }>; finished_at?: string }
 interface Student { id: string; stage: string; student_id: string; student_name: string; hpc_login_id: string | null;
   apaar_id: string | null; grade: string | null; section: string | null; gender: string | null; dob: string | null;
-  admission_number: string | null; hpc_status: string | null; teachers: string[]; missing_on_parakh: boolean }
+  admission_number: string | null; hpc_status: string | null; teachers: string[]; missing_on_parakh: boolean;
+  entered: { present: number; working: number; percent: number | null; months: number; father: string | null;
+             mother: string | null; card_name: string | null; marks: number; marks_of: number } | null }
 interface Register { students: Student[]; summary: Record<string, { students: number; assigned: number; unassigned: number; missing_on_parakh: number }> }
 
 const STAGES = ["Foundational", "Preparatory", "Middle"];
@@ -89,6 +92,9 @@ export function RegisterPage({ api }: { api: Api }) {
         {error && <div className="alert-box alert-error" role="alert"><AlertCircle size={18} aria-hidden="true" /><div>{error}</div></div>}
       </div>
 
+      {reg && reg.students.length > 0 && <SchoolSettings api={api} />}
+      {reg && reg.students.length > 0 && <SchoolData api={api} onSaved={() => { void load(); }} />}
+
       {reg && (
         <div className="ui-panel">
           <table className="sdms-table">
@@ -113,18 +119,190 @@ export function RegisterPage({ api }: { api: Api }) {
           </div>
           <div className="sdms-scroll"><table className="sdms-table sdms-fit">
             <thead><tr><th>Stage</th><th>Class</th><th>Name (as on PARAKH)</th><th>PARAKH id</th><th>APAAR</th><th>Admission no.</th>
-              <th>DOB</th><th>Teacher</th><th>HPC on PARAKH</th></tr></thead>
+              <th>DOB</th><th>Teacher</th><th>Attendance</th><th>Parents</th><th>Marks</th><th>HPC on PARAKH</th></tr></thead>
             <tbody>{rows.map((s) => (
               <tr key={s.id} className={s.missing_on_parakh ? "lib-muted" : ""}>
                 <td>{s.stage}</td><td>{s.grade} {s.section}</td><td><b>{s.student_name}</b></td><td>{s.student_id}</td>
                 <td>{s.apaar_id || "—"}</td><td>{s.admission_number || "—"}</td><td>{s.dob || "—"}</td>
                 <td className={s.teachers.length ? "" : "sdms-warn"}>{s.teachers.join(", ") || "No teacher"}</td>
+                <td>{s.entered?.months ? `${s.entered.present}/${s.entered.working}${s.entered.percent != null ? ` (${s.entered.percent}%)` : ""}` : "—"}</td>
+                <td>{s.entered?.father || s.entered?.mother ? [s.entered.father, s.entered.mother].filter(Boolean).join(" / ") : "—"}</td>
+                <td>{s.entered && s.entered.marks_of ? `${s.entered.marks} of ${s.entered.marks_of}` : "—"}</td>
                 <td>{s.missing_on_parakh ? "No longer listed" : s.hpc_status || "—"}</td></tr>))}
             </tbody>
           </table></div>
           <p className="lib-muted">{rows.length} of {reg.students.length} shown.</p>
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Phase 2: what the school sets and enters once ───────────────────────────
+
+const MONTHS = ["Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec", "Jan", "Feb", "Mar"];
+interface Settings { stage: string; session: string; version: number; updated_at: string | null;
+  values: { working_days: (number | null)[]; max_marks: Record<string, number | null> }; subjects: { n: string; name: string }[] }
+
+export function SchoolSettings({ api }: { api: Api }) {
+  const [stage, setStage] = useState("Preparatory");
+  const [s, setS] = useState<Settings | null>(null);
+  const [days, setDays] = useState<string[]>([]);
+  const [marks, setMarks] = useState<Record<string, string>>({});
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const load = useCallback(async () => {
+    setMsg(null);
+    try {
+      const r = await call<Settings>(api, "GET", `/school/register/settings?stage=${stage}`);
+      setS(r);
+      setDays(r.values.working_days.map((d) => (d === null ? "" : String(d))));
+      setMarks(Object.fromEntries(r.subjects.map((x) => [x.n, r.values.max_marks[x.n] == null ? "" : String(r.values.max_marks[x.n])])));
+    } catch (e) {
+      setMsg({ ok: false, text: (e as Error).message });
+    }
+  }, [api, stage]);
+  useEffect(() => { void load(); }, [load]);
+  const save = async () => {
+    try {
+      const r = await call<Settings>(api, "PUT", "/school/register/settings", { stage, values: {
+        working_days: days.map((d) => (d.trim() === "" ? null : d.trim())),
+        max_marks: Object.fromEntries(Object.entries(marks).map(([n, m]) => [n, m.trim() === "" ? null : m.trim()])) } });
+      setS(r);
+      setMsg({ ok: true, text: `Saved (version ${r.version}). Teachers see these; they cannot change them.` });
+    } catch (e) {
+      const text = (e as Error).message;
+      try { setMsg({ ok: false, text: Object.values(JSON.parse(text) as Record<string, string>).join("; ") }); }
+      catch { setMsg({ ok: false, text }); }
+    }
+  };
+  return (
+    <div className="ui-panel">
+      <h3 className="lib-section-title">Working days and max marks (set by the school)</h3>
+      <div className="sdms-actions">
+        <select className="form-select" value={stage} onChange={(e) => setStage(e.target.value)} aria-label="Stage">
+          {STAGES.map((x) => <option key={x} value={x}>{x}</option>)}
+        </select>
+        {s && <span className="lib-muted">Year {s.session} · {s.version ? `version ${s.version}` : "not set yet"}</span>}
+      </div>
+      {s && (<>
+        <table className="sdms-table"><thead><tr>{MONTHS.map((m) => <th key={m}>{m}</th>)}</tr></thead>
+          <tbody><tr>{days.map((d, i) => (
+            <td key={i}><input className="form-input" style={{ width: "3.6rem" }} inputMode="numeric" value={d} aria-label={`${MONTHS[i]} working days`}
+                               onChange={(e) => setDays((p) => p.map((x, j) => (j === i ? e.target.value : x)))} /></td>))}</tr></tbody></table>
+        {s.subjects.length > 0 ? (
+          <table className="sdms-table"><thead><tr>{s.subjects.map((x) => <th key={x.n}>{x.name}: max</th>)}</tr></thead>
+            <tbody><tr>{s.subjects.map((x) => (
+              <td key={x.n}><input className="form-input" style={{ width: "4.5rem" }} inputMode="numeric" value={marks[x.n] ?? ""}
+                                   aria-label={`${x.name} max marks`} onChange={(e) => setMarks((p) => ({ ...p, [x.n]: e.target.value }))} /></td>))}</tr></tbody></table>
+        ) : <p className="lib-muted">Foundational has no summative marks on PARAKH.</p>}
+        <button type="button" className="btn btn-primary" onClick={save}>Save for {stage}</button>
+      </>)}
+      {msg && <p className={msg.ok ? "lib-muted" : "sdms-warn"} role="status">{msg.text}</p>}
+    </div>
+  );
+}
+
+interface CheckRow { sheet: string; row: number; parakh_id: string; name: string; outcome: "ready" | "problem" | "review"; problems: string[]; changes: string[] }
+interface Check { id: string; file_name: string; status: string; created_at: string; applied_at: string | null; rows: CheckRow[];
+  summary: { ready: number; unchanged: number; problem: number; review: number; left_out: Record<string, number>; already_applied_at: string | null } }
+interface Hist { id: string; file_name: string; status: string; summary: Check["summary"]; created_at: string; applied_at: string | null }
+const FIELD_NAMES: Record<string, string> = { father_name: "father", mother_name: "mother", guardian_relation: "name on card",
+  guardian_name: "guardian", present: "days present", marks: "marks" };
+
+export function SchoolData({ api, onSaved }: { api: Api; onSaved: () => void }) {
+  const [check, setCheck] = useState<Check | null>(null);
+  const [hist, setHist] = useState<Hist[]>([]);
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const load = useCallback(async () => {
+    try {
+      const r = await call<{ check: Check | null; history: Hist[] }>(api, "GET", "/school/register/data");
+      setCheck(r.check);
+      setHist(r.history);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }, [api]);
+  useEffect(() => { void load(); }, [load]);
+  const upload = async (file: File) => {
+    setBusy("checking");
+    setError(null);
+    const form = new FormData();
+    form.append("file", file);
+    try {
+      const res = await apiFetch("/school/register/data/check", { method: "POST", body: form }, api.base);
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(typeof body.detail === "string" ? body.detail : "The workbook could not be checked.");
+      setCheck(body as Check);
+      await load();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy("");
+    }
+  };
+  const apply = async () => {
+    if (!check || !window.confirm(`Save ${check.summary.ready} students' data into the School Register?`)) return;
+    setBusy("saving");
+    try {
+      await call(api, "POST", "/school/register/data/apply", { import_id: check.id, confirm: true });
+      await load();
+      onSaved();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy("");
+    }
+  };
+  const when = (iso?: string | null) => (iso ? new Date(iso).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "");
+  return (
+    <div className="ui-panel">
+      <h3 className="lib-section-title">School Data: attendance, parents, marks</h3>
+      <p className="lib-muted">Download the workbook (every student from the register, parents' names from UDISE+ where found),
+        fill days present per month, whose name the HPC card shows and marks obtained, and upload it here. It is checked
+        first; nothing is saved until you press Save. Monthly totals only.</p>
+      <div className="sdms-actions">
+        <button type="button" className="btn btn-outline" disabled={!!busy}
+                onClick={async () => setError(await downloadSheet(api, "/school/register/data.xlsx", "School_Data.xlsx"))}>
+          <Download size={15} aria-hidden="true" /> Download School Data workbook
+        </button>
+        <label className="btn btn-outline sdms-upload">
+          <Upload size={15} aria-hidden="true" /> {busy === "checking" ? "Checking…" : "Upload filled workbook"}
+          <input type="file" accept=".xlsx" hidden disabled={!!busy}
+                 onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void upload(f); }} />
+        </label>
+      </div>
+      {error && <div className="alert-box alert-error" role="alert"><AlertCircle size={18} aria-hidden="true" /><div>{error}</div></div>}
+      {check && (
+        <div className="sdms-plan">
+          <p><b>{check.file_name}</b> ({when(check.created_at)}): <b>{check.summary.ready}</b> ready to save,{" "}
+            {check.summary.unchanged} unchanged, <span className={check.summary.problem ? "sdms-warn" : ""}>{check.summary.problem} to correct</span>,{" "}
+            <span className={check.summary.review ? "sdms-warn" : ""}>{check.summary.review} to review (identity changed)</span>
+            {Object.keys(check.summary.left_out).length > 0 && <> · left out of the file: {Object.entries(check.summary.left_out).map(([s, n]) => `${s} ${n}`).join(", ")}</>}
+            {check.summary.already_applied_at && <> · this same file was saved on {when(check.summary.already_applied_at)}</>}
+            {check.status === "APPLIED" && <> · <b>saved {when(check.applied_at)}</b></>}</p>
+          {check.rows.length > 0 && (
+            <div className="sdms-scroll"><table className="sdms-table sdms-fit">
+              <thead><tr><th>Sheet, row</th><th>Student</th><th>Outcome</th><th>Details</th></tr></thead>
+              <tbody>{check.rows.map((r) => (
+                <tr key={`${r.sheet}${r.row}`}><td>{r.sheet} {r.row}</td><td>{r.name} <small>{r.parakh_id}</small></td>
+                  <td className={r.outcome === "ready" ? "" : "sdms-warn"}>{r.outcome === "ready" ? "Ready" : r.outcome === "review" ? "Review" : "Correct"}</td>
+                  <td>{r.problems.length ? r.problems.join("; ") : `Changes: ${r.changes.map((c) => FIELD_NAMES[c] || c).join(", ")}`}</td></tr>))}
+              </tbody></table></div>)}
+          {check.status === "CHECKED" && check.summary.ready > 0 && (
+            <button type="button" className="btn btn-primary" disabled={!!busy} onClick={apply}>
+              {busy === "saving" ? "Saving…" : `Save ${check.summary.ready} students into the School Register`}</button>)}
+        </div>
+      )}
+      {hist.length > 0 && (
+        <details><summary>Import history ({hist.length})</summary>
+          <table className="sdms-table sdms-fit"><thead><tr><th>Uploaded</th><th>File</th><th>Status</th><th>Ready / to correct / review</th></tr></thead>
+            <tbody>{hist.map((h) => (
+              <tr key={h.id}><td>{when(h.created_at)}</td><td>{h.file_name}</td>
+                <td>{h.status === "APPLIED" ? `Saved ${when(h.applied_at)}` : h.status === "CHECKED" ? "Checked, not saved" : "Replaced by a later check"}</td>
+                <td>{h.summary.ready} / {h.summary.problem} / {h.summary.review}</td></tr>))}
+            </tbody></table>
+        </details>)}
     </div>
   );
 }

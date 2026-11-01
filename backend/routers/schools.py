@@ -5,7 +5,7 @@ import io
 import json
 import os
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import StreamingResponse
@@ -468,9 +468,100 @@ def register_fetch_progress(admin: School = Depends(require_school_admin)):
 
 @router.get("/register")
 def register_students(stage: Optional[str] = None, admin: School = Depends(require_school_admin)):
-    """The school's register: every student (assigned or not), their PARAKH identity and teachers."""
-    from backend.services import school_register
-    return school_register.students(admin.id, _stage_name(stage) if stage else None)
+    """The school's register: every student (assigned or not), their PARAKH identity and teachers, and what the
+    school has entered for them this year (attendance, parents, marks)."""
+    from backend.services import register_data, school_register
+    out = school_register.students(admin.id, _stage_name(stage) if stage else None)
+    try:
+        session = register_data.session_of(admin.id)
+        entered = register_data.entered(admin.id, session)
+    except register_data.Problem:
+        session, entered = None, {}
+    for row in out["students"]:
+        row["entered"] = entered.get(row["id"])
+    return {**out, "session": session}
+
+
+# School settings and the School Data workbook (phase 2)
+
+class RegisterSettingsRequest(BaseModel):
+    stage: str
+    values: Dict[str, Any]
+
+
+class RegisterApplyRequest(BaseModel):
+    import_id: str = Field(..., max_length=36)
+    confirm: bool = False
+
+
+def _register_problem(exc) -> HTTPException:
+    return HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc))
+
+
+@router.get("/register/settings")
+def register_settings(stage: str, admin: School = Depends(require_school_admin)):
+    from backend.services import register_data
+    try:
+        return register_data.get_settings(admin.id, _stage_name(stage), register_data.session_of(admin.id))
+    except register_data.Problem as exc:
+        raise _register_problem(exc)
+
+
+@router.put("/register/settings")
+def register_settings_save(payload: RegisterSettingsRequest, admin: School = Depends(require_school_admin)):
+    """Working days per month and summative max marks per subject, for a stage (teachers read them)."""
+    from backend.services import register_data
+    try:
+        out = register_data.save_settings(admin.id, _stage_name(payload.stage), register_data.session_of(admin.id),
+                                          payload.values, f"school_admin:{admin.id}")
+    except register_data.Problem as exc:
+        raise _register_problem(exc)
+    audit.record(f"school_admin:{admin.id}", "register_settings", "register", admin.id, None,
+                 {"stage": out["stage"], "version": out["version"]})
+    return out
+
+
+@router.get("/register/data.xlsx")
+def register_data_workbook(admin: School = Depends(require_school_admin)):
+    from backend.services import register_data
+    try:
+        content, name = register_data.workbook(admin.id)
+    except register_data.Problem as exc:
+        raise _register_problem(exc)
+    audit.record(f"school_admin:{admin.id}", "register_download", "register", admin.id, None, {})
+    return StreamingResponse(io.BytesIO(content), headers={"Content-Disposition": f'attachment; filename="{name}"'},
+                             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
+@router.post("/register/data/check")
+def register_data_check(file: UploadFile = File(...), admin: School = Depends(require_school_admin)):
+    """Checks a filled School Data workbook against the register (nothing is saved yet)."""
+    from backend.services import register_data
+    content = file.file.read(10 * 1024 * 1024 + 1)
+    if len(content) > 10 * 1024 * 1024:
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "The file is larger than 10 MB.")
+    try:
+        return register_data.check(admin.id, content, file.filename or "School_Data.xlsx", f"school_admin:{admin.id}")
+    except register_data.Problem as exc:
+        raise _register_problem(exc)
+
+
+@router.post("/register/data/apply")
+def register_data_apply(payload: RegisterApplyRequest, admin: School = Depends(require_school_admin)):
+    """Saves the checked workbook's ready rows into the register - only when the person confirmed."""
+    from backend.services import register_data
+    if not payload.confirm:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Confirm first: this saves the rows into the School Register.")
+    try:
+        return register_data.apply(admin.id, payload.import_id, f"school_admin:{admin.id}")
+    except register_data.Problem as exc:
+        raise _register_problem(exc)
+
+
+@router.get("/register/data")
+def register_data_status(admin: School = Depends(require_school_admin)):
+    from backend.services import register_data
+    return {"check": register_data.latest_check(admin.id), "history": register_data.history(admin.id)}
 
 
 # ---------------------------------------------------------------------------

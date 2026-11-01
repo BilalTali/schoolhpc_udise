@@ -54,3 +54,68 @@ class RegisterTeacherClass(Base):
     section_id = Column(Integer, nullable=False)
     source = Column(String(30), nullable=False, default="parakh_school")    # parakh_school | teacher_session
     fetched_at = Column(DateTime, default=datetime.utcnow)
+
+
+class RegisterSetting(Base):
+    """What the school sets once per stage and session: working days per month (April..March) and the summative
+    max marks per subject. Teachers read it; every change is kept as a version (RegisterSettingVersion)."""
+    __tablename__ = "register_settings"
+    __table_args__ = (UniqueConstraint("school_id", "stage", "session", name="uq_register_setting"),)
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    school_id = Column(String(36), ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True)
+    stage = Column(String(20), nullable=False)
+    session = Column(String(10), nullable=False)                     # PARAKH's academic year code, e.g. 2627
+    values = Column(JSON, nullable=False)                            # {"working_days": [12], "max_marks": {n: m}}
+    version = Column(Integer, nullable=False, default=1)
+    updated_by = Column(String(60), nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class RegisterSettingVersion(Base):
+    __tablename__ = "register_setting_versions"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    setting_id = Column(String(36), ForeignKey("register_settings.id", ondelete="CASCADE"), nullable=False, index=True)
+    version = Column(Integer, nullable=False)
+    values = Column(JSON, nullable=False)
+    saved_by = Column(String(60), nullable=True)
+    saved_at = Column(DateTime, default=datetime.utcnow)
+
+
+class RegisterStudentData(Base):
+    """What the school provides for one student and session: days present per month, parentage, marks obtained.
+    Linked to the register's student (its PARAKH identity is never changed from here)."""
+    __tablename__ = "register_student_data"
+    __table_args__ = (UniqueConstraint("student_id", "session", name="uq_register_student_data"),)
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    school_id = Column(String(36), ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True)
+    student_id = Column(String(36), ForeignKey("register_students.id", ondelete="CASCADE"), nullable=False, index=True)
+    session = Column(String(10), nullable=False)
+    present = Column(JSON, nullable=True)                            # [12] days present, April..March (None: no data)
+    father_name = Column(String(150), nullable=True)
+    mother_name = Column(String(150), nullable=True)
+    guardian_relation = Column(String(20), nullable=True)            # Father / Mother / Guardian: whose name the card shows
+    guardian_name = Column(String(150), nullable=True)               # only when the relation is Guardian
+    marks = Column(JSON, nullable=True)                              # {subject n: marks obtained}
+    sources = Column(JSON, nullable=True)                            # {field: "udise" | "import:<id>"}
+    import_id = Column(String(36), nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class RegisterImport(Base):
+    """One uploaded School Data workbook: checked (preview), then applied. Kept as the import history."""
+    __tablename__ = "register_imports"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    school_id = Column(String(36), ForeignKey("schools.id", ondelete="CASCADE"), nullable=False, index=True)
+    session = Column(String(10), nullable=False)
+    file_name = Column(String(255), nullable=False)
+    file_hash = Column(String(64), nullable=False)
+    status = Column(String(20), nullable=False, default="CHECKED")  # CHECKED, APPLIED, SUPERSEDED
+    summary = Column(JSON, nullable=True)                            # counts per outcome
+    rows = Column(JSON, nullable=True)                               # per row: outcome, problems, changes (no PARAKH ids changed)
+    created_by = Column(String(60), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    applied_at = Column(DateTime, nullable=True)
