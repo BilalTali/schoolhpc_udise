@@ -416,11 +416,12 @@ def import_old_layout(client: Portal, teacher, stage: str, students: List[Dict[s
 
 
 def mix_all(client: Portal, teacher, stage: str, students: List[Dict[str, Any]], apply: bool,
-            seed: Optional[str] = None) -> Dict[str, Any]:
+            seed: Optional[str] = None, level_hints: Optional[Dict[str, Dict[str, str]]] = None) -> Dict[str, Any]:
     """Global Mix, the Activities grid part: every empty cell of every student is filled - each subject an activity
     of that subject and the student's grade from the library (when there are several, they are dealt in turn over
     the students, so each is used about equally) and each empty level Beginner / Proficient / Advanced dealt the
-    same way. A cell the teacher chose is kept; a student whose activities on PARAKH share subjects is skipped (as in
+    same way - unless level_hints gives the student's level for the subject (from the school's summative marks,
+    register_data.levels_from_marks). A cell the teacher chose is kept; a student whose activities on PARAKH share subjects is skipped (as in
     quick fill). Without apply it only counts."""
     session = hpc_cards.check_session(client, None, writing=apply)
     st, subjects, names = _stage_info(stage)
@@ -470,7 +471,8 @@ def mix_all(client: Portal, teacher, stage: str, students: List[Dict[str, Any]],
             for ability, _ in grid.ABILITIES:
                 lkey = grid.level_key(subj, ability)
                 if not row["values"].get(lkey):
-                    change[lkey] = deal(("level", subj, ability), list(grid.LEVEL_TO_PORTAL))
+                    hint = ((level_hints or {}).get(str(sid)) or {}).get(subj)
+                    change[lkey] = hint if hint in grid.LEVEL_TO_PORTAL else deal(("level", subj, ability), list(grid.LEVEL_TO_PORTAL))
         if change:
             plans.append((s, change))
             cells += len(change)

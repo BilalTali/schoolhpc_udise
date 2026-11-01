@@ -330,3 +330,23 @@ def test_global_mix_fills_every_empty_answer_and_keeps_what_was_chosen(grid_clie
     assert {r["value"] for r in festival} <= {"Eid ul Fitr", "Eid ul Zuha"}
     again = client.post(url, json={"apply": True}).json()                           # nothing empty is left
     assert again["grid"]["cells"] == 0 and again["answers"]["cells"] == 0
+
+
+def test_global_mix_gives_levels_from_the_schools_marks(grid_client, monkeypatch):
+    from backend.services import register_data
+    client, portal, _ = grid_client
+    lookups = hpc_cards.lookups_for(None, None, "Preparatory")
+    from backend.hpc.stages import activity_grid as grid_rules
+    entries = [{"key": "P85", "label": "P85", "subjects": None, "grade_id": None}]
+    monkeypatch.setattr(activity_grid, "_context", lambda c, t, st: (entries, {"P85": "P85"},
+                                                                         grid_rules.resolver_from_lookups(lookups)))
+    hints = {"1001": {s: ("Advanced" if s == "PSLS3" else "Beginner") for s in SUBJ}}
+    monkeypatch.setattr(register_data, "levels_from_marks", lambda *a: hints)
+    done = client.post(f"{API}/teacher/activities-grid/Preparatory/global-mix", json={"apply": True}).json()
+    assert done["from_marks"] == 1
+    _, by_id = rows(client)
+    v = by_id["1001"]["values"]
+    assert all(v[f"b_lvl_PSLS3_{a}"] == "Advanced" for a in ("awareness", "sensitivity", "creativity"))   # Part B
+    assert all(v[f"b_lvl_PSLS1_{a}"] == "Beginner" for a in ("awareness", "sensitivity", "creativity"))
+    level = client.get(f"{API}/teacher/hpc-cards/Preparatory/bulk", params={"field": "c_PSLS3_awareness"}).json()["rows"]
+    assert next(r for r in level if r["student_id"] == "1001")["value"] == "Advanced"                   # Part C

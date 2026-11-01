@@ -166,7 +166,7 @@ export function TemplatePanel({ api, stage, total, onFix, onOpenSettings }: {
     setMixMsg(null);
     setBusy(true);
     try {
-      type Mix = { seed: string; grid: { cells: number; students: number; skipped: { student_name: string }[]; no_activity: string[] };
+      type Mix = { seed: string; from_marks: number; grid: { cells: number; students: number; skipped: { student_name: string }[]; no_activity: string[] };
                    answers: { cells: number; students: number; skipped: { label: string; reason: string }[] } };
       const preview = await call<Mix>(api, "POST", `/teacher/activities-grid/${stage}/global-mix`, {});
       if (!preview.grid.cells && !preview.answers.cells) {
@@ -177,6 +177,7 @@ export function TemplatePanel({ api, stage, total, onFix, onOpenSettings }: {
                      preview.grid.no_activity.length ? `no library activity for: ${preview.grid.no_activity.join(", ")}` : ""].filter(Boolean);
       const ok = await confirm({ title: "Global Mix: fill every empty answer?", confirmLabel: "Mix and fill",
         message: `Fills ${preview.grid.cells} activity/level cells and ${preview.answers.cells} answers at random for the whole class. `
+          + (preview.from_marks ? `${preview.from_marks} student(s) get their levels from the school's summative marks (75%+ Advanced, 50%+ Proficient, else Beginner); the rest at random. ` : "")
           + "Only empty answers are filled; nothing you entered changes. Mother tongue, names and other facts are not filled. "
           + "Use it only when there is no time to fill the cards properly." + (notes.length ? ` (${notes.join("; ")})` : "") });
       if (!ok) return;

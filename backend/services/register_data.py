@@ -686,3 +686,48 @@ def card_values(stage: str, record: Dict[str, Any], student_id: str) -> Dict[str
 
 from backend.hpc.stages import common as _common   # noqa: E402  (registered when this module is imported)
 _common.SCHOOL_VALUES = card_values
+
+
+# ---------------------------------------------------------------------------
+# Levels from the summative marks (Global Mix): a student's marks in a subject decide that subject's levels
+# ---------------------------------------------------------------------------
+
+LEVEL_CUTS = ((75.0, "Advanced"), (50.0, "Proficient"), (0.0, "Beginner"))    # marks obtained / max, in %
+
+
+def level_for(percent: float) -> str:
+    return next(level for cut, level in LEVEL_CUTS if percent >= cut)
+
+
+def levels_from_marks(school_id: str, stage: str, session: str, parakh_ids: List[str]) -> Dict[str, Dict[str, str]]:
+    """{PARAKH student id: {subject (domain) code: level}} from the marks the school entered. A subject with summative
+    marks gets the level of its own %; a subject without (Other learning, Bagless days ...) the student's average %.
+    Students without marks are left out (Global Mix deals their levels at random)."""
+    from backend.hpc.stages import get_stage
+    from backend.hpc.portal import stage_code
+    title = stage_code(stage).capitalize()
+    subs = subjects(title)
+    if not subs:
+        return {}
+    domains = get_stage(stage_code(stage)).DOMAINS
+    maxes = get_settings(school_id, title, session)["values"]["max_marks"]
+    out: Dict[str, Dict[str, str]] = {}
+    with SessionLocal() as db:
+        rows = {s.parakh_student_id: s.id for s in db.query(RegisterStudent).filter(
+            RegisterStudent.school_id == school_id, RegisterStudent.stage == title,
+            RegisterStudent.parakh_student_id.in_([str(p) for p in parakh_ids]))}
+        data = {d.student_id: d for d in db.query(RegisterStudentData).filter(
+            RegisterStudentData.student_id.in_(list(rows.values())), RegisterStudentData.session == session)}
+    for pid, rid in rows.items():
+        d = data.get(rid)
+        marks = (d.marks if d else None) or {}
+        percents = {}
+        for n, _ in subs:
+            got, mx = marks.get(n), maxes.get(n)
+            if got is not None and mx:
+                percents[int(n) - 1] = float(got) / float(mx) * 100
+        if not percents:
+            continue
+        average = sum(percents.values()) / len(percents)
+        out[str(pid)] = {domain: level_for(percents.get(i, average)) for i, domain in enumerate(domains)}
+    return out

@@ -123,19 +123,21 @@ def global_mix(stage: str, payload: GlobalMixRequest, teacher: Teacher = Depends
     (A1-A4, Part B's answers, Part C's levels and notes - written from those levels). Facts about a student (mother
     tongue, names ...) are never mixed. Nothing typed or chosen is changed. Without apply it only counts; afterwards
     'Check the class' and 'Save ready students to PARAKH' as usual."""
-    from backend.services import audit, hpc_cards
+    from backend.services import audit, hpc_cards, register_data
     stage = _stage(teacher, stage)
     students = _students(teacher, stage)
     client = _portal(teacher)
-    grid_part = _call(activity_grid.mix_all, client, teacher, stage, students, payload.apply, payload.seed)
     session = hpc_cards.check_session(client, None, writing=payload.apply)
+    # students with summative marks in the School Register get their levels from them (75%+ Advanced, 50%+ Proficient)
+    hints = register_data.levels_from_marks(teacher.school_id, stage, session, [s["student_id"] for s in students])
+    grid_part = _call(activity_grid.mix_all, client, teacher, stage, students, payload.apply, payload.seed, hints)
     owner = f"teacher_{teacher.id}"
     lookups = hpc_cards.lookups_for(owner, client, stage)
     keys = list(hpc_cards._common_fields(stage, lookups))
-    answers = _call(hpc_cards.bulk_mix, client, owner, teacher.id, session, stage, keys, False, payload.apply)
+    answers = _call(hpc_cards.bulk_mix, client, owner, teacher.id, session, stage, keys, False, payload.apply, hints)
     if payload.apply:
         audit.record(f"teacher:{teacher.id}", "global_mix", "activities_grid", stage, None,
                      {"grid_cells": grid_part["cells"], "answers": answers["cells"]})
-    return {"applied": payload.apply, "seed": grid_part["seed"], "grid": grid_part,
+    return {"applied": payload.apply, "seed": grid_part["seed"], "grid": grid_part, "from_marks": len(hints),
             "answers": {"cells": answers["cells"], "students": answers["students"],
                         "fields": [f for f in answers["fields"] if f["filled"]], "skipped": answers["skipped"]}}

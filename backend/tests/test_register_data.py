@@ -246,3 +246,20 @@ def test_phase3_a_save_to_parakh_carries_the_schools_values_over_the_teachers(wo
     other = blank_student("PREPARATORY")                                              # another school: untouched
     payloads, _ = sync.build_payloads("PREPARATORY", other, row, make_lookups("PREPARATORY"))
     assert _json.loads(next(p for p in payloads if p["hpc_col"] == "part_a1")["formdata"])["attn"]["2"][0] == 5
+
+
+def test_levels_from_the_schools_summative_marks(world):
+    client, h, _, school_id = world
+    _settings(client, h)                                                            # max 100 in every subject
+    wb = _book(client, h)
+    ws = wb["Preparatory"]
+    sid = ws.cell(row=3, column=2).value
+    ws.cell(row=3, column=28, value=80)                                              # R1: 80%
+    ws.cell(row=3, column=30, value=40)                                              # Maths: 40%
+    check = _upload(client, h, wb).json()
+    client.post(f"{API}/school/register/data/apply", headers=h, json={"import_id": check["id"], "confirm": True})
+    levels = register_data.levels_from_marks(school_id, "Preparatory", "2627", [sid, "500099"])
+    assert levels[sid]["PSLS1"] == "Advanced" and levels[sid]["PSLS3"] == "Beginner"
+    assert levels[sid]["PSLS2"] == "Proficient" and levels[sid]["PSLS7"] == "Proficient"   # no marks: the average, 60%
+    assert "500099" not in levels                                                    # no marks: random in the mix
+    assert [register_data.level_for(p) for p in (75, 74.9, 50, 49.9)] == ["Advanced", "Proficient", "Proficient", "Beginner"]

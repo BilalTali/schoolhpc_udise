@@ -440,7 +440,7 @@ def part_progress(client: Portal, owner: str, teacher_id: str, session: str, sta
 
 
 def bulk_mix(client: Portal, owner: str, teacher_id: str, session: str, stage: str, keys: List[str], replace: bool,
-             apply: bool) -> Dict[str, Any]:
+             apply: bool, level_hints: Optional[Dict[str, Dict[str, str]]] = None) -> Dict[str, Any]:
     """Every listed class-wide question at once: each student gets one of the question's suggestions (text) or
     options (a single-choice question), handed out at random so each is used about equally. Only empty answers
     unless replace. Part B's several-option assessment lists get a few options each (suggestions.MULTI_MIX); facts
@@ -580,7 +580,8 @@ def bulk_mix(client: Portal, owner: str, teacher_id: str, session: str, stage: s
                 if _blank(value):
                     no_levels.setdefault(key, []).append(s.get("student_name", ""))
             else:
-                value = from_records(f, s, loaded, taken) if record_kind(f.label) else next_value(key, taken)
+                hint = _level_hint(key, f, (level_hints or {}).get(str(s["student_id"])))
+                value = hint or (from_records(f, s, loaded, taken) if record_kind(f.label) else next_value(key, taken))
             if _blank(value):
                 continue                                  # no record for it (no date of birth, no levels ...)
             changes.setdefault(s["student_id"], {})[key] = value
@@ -596,6 +597,14 @@ def bulk_mix(client: Portal, owner: str, teacher_id: str, session: str, stage: s
     return {"applied": apply, "students": len(changes), "cells": sum(filled.values()),
             "fields": [{"key": k, "label": mixed[k][0].label, "filled": filled[k]} for k in mixed],
             "skipped": skipped}
+
+
+def _level_hint(key: str, f: Field, hints: Optional[Dict[str, str]]) -> str:
+    """A Part C level from the school's summative marks (Global Mix): c_<subject>_<ability> -> that subject's level."""
+    if not hints or not key.startswith("c_") or not key.endswith(("_awareness", "_sensitivity", "_creativity")):
+        return ""
+    level = hints.get(key[2:].rsplit("_", 1)[0], "")
+    return level if level in (f.options or {}) else ""
 
 
 def note_from_levels(f: Field, draft: Dict[str, Any], part_c: Any, index: Dict[str, Field], part_b: Any) -> str:
