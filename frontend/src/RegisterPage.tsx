@@ -65,7 +65,6 @@ export function RegisterPage({ api }: { api: Api }) {
       <div className="ui-panel">
         <div className="sdms-head">
           <div>
-            <h2 className="sdms-title">School Register</h2>
             <p className="lib-muted">Every student of the school as PARAKH has them - with a teacher or not. Read with the
               school's PARAKH login (nothing is changed on PARAKH). Teachers get their students from here.</p>
           </div>
@@ -92,8 +91,8 @@ export function RegisterPage({ api }: { api: Api }) {
 
       {reg && (
         <div className="ui-panel">
-          <table className="sdms-table sdms-fit">
-            <thead><tr><th>Stage</th><th>Students</th><th>With a teacher</th><th>No teacher</th><th>No longer on PARAKH</th></tr></thead>
+          <table className="sdms-table">
+            <thead><tr><th>Stage</th><th>Students</th><th>With a teacher</th><th>No teacher</th><th>Gone from PARAKH</th></tr></thead>
             <tbody>{STAGES.filter((s) => reg.summary[s]).map((s) => (
               <tr key={s}><td>{s}</td><td>{reg.summary[s].students}</td><td>{reg.summary[s].assigned}</td>
                 <td className={reg.summary[s].unassigned ? "sdms-warn" : ""}>{reg.summary[s].unassigned}</td>
