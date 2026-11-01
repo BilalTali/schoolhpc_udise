@@ -93,8 +93,12 @@ async def unsafe_path(request: Request, exc: UnsafePath):
     return JSONResponse(status_code=400, content={"detail": str(exc)})
 
 
+from backend.routers.register_reports import school_router as register_reports_router  # noqa: E402
+from backend.routers.register_reports import teacher_router as register_teacher_reports_router  # noqa: E402
+
 for router in (auth_router, schools_router, teachers_router, hpc_cards_router, activity_library_router,
-               activities_grid_router, class_template_router, platform_router):
+               activities_grid_router, class_template_router, platform_router, register_reports_router,
+               register_teacher_reports_router):
     app.include_router(router, prefix="/api/v1")
 
 

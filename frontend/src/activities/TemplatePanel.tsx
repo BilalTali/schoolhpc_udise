@@ -255,6 +255,16 @@ export function TemplatePanel({ api, stage, total, onFix, onOpenSettings }: {
           Download chosen students…
         </button>
         {why && <span id="tp-why" className="lib-muted">{why}</span>}
+        <button type="button" className="btn btn-outline" disabled={busy}
+                onClick={async () => {
+                  const res = await apiFetch("/teacher/register/report.xlsx", {}, api.base);
+                  if (!res.ok) { setError("The report could not be made."); return; }
+                  const url = URL.createObjectURL(await res.blob());
+                  const a = document.createElement("a"); a.href = url; a.download = "My_students.xlsx"; a.click();
+                  URL.revokeObjectURL(url);
+                }}>
+          <Download size={15} aria-hidden="true" /> My students report (Excel)
+        </button>
       </div>
       {mixMsg && <p className="tp-summary" role="status"><CheckCircle2 size={16} color="#046A38" aria-hidden="true" /> {mixMsg}</p>}
       {sent && <p className="tp-summary" role="status"><CheckCircle2 size={16} color="#046A38" aria-hidden="true" /> {sent}</p>}

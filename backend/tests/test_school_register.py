@@ -219,3 +219,33 @@ def test_13_udise_apaar_parakh_comparison_runs_on_the_register(world, monkeypatc
     assert "gender" in by_name["STUDENT 1-01"]["differs"]
     assert r["apaar"]["only_parakh"] == 1                                       # PARAKH has it, UDISE+ does not
     assert by_name["STUDENT 1-00"]["parakh"]["status"].startswith("Card: ")
+
+
+def test_14_reports_school_comparison_and_teacher(world, monkeypatch):
+    """Phase 6: reports from the saved records; teachers get only their own students and no school report."""
+    import io
+    from openpyxl import load_workbook
+    from backend.services import udise_parakh
+    client, a, _, school_id, _ = world
+    _fetch(school_id, FakeSchoolParakh())
+    r = client.get(f"{API}/school/register/reports/school.xlsx", headers=a)
+    wb = load_workbook(io.BytesIO(r.content))
+    assert wb.sheetnames == ["Summary", "Students", "By teacher", "Needs attention"]
+    assert wb["Students"].max_row == 101 and wb["By teacher"].max_row == 4          # 100 students, 3 teachers
+    summary = {row[0].value: row for row in wb["Summary"].iter_rows(min_row=2)}
+    assert summary["Preparatory"][1].value == 100 and summary["Preparatory"][3].value == 10   # 10 without a teacher
+
+    udise = [{"name": "STUDENT 1-00", "parent": "", "father": "", "section": "A", "adm_no": "", "class": "5 A", "class_id": 5,
+              "dob": "01/05/2016", "gender": "Female", "apaar": "", "pen": "", "status": "Form complete"}]
+    monkeypatch.setattr(udise_parakh, "udise_students", lambda sid: udise)          # MOCKED UDISE+
+    dash = client.get(f"{API}/school/register/reports/reconciliation", headers=a).json()
+    assert dash["ok"] and dash["counts"]["matched"] == 1 and dash["apaar"]["only_parakh"] == 1
+    rec = load_workbook(io.BytesIO(client.get(f"{API}/school/register/reports/reconciliation.xlsx", headers=a).content))
+    assert rec.sheetnames == ["Summary", "APAAR", "Differences", "Only on UDISE+", "Only on PARAKH"]
+    assert rec["APAAR"]["F2"].value == "Only on PARAKH" and rec["Only on PARAKH"].max_row == 100
+
+    h1, _ = session_headers("regteach1")
+    mine = load_workbook(io.BytesIO(client.get(f"{API}/teacher/register/report.xlsx", headers=h1).content))
+    assert mine["My students"].max_row == 36                                         # only their 35
+    assert client.get(f"{API}/school/register/reports/school.xlsx", headers=h1).status_code in (401, 403)
+    assert client.get(f"{API}/school/register/reports/reconciliation", headers=h1).status_code in (401, 403)

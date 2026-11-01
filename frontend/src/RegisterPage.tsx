@@ -104,6 +104,7 @@ export function RegisterPage({ api }: { api: Api }) {
         {error && <div className="alert-box alert-error" role="alert"><AlertCircle size={18} aria-hidden="true" /><div>{error}</div></div>}
       </div>
 
+      {reg && reg.students.length > 0 && <SchoolDashboard api={api} />}
       {reg && reg.students.length > 0 && <SchoolSettings api={api} />}
       {reg && reg.students.length > 0 && <SchoolData api={api} onSaved={() => { void load(); }} />}
 
@@ -377,6 +378,53 @@ export function SchoolData({ api, onSaved }: { api: Api; onSaved: () => void }) 
                 <td>{h.summary.ready} / {h.summary.problem} / {h.summary.review}</td></tr>))}
             </tbody></table>
         </details>)}
+    </div>
+  );
+}
+
+// ─── Phase 6: UDISE+ · APAAR · PARAKH on the school's dashboard, and the reports ───────────────────────────────
+
+interface Recon { ok: boolean; error?: string; source?: string; differs?: Record<string, number>;
+  counts?: { udise: number; parakh: number; matched: number; differ: number; only_udise: number; only_parakh: number };
+  apaar?: { missing_both: number; only_udise: number; only_parakh: number; differ: number; unmatched_without: number } }
+
+export function SchoolDashboard({ api }: { api: Api }) {
+  const [r, setR] = useState<Recon | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => { call<Recon>(api, "GET", "/school/register/reports/reconciliation").then(setR).catch((e) => setError((e as Error).message)); }, [api]);
+  const tile = (label: string, value: number | undefined, warn = false) => (
+    <div className="reg-field" style={{ border: "1px solid var(--line)", borderRadius: 8, padding: "0.6rem 0.8rem", background: "#fff" }}>
+      <span>{label}</span><b className={warn && value ? "sdms-warn" : ""} style={{ fontSize: "1.35rem" }}>{value ?? "—"}</b></div>);
+  return (
+    <div className="ui-panel">
+      <h3 className="lib-section-title">UDISE+ · APAAR · PARAKH</h3>
+      {error && <p className="sdms-warn">{error}</p>}
+      {r && !r.ok && <p className="lib-muted">{r.error}</p>}
+      {r?.ok && r.counts && r.apaar && (<>
+        <p className="lib-muted">Compared from the {r.source} with UDISE+ (SDMS) as last fetched - by APAAR ID, then admission
+          number, then name and date of birth.</p>
+        <div className="reg-grid wide">
+          {tile("On UDISE+", r.counts.udise)}{tile("On PARAKH", r.counts.parakh)}{tile("Matched", r.counts.matched)}
+          {tile("Matched, with differences", r.counts.differ, true)}{tile("Only on UDISE+", r.counts.only_udise, true)}
+          {tile("Only on PARAKH", r.counts.only_parakh, true)}
+        </div>
+        <b>APAAR</b>
+        <div className="reg-grid wide">
+          {tile("Missing on both", r.apaar.missing_both, true)}{tile("Only on PARAKH", r.apaar.only_parakh, true)}
+          {tile("Only on UDISE+", r.apaar.only_udise, true)}{tile("Different", r.apaar.differ, true)}
+          {tile("Not matched, no APAAR", r.apaar.unmatched_without, true)}
+        </div>
+        {r.differs && Object.keys(r.differs).length > 0 && (
+          <p className="lib-muted">Differences: {Object.entries(r.differs).map(([k, n]) => `${k} ${n}`).join(" · ")}</p>)}
+      </>)}
+      <div className="sdms-actions">
+        <button type="button" className="btn btn-primary"
+                onClick={async () => setError(await downloadSheet(api, "/school/register/reports/reconciliation.xlsx", "UDISE_APAAR_PARAKH_report.xlsx"))}>
+          <Download size={15} aria-hidden="true" /> UDISE+ · APAAR · PARAKH report (Excel)</button>
+        <button type="button" className="btn btn-outline"
+                onClick={async () => setError(await downloadSheet(api, "/school/register/reports/school.xlsx", "School_Register_report.xlsx"))}>
+          <Download size={15} aria-hidden="true" /> School report: students, teachers, attendance, marks (Excel)</button>
+      </div>
     </div>
   );
 }
