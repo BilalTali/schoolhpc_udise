@@ -208,3 +208,41 @@ def test_apaar_from_the_consent_sheet_only_with_a_signed_consent_and_never_twice
     assert path == "api/apaar/generate" and body["idType"] == 1 and body["date"] == "28/10/2026"
     again = upload(["Father", "TEST FATHER", "AADHAAR", "234567890123", "TEST PLACE", "28/10/2026", "Yes"])
     assert again["ready"] == 0 and again["already"] == 1                 # never generated twice
+
+
+def _fetch_again():
+    sdms_data.start("s1")
+    for _ in range(100):
+        if sdms_data.progress("s1")["job"]["status"] != "RUNNING":
+            break
+        time.sleep(0.05)
+
+
+def test_an_apaar_id_generated_on_the_udise_website_counts_as_generated(world, monkeypatch):
+    # SDMS's student record carries the APAAR ID: no separate 'Read APAAR status' is needed to see it
+    generated = [{**s, "apaarId": "999988887777", "apaarIdStatus": 1, "apaarIdStatusDesc": "Generated"} if s["studentId"] == 1
+                 else {**s, "apaarId": None, "apaarIdStatus": 9, "apaarIdStatusDesc": ""} for s in STUDENTS]
+    monkeypatch.setattr(FakeSdms, "students", lambda self, sid: copy.deepcopy(generated))
+    _fetch_again()
+    rows = {r["student_id"]: r for r in sdms_aadhaar.overview("s1")["students"]}
+    assert rows[1]["apaar_id"] == "999988887777" and rows[1]["apaar_status"] == "Generated" and not rows[1]["apaar_ready"]
+    assert rows[2]["apaar_id"] is None
+    assert sdms_aadhaar.overview("s1")["counts"]["apaar_done"] == 1
+
+
+def test_fetching_again_keeps_the_apaar_list_read_before(world):
+    assert sdms_aadhaar.read_apaar("s1")["ok"]
+    _fetch_again()
+    kept = next(s for s in sdms_data.load("s1")["students"] if s["general"]["studentId"] == 1)
+    assert kept["apaar"]["apaarRemarksMessage"] == "Not generated"
+
+
+def test_the_next_step_says_pen_missing_only_when_the_pen_is_missing():
+    from backend.services.sdms_apaar_excel import _next_step
+    base = {"apaar_ready": False, "group": "verified", "reason": None, "pen": "23176636288", "apaar_status": None}
+    assert "wait for the APAAR ID" in _next_step({**base, "apaar_allowed": 2,
+                                                  "apaar_status": "Request for APAAR ID has been submitted successfully"})
+    assert "PEN missing" in _next_step({**base, "pen": None})
+    assert "generate again later" in _next_step({**base, "apaar_allowed": 1,
+                                                 "apaar_status": "Error from APAAR services. Please regenerate APAAR Id"})
+    assert "Generate the APAAR ID" in _next_step({**base, "apaar_ready": True})

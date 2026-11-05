@@ -171,3 +171,89 @@ def test_an_ended_session_stops_the_sync(world, monkeypatch):
     sdms_sync.start("s1")
     job = wait("s1")
     assert job["status"] == "FAILED" and "Connect again" in job["error"] and FakeSdms.posts == []
+
+
+def full(edits, sheet="All students"):
+    wb = load_workbook(io.BytesIO(sdms_data.excel("s1")))
+    ws = wb[sheet]
+    head = [c.value for c in ws[2]]
+    for label, value in edits.items():
+        ws.cell(row=3, column=head.index(label) + 1, value=value)
+    out = io.BytesIO()
+    wb.save(out)
+    return out.getvalue()
+
+
+def test_the_all_details_workbook_untouched_changes_nothing(world):
+    result = sdms_sync.validate("s1", full({}), "all.xlsx")
+    assert result["ok"] and result["ready"] == 0
+    assert all(not s["changes"] and not s["problems"] for s in result["students"])
+
+
+def test_the_all_details_workbook_is_a_bulk_update(world):
+    content = full({"Mother's Name": "TEST MOTHER", "Medium of Instruction": "English", "Student's Height (in CMs)": 128,
+                    "Whether BPL beneficiary?": "No", "Class/Section Roll Number": "7",
+                    "Approximate Distance of student's residence to school": "2 - Between 1-3 Kms",
+                    "Central Scholarship": "Yes", "Class": "X"})
+    result = sdms_sync.validate("s1", content, "all.xlsx")
+    [b] = result["students"]
+    changes = {c["label"]: (c["before"], c["after"]) for c in b["changes"]}
+    assert changes == {"Mother's Name": ("", "TEST MOTHER"), "Medium of Instruction": ("", "English"),
+                       "Student's Height (in CMs)": ("5", "128"), "Whether BPL beneficiary?": ("Yes", "No"),
+                       "Class/Section Roll Number": ("", "7"),
+                       "Approximate Distance of student's residence to school": ("1 - Less than 1 km", "2 - Between 1-3 Kms")}
+    assert b["problems"] == [] and set(b["ignored"]) == {"Central Scholarship", "Class"}
+    assert result["ready"] == 1 and FakeSdms.posts == []
+    sdms_sync.start("s1")
+    job = wait("s1")
+    assert job["status"] == "COMPLETED" and job["results"][0]["error"] is None, job
+    assert [p for p, _ in FakeSdms.posts] == ["api/cy/students/12", "api/v2/students/enrolment/12", "api/v2/AY/students/facility/12"]
+    assert FakeSdms.posts[0][1]["isBplYN"] == 2 and FakeSdms.posts[1][1]["rollNumber"] == "7"
+    assert FakeSdms.posts[2][1]["heightInCm"] == 128 and FakeSdms.posts[2][1]["distanceFrmSchool"] == 2
+
+
+def test_a_class_sheet_edit_counts_and_a_clash_is_flagged(world):
+    wb = load_workbook(io.BytesIO(full({"Mother's Name": "TEST MOTHER"}, sheet="VI")))
+    assert sdms_sync.validate("s1", full({"Mother's Name": "TEST MOTHER"}, sheet="VI"), "all.xlsx")["ready"] == 1
+    ws = wb["All students"]
+    head = [c.value for c in ws[2]]
+    ws.cell(row=3, column=head.index("Mother's Name") + 1, value="OTHER MOTHER")
+    out = io.BytesIO()
+    wb.save(out)
+    [b] = sdms_sync.validate("s1", out.getvalue(), "all.xlsx")["students"]
+    assert any("changed differently" in p for p in b["problems"])
+
+
+def test_the_sheet_has_only_incomplete_forms(world, monkeypatch):
+    ws = load_workbook(io.BytesIO(sdms_data.completion_excel("s1")))["To complete"]
+    assert ws.max_row == 3 and ws.cell(row=3, column=5).value == "PEN12"          # the incomplete student
+    real = sdms_data.sdms_form.completion
+    monkeypatch.setattr(sdms_data.sdms_form, "completion",
+                        lambda s, m: [{**c, "issue": ""} for c in real(s, m)])     # every form complete
+    ws = load_workbook(io.BytesIO(sdms_data.completion_excel("s1")))["To complete"]
+    assert ws.max_row == 3 and "complete - nothing to fill" in ws.cell(row=3, column=1).value
+
+
+def test_a_saved_student_is_not_ready_again_and_never_sent_twice(world):
+    sdms_sync.validate("s1", filled({"Mother's Name": "TEST MOTHER"}), "sheet.xlsx")
+    assert sdms_sync.last_plan("s1")["ready"] == 1
+    sdms_sync.start("s1")
+    assert wait("s1")["status"] == "COMPLETED"
+    plan = sdms_sync.last_plan("s1")
+    assert plan["ready"] == 0 and plan["already_saved"] == 1 and plan["students"][0]["done"] is True
+    posts = len(FakeSdms.posts)
+    again = sdms_sync.start("s1")
+    assert again["started"] is False and "already on SDMS" in again["error"] and len(FakeSdms.posts) == posts
+
+
+def test_disconnecting_udise_stops_a_running_save(world, monkeypatch):
+    sdms_sync.validate("s1", filled({"Mother's Name": "TEST MOTHER"}), "sheet.xlsx")
+    calls = {"n": 0}
+
+    def session(sid):
+        calls["n"] += 1                                   # connected when the save starts, then disconnected
+        return {"services": {"sdms": {"connected": calls["n"] == 1}}}
+    monkeypatch.setattr(udise_sessions, "_load", session)
+    sdms_sync.start("s1")
+    job = wait("s1")
+    assert job["status"] == "FAILED" and "disconnected" in job["error"] and FakeSdms.posts == []

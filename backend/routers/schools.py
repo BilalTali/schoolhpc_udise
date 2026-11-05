@@ -23,7 +23,9 @@ from backend.schemas.schemas import (
     TeacherCreateRequest, TeacherResponse, TeacherUpdateRequest,
 )
 from backend.services import (audit, hpc_sessions, reports_pdf, sdms_aadhaar, sdms_admit, sdms_apaar_excel, sdms_bulk, sdms_data,
-                              sdms_sync, udise_parakh, udise_sessions)
+                              sdms_sync, udise_parakh, udise_profile, udise_sessions, udise_teacher)
+from backend.udise import bearer as udise_bearer
+from backend.udise.client import UdiseError
 from backend.services.safe_paths import inside
 from backend.services.auth_service import end_all_sessions, hash_password, require_school_admin
 
@@ -600,7 +602,7 @@ class UdiseConnectRequest(BaseModel):
 
 @router.get("/udise/status")
 def udise_status(admin: School = Depends(require_school_admin)):
-    return udise_sessions.status(admin.id)
+    return udise_sessions.status(admin.id, check=True)
 
 
 @router.post("/udise/connect")
@@ -653,7 +655,11 @@ def sdms_students(admin: School = Depends(require_school_admin)):
 
 @router.get("/udise/sdms/students.xlsx")
 def sdms_students_excel(admin: School = Depends(require_school_admin)):
-    content = sdms_data.excel(admin.id)
+    from backend.services import sdms_sync
+    # Collect SDMS studentIds successfully synced (accepted) — stored in the per-school sync log
+    log = sdms_sync._read(admin.id, "sdms_sync_log.json") or []
+    accepted_ids = {entry["student_id"] for entry in log if not entry.get("error")}
+    content = sdms_data.excel(admin.id, accepted_student_ids=accepted_ids)
     if content is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "No SDMS data yet. Press 'Fetch all students'.")
     audit.record(f"school_admin:{admin.id}", "sdms_download", "udise", admin.id, None, {})
@@ -803,7 +809,8 @@ class ApaarRequest(BaseModel):
 def sdms_aadhaar_overview(admin: School = Depends(require_school_admin)):
     found = sdms_aadhaar.overview(admin.id)
     if found is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Fetch the students from SDMS first.")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Read the staff from UDISE+ first (Teacher module)." if name == "teachers"
+                            else "Fetch the students from SDMS first.")
     return {**found, **sdms_aadhaar.progress(admin.id)}
 
 
@@ -969,7 +976,8 @@ def sdms_bulk_run(kind: str, payload: BulkRunRequest, admin: School = Depends(re
 # Reports: a printable PDF of each pendency, and UDISE+ against PARAKH
 
 REPORTS = {"aadhaar": "AADHAAR_pending.pdf", "apaar": "APAAR_status.pdf", "completion": "SDMS_forms_pending.pdf",
-           "compare": "UDISE_vs_PARAKH.pdf"}
+           "compare": "UDISE_vs_PARAKH.pdf", "profile": "UDISE_School_Profile_status.pdf",
+           "teachers": "UDISE_Teachers_status.pdf"}
 
 
 def _school_compare(admin: School, db: Session):
@@ -995,6 +1003,11 @@ def udise_report_pdf(name: str, admin: School = Depends(require_school_admin), d
         if not result.get("ok"):
             raise HTTPException(status.HTTP_409_CONFLICT, result["error"])
         content = reports_pdf.compare(admin.id, admin, result)
+    elif name == "teachers":
+        found = udise_teacher.status(admin.id)
+        content = reports_pdf.teachers(admin, found) if found else None
+    elif name == "profile":
+        content = reports_pdf.profile(admin, _udise_call(udise_profile.overview, admin.id))
     else:
         content = {"aadhaar": reports_pdf.aadhaar, "apaar": reports_pdf.apaar, "completion": reports_pdf.completion}[name](admin.id, admin)
     if content is None:
@@ -1002,3 +1015,122 @@ def udise_report_pdf(name: str, admin: School = Depends(require_school_admin), d
     audit.record(f"school_admin:{admin.id}", "report_download", "udise", admin.id, None, {"report": name})
     return StreamingResponse(io.BytesIO(content), media_type="application/pdf",
                              headers={"Content-Disposition": f'attachment; filename="{REPORTS[name]}"'})
+
+
+# ---------------------------------------------------------------------------
+# UDISE+ School Profile & Facilities (DCF 1.31 to 2.28): download the year's answers as Excel, upload, check, save
+# ---------------------------------------------------------------------------
+
+def _udise_call(fn, *args):
+    """A UDISE+ call: an ended session or an unanswering UDISE+ becomes a clear message for the page."""
+    try:
+        return fn(*args)
+    except udise_bearer.SessionEnded as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
+    except UdiseError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc))
+
+
+class ProfileSaveRequest(BaseModel):
+    confirm: bool = Field(False, description="must be true: the person agreed to save to UDISE+")
+    only: Optional[List[str]] = Field(None, description="just these forms (their keys)")
+
+
+@router.get("/udise/profile")
+def udise_profile_overview(admin: School = Depends(require_school_admin)):
+    """The forms as UDISE+ holds them now for this session: when each was saved, how many answers are given."""
+    found = _udise_call(udise_profile.overview, admin.id)
+    return {**found, "plan": udise_profile.public_plan(udise_profile.last_plan(admin.id))}
+
+
+@router.get("/udise/profile.xlsx")
+def udise_profile_excel(admin: School = Depends(require_school_admin)):
+    content, name = _udise_call(udise_profile.excel, admin.id)
+    audit.record(f"school_admin:{admin.id}", "udise_profile_download", "udise", admin.id, None, {})
+    return StreamingResponse(io.BytesIO(content), headers={"Content-Disposition": f'attachment; filename="{name}"'},
+                             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
+@router.post("/udise/profile/validate")
+def udise_profile_validate(file: UploadFile = File(...), admin: School = Depends(require_school_admin)):
+    """Checks a filled School Profile workbook against what UDISE+ holds now. Sends nothing."""
+    content = file.file.read(5 * 1024 * 1024 + 1)
+    if len(content) > 5 * 1024 * 1024:
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "The file is larger than 5 MB.")
+    if not unpacked_size_ok(content):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "This is not an Excel file the app can read (.xlsx), or it is damaged.")
+    result = _udise_call(udise_profile.validate, admin.id, content, file.filename or "profile.xlsx")
+    if not result.get("ok"):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, result["error"])
+    return result
+
+
+@router.post("/udise/profile/save")
+def udise_profile_save(payload: ProfileSaveRequest, admin: School = Depends(require_school_admin)):
+    """Saves the checked changes to UDISE+, form by form. Only when the request says the person confirmed."""
+    if not payload.confirm:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Confirm first: this saves the changes to UDISE+.")
+    result = _udise_call(udise_profile.save, admin.id, payload.only)
+    if not result.get("ok"):
+        raise HTTPException(status.HTTP_409_CONFLICT, result["error"])
+    return result
+
+
+# ---------------------------------------------------------------------------
+# UDISE+ Teacher module: read the staff, Excel with one row per person and a sheet for new staff, check, save
+# ---------------------------------------------------------------------------
+
+class TeacherSaveRequest(BaseModel):
+    confirm: bool = Field(False, description="must be true: the person agreed to save to UDISE+")
+    only: Optional[List[int]] = Field(None, description="just these staff ids")
+
+
+@router.post("/udise/teachers/read")
+def udise_teachers_read(admin: School = Depends(require_school_admin)):
+    result = udise_teacher.start(admin.id)
+    if not result.get("started"):
+        raise HTTPException(status.HTTP_409_CONFLICT, result["error"])
+    return result
+
+
+@router.get("/udise/teachers")
+def udise_teachers_status(admin: School = Depends(require_school_admin)):
+    """Where each staff member stands (from the last read), what is still needed and what the app updated."""
+    return {**udise_teacher.progress(admin.id), "status": udise_teacher.status(admin.id),
+            "plan": udise_teacher.public_plan(udise_teacher.last_plan(admin.id))}
+
+
+@router.get("/udise/teachers.xlsx")
+def udise_teachers_excel(admin: School = Depends(require_school_admin)):
+    found = udise_teacher.excel(admin.id)
+    if not found:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Read the staff from UDISE+ first.")
+    content, name = found
+    audit.record(f"school_admin:{admin.id}", "udise_teachers_download", "udise", admin.id, None, {})
+    return StreamingResponse(io.BytesIO(content), headers={"Content-Disposition": f'attachment; filename="{name}"'},
+                             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
+@router.post("/udise/teachers/validate")
+def udise_teachers_validate(file: UploadFile = File(...), admin: School = Depends(require_school_admin)):
+    content = file.file.read(5 * 1024 * 1024 + 1)
+    if len(content) > 5 * 1024 * 1024:
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "The file is larger than 5 MB.")
+    if not unpacked_size_ok(content):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "This is not an Excel file the app can read (.xlsx), or it is damaged.")
+    result = udise_teacher.validate(admin.id, content, file.filename or "teachers.xlsx")
+    if not result.get("ok"):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, result["error"])
+    return result
+
+
+@router.post("/udise/teachers/save")
+def udise_teachers_save(payload: TeacherSaveRequest, admin: School = Depends(require_school_admin)):
+    if not payload.confirm:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Confirm first: this saves the changes to UDISE+.")
+    result = _udise_call(udise_teacher.save, admin.id, payload.only)
+    if not result.get("ok"):
+        raise HTTPException(status.HTTP_409_CONFLICT, result["error"])
+    audit.record(f"school_admin:{admin.id}", "udise_teachers_save", "udise", admin.id, None,
+                 {"items": [{"form": r["form"], "status": r["status"]} for r in result["results"]]})
+    return result

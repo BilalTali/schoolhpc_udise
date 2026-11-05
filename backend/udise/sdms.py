@@ -67,8 +67,16 @@ class Sdms:
                 body = resp.json()
             except ValueError:
                 raise client.UdiseError(f"SDMS answered {path.split('/')[1] if '/' in path else path} with HTTP {resp.status_code}.")
+            if resp.status_code < 400 and body.get("status") is False and not (body.get("message") or body.get("error")) \
+                    and attempt == 1:
+                time.sleep(5)                                  # SDMS sometimes says "no" without a reason when busy:
+                continue                                       # a read changes nothing, so it is asked once more
             if resp.status_code >= 400 or body.get("status") is False:
-                raise client.UdiseError(body.get("message") or f"SDMS answered HTTP {resp.status_code}.")
+                reason = body.get("message") or body.get("error")       # SDMS puts its reason in either
+                raise client.UdiseError(str(reason) if reason else
+                                        "SDMS would not open this record and gave no reason (HTTP "
+                                        f"{resp.status_code}) - the form may be locked or being changed on SDMS. "
+                                        "Open the student on the SDMS website to see why.")
             return body.get("data")
         raise client.UdiseError("SDMS did not answer. Please try again later.")
 

@@ -3,6 +3,7 @@ import { AlertCircle, CheckCircle2, ClipboardCheck, Download, RefreshCw, UserPlu
 import { CardHub } from "./CardHub";
 import { ApiError, apiFetch, call } from "./api";
 import type { Api } from "./api";
+import { saveBlob } from "./downloadSheet";
 import { SdmsUpdate } from "./SdmsUpdate";
 import { SdmsAdmit } from "./SdmsAdmit";
 
@@ -78,12 +79,7 @@ export function SdmsPage({ api }: { api: Api }) {
       setError(`The Excel file could not be made${body?.detail ? `: ${body.detail}` : ` (error ${res.status})`}.`);
       return;
     }
-    const url = URL.createObjectURL(await res.blob());
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `SDMS_${sheet === "completion" ? "to_complete" : sheet === "new-admissions" ? "new_admissions" : "students"}_${view?.session || ""}.xlsx`;
-    a.click();
-    URL.revokeObjectURL(url);
+    saveBlob(await res.blob(), `SDMS_${sheet === "completion" ? "to_complete" : sheet === "new-admissions" ? "new_admissions" : "students"}_${view?.session || ""}.xlsx`);
   };
 
   const job = progress?.job;
@@ -200,10 +196,10 @@ export function SdmsPage({ api }: { api: Api }) {
             </>) },
           { key: "complete", title: "To complete", icon: ClipboardCheck, stat: todo ? todo.to_complete : "…", statLabel: "students",
             tone: todo?.to_complete ? "warn" : "good",
-            about: "Required fields still empty or not accepted: fill the completion sheet, upload it, check and sync to SDMS.", body: () => (<>
+            about: "Only the students whose form is incomplete, with the fields still missing: download, fill, upload, save to SDMS.", body: () => (<>
         <div className="ui-panel">
           <button type="button" className="btn btn-outline" onClick={() => download("completion")} disabled={running}>
-            <Download size={15} aria-hidden="true" /> Completion sheet (required fields only)
+            <Download size={15} aria-hidden="true" /> Download incomplete forms only
           </button>
           {!todo ? <p className="lib-muted">Counting…</p> : todo.to_complete === 0 ? (
             <p className="sdms-done"><CheckCircle2 size={16} aria-hidden="true" /> Every required field of every student is filled.</p>
@@ -234,7 +230,15 @@ export function SdmsPage({ api }: { api: Api }) {
         </div>
             ) },
           { key: "excel", title: "All details in Excel", icon: Download, stat: view.session, statLabel: "session",
-            about: "Every student's full form, laid out like SDMS's tabs.", onOpen: () => { void download(); } },
+            about: "Every student's full form, laid out like SDMS's tabs: change it in Excel and upload it back.", body: () => (<>
+        <div className="ui-panel">
+          <p className="lib-muted">One row per student, the columns in SDMS's own order. Drop-downs give SDMS's choices.</p>
+          <button type="button" className="btn btn-outline" onClick={() => download()} disabled={running}>
+            <Download size={15} aria-hidden="true" /> Download all details (Excel)
+          </button>
+        </div>
+              <SdmsUpdate api={api} full onSaved={() => { void loadView(); }} />
+            </>) },
         ]} />
       )}
       {open && <StudentForm student={open} onClose={() => setOpen(null)} />}

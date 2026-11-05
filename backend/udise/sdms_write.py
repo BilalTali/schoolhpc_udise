@@ -78,6 +78,46 @@ COLUMNS: Dict[str, Tuple[str, str, str]] = {
     "Parents' Highest Education": ("facility", "parentEducation", "choice:parent_education"),
 }
 
+# The "All details" workbook (sdms_data.excel) has SDMS's own labels (sdms_form.FORM). Every field SDMS's three pages
+# save can be changed there; the rest (class, PEN, name, AADHAAR, scholarships ...) is shown but changed on SDMS.
+EDITABLE: Dict[Tuple[str, str], str] = {
+    ("general", "gender"): "choice:gender", ("general", "dob"): "date", ("general", "motherName"): "text",
+    ("general", "fatherName"): "text", ("general", "guardianName"): "text", ("general", "address"): "text",
+    ("general", "pincode"): "int", ("general", "primaryMobile"): "text", ("general", "secondaryMobile"): "text",
+    ("general", "email"): "text", ("general", "motherTongue"): "list:mother_tongue", ("general", "socCatId"): "choice:social",
+    ("general", "minorityId"): "choice:minority", ("general", "isBplYN"): "choice:yes_no", ("general", "aayBplYN"): "choice:yes_no",
+    ("general", "ewsYN"): "choice:yes_no", ("general", "cwsnYN"): "choice:yes_no", ("general", "impairmentType"): "codes",
+    ("general", "impairmentPercent"): "number", ("general", "natIndYN"): "choice:yes_no", ("general", "ooscYN"): "choice:yes_no",
+    ("general", "ooscMainstreamedYN"): "choice:yes_no",
+    ("enrolment", "admnNumber"): "text", ("enrolment", "admnStartDate"): "date", ("enrolment", "rollNumber"): "text",
+    ("enrolment", "moiId"): "list:moi", ("enrolment", "enrStatusPY"): "choice:status_py", ("enrolment", "classPY"): "class",
+    ("enrolment", "examResultPy"): "choice:exam_result", ("enrolment", "examMarksPy"): "number",
+    ("enrolment", "attendancePy"): "int", ("enrolment", "mandatorySubjectGroup"): "codes",
+    ("enrolment", "curricularSubGroup"): "codes", ("enrolment", "isRteAvailable"): "choice:yes_no",
+    ("enrolment", "rteAmount"): "number",
+    ("facility", "facilityYn"): "choice:yes_no", ("facility", "facProvided"): "facilities",
+    ("facility", "facProvidedCwsnYn"): "choice:yes_no", ("facility", "facProvidedCwsn"): "many:cwsn_facilities",
+    ("facility", "olympdsNlc"): "choice:yes_no", ("facility", "nccYn"): "choice:yes_no", ("facility", "nssYn"): "choice:yes_no",
+    ("facility", "scoutsYn"): "choice:yes_no", ("facility", "heightInCm"): "int", ("facility", "weightInKg"): "int",
+    ("facility", "distanceFrmSchool"): "choice:distance", ("facility", "parentEducation"): "choice:parent_education",
+}
+FORM_FIELDS = {label: (part, key, decode) for _s, fields in sdms_form.FORM for label, part, key, decode in fields}
+FULL_COLUMNS: Dict[str, Tuple[str, str, str]] = {label: (part, key, EDITABLE[(part, key)])
+                                                 for label, (part, key, _d) in FORM_FIELDS.items() if (part, key) in EDITABLE}
+READ_ONLY = [label for label, (part, key, _d) in FORM_FIELDS.items() if (part, key) not in EDITABLE]
+ALL_COLUMNS: Dict[str, Tuple[str, str, str]] = {**FULL_COLUMNS, **COLUMNS}
+DECODE = {(part, key): decode for part, key, decode in FORM_FIELDS.values()}
+LIST_OF_KIND = {"choice:gender": "gender", "choice:social": "social", "choice:minority": "minority",
+                "choice:yes_no": "yes_no_na", "choice:status_py": "status_py", "choice:exam_result": "exam_result",
+                "choice:distance": "distance", "choice:parent_education": "parent_education",
+                "list:mother_tongue": "mother_tongue", "list:moi": "moi"}
+
+
+def shown(part: str, key: str, value: Any, masters: Dict[str, Any]) -> str:
+    """A value in the words the workbooks show it."""
+    words = sdms_form._cell(DECODE[(part, key)](value, masters)) if (part, key) in DECODE else value
+    return "" if words is None else str(words)
+
 
 def to_value(kind: str, cell: Any, masters: Dict[str, Any]) -> Tuple[Any, Optional[str]]:
     """(SDMS value, problem): the words of a sheet cell as SDMS stores them. KEEP for an empty or 'not needed' cell."""
@@ -121,26 +161,49 @@ def to_value(kind: str, cell: Any, masters: Dict[str, Any]) -> Tuple[Any, Option
             return [int(float(p)) for p in text.replace(";", ",").split(",") if p.strip()], None
         except ValueError:
             return KEEP, "numbers separated by commas"
-    if kind == "facilities":
-        names = {words.strip().lower(): int(code) for code, words in (masters.get("facilities") or {}).items()}
+    if kind == "facilities" or kind.startswith("many:"):
+        master = "facilities" if kind == "facilities" else kind.split(":", 1)[1]
+        names = {words.strip().lower(): int(code) for code, words in (masters.get(master) or {}).items()}
         wanted = [p.strip().lower() for p in text.split(",") if p.strip()]
         unknown = [w for w in wanted if w not in names]
+        if unknown and all(w.isdigit() for w in wanted):          # codes, as SDMS shows a facility it has no name for
+            return [int(w) for w in wanted], None
         return ([names[w] for w in wanted], None) if not unknown else (KEEP, "facility names from SDMS's list")
     return KEEP, None
+
+
+def _text(value: Any) -> str:
+    """A value as text to compare: 70.0 and 70 alike, a date cell as DD/MM/YYYY."""
+    if hasattr(value, "strftime"):
+        return value.strftime("%d/%m/%Y")
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    text = str("" if value is None else value).strip().lower()
+    try:
+        number = float(text)
+        if text and number.is_integer() and not text.startswith("0"):
+            return str(int(number))
+    except ValueError:
+        pass
+    return text
 
 
 def _same(a: Any, b: Any) -> bool:
     if isinstance(a, list) or isinstance(b, list):
         return sorted(map(str, a or [])) == sorted(map(str, b or []))
-    return str("" if a is None else a).strip().lower() == str("" if b is None else b).strip().lower()
+    return _text(a) == _text(b)
 
 
-def changes_from_row(student: Dict[str, Any], row: Dict[str, Any], masters: Dict[str, Any]) -> Tuple[Dict[str, Dict[str, Any]], List[str]]:
-    """({tab: {key: new value}}, problems): what a sheet row changes for this student - only real changes."""
+def changes_from_row(student: Dict[str, Any], row: Dict[str, Any], masters: Dict[str, Any],
+                     labels: Optional[Dict[str, Tuple[str, str, str]]] = None) -> Tuple[Dict[str, Dict[str, Any]], List[str]]:
+    """({tab: {key: new value}}, problems): what a sheet row changes for this student - only real changes. A cell
+    still showing what SDMS holds (in the workbook's words) is left alone, so only the cells edited are read."""
     changes: Dict[str, Dict[str, Any]] = {}
     problems: List[str] = []
-    for label, (tab, key, kind) in COLUMNS.items():
+    for label, (tab, key, kind) in (labels or COLUMNS).items():
         if label not in row:
+            continue
+        if kind != "skip" and _text(row[label]) == _text(shown(tab, key, (student.get(tab) or {}).get(key), masters)):
             continue
         value, problem = to_value(kind, row[label], masters)
         if problem:

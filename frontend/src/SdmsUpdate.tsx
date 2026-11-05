@@ -3,16 +3,18 @@ import { AlertCircle, CheckCircle2, RefreshCw, Upload } from "lucide-react";
 import { ApiError, apiFetch, call } from "./api";
 import type { Api } from "./api";
 
-// Updating SDMS from the filled completion sheet: upload -> checked here (nothing sent) -> the person saves one
+// Updating SDMS from the filled completion sheet or the All details workbook: upload -> checked here (nothing sent) -> the person saves one
 // student first, or all - each after confirming. Every save is read back from SDMS.
 
-interface Change { tab: string; label: string; before: string; after: string }
-interface PlanStudent { row: number; student_id: number; name: string; class: string; changes: Change[]; problems: string[]; still_missing: string[] }
-interface Plan { file_name: string; checked_at: string; students: PlanStudent[]; not_found: string[]; ready: number; fields: number; with_problems: number }
+interface Change { tab: string; label: string; before: string; after: string; cell?: string }
+interface PlanStudent { row: number; sheet?: string; student_id: number; name: string; class: string; changes: Change[]; problems: string[];
+  ignored?: string[]; still_missing: string[]; done?: boolean }
+interface Plan { file_name: string; checked_at: string; students: PlanStudent[]; not_found: string[]; ready: number; fields: number;
+  with_problems: number; already_saved?: number }
 interface Result { student_id: number; name: string; class: string; saved: string[]; error: string | null }
 interface Job { status: "RUNNING" | "COMPLETED" | "FAILED"; done: number; total: number; results: Result[]; error: string | null }
 
-export function SdmsUpdate({ api, onSaved }: { api: Api; onSaved: () => void }) {
+export function SdmsUpdate({ api, onSaved, full = false }: { api: Api; onSaved: () => void; full?: boolean }) {
   const [plan, setPlan] = useState<Plan | null>(null);
   const [job, setJob] = useState<Job | null>(null);
   const [busy, setBusy] = useState(false);
@@ -75,12 +77,17 @@ export function SdmsUpdate({ api, onSaved }: { api: Api; onSaved: () => void }) 
     }
   };
 
-  const ready = (plan?.students || []).filter((s) => s.changes.length && !s.problems.length);
+  const ready = (plan?.students || []).filter((s) => s.changes.length && !s.problems.length && !s.done);
   return (
     <div className="ui-panel">
-      <h3 className="lib-section-title">Update SDMS from the completion sheet</h3>
-      <p className="lib-muted">Fill the highlighted cells in the completion sheet, then upload it here. It is checked against what SDMS
-        holds and nothing is sent until you press Save. AADHAAR and the name as in AADHAAR are not changed from here.</p>
+      <h3 className="lib-section-title">{full ? "Upload the changed student details" : "Upload the filled incomplete forms"}</h3>
+      <p className="lib-muted">{full
+        ? <>Change any white-headed column on the "All students" sheet (or a class sheet), save the file and upload it here.
+            Only the cells you changed are read. Grey-headed columns (class, PEN, name, AADHAAR, scholarships…) are changed on
+            SDMS itself.</>
+        : <>The sheet has only the students whose SDMS form is incomplete: fill the highlighted (yellow) cells, then upload it here.</>}{" "}
+        It is checked against what SDMS holds and nothing is sent until you press Save. AADHAAR and the name as in AADHAAR
+        are not changed from here.</p>
       <label className="btn btn-outline sdms-upload">
         <Upload size={15} aria-hidden="true" /> {busy && !running ? "Checking…" : "Upload the filled sheet"}
         <input type="file" accept=".xlsx" hidden disabled={busy || running}
@@ -91,6 +98,7 @@ export function SdmsUpdate({ api, onSaved }: { api: Api; onSaved: () => void }) 
       {plan && !running && (
         <div className="sdms-plan">
           <p><b>{plan.file_name}</b>: <b>{plan.ready}</b> student{plan.ready === 1 ? "" : "s"} ready to save ({plan.fields} field{plan.fields === 1 ? "" : "s"})
+            {!!plan.already_saved && <>, <b>{plan.already_saved}</b> already saved on SDMS (not sent again)</>}
             {plan.with_problems > 0 && <>, <b className="sdms-warn">{plan.with_problems}</b> with cells to correct first</>}.</p>
           {plan.not_found.length > 0 && (
             <div className="alert-box alert-error" role="alert"><AlertCircle size={18} aria-hidden="true" /><div>{plan.not_found.join("; ")}</div></div>
@@ -99,7 +107,7 @@ export function SdmsUpdate({ api, onSaved }: { api: Api; onSaved: () => void }) 
             {plan.students.map((s) => (
               <li key={s.student_id}>
                 <details open={plan.students.length <= 5}>
-                  <summary><b>{s.name}</b> · {s.class} · row {s.row} · {s.changes.length} change{s.changes.length === 1 ? "" : "s"}
+                  <summary>{s.done && <CheckCircle2 size={14} aria-hidden="true" color="#046A38" />} <b>{s.name}</b>{s.done && " (saved)"} · {s.class} · {s.sheet ? `'${s.sheet}' ` : ""}row {s.row} · {s.changes.length} change{s.changes.length === 1 ? "" : "s"}
                     {s.problems.length > 0 && <span className="sdms-warn"> · {s.problems.length} to correct</span>}</summary>
                   {s.changes.length > 0 && (
                     <table className="sdms-table sdms-fit">
@@ -108,6 +116,7 @@ export function SdmsUpdate({ api, onSaved }: { api: Api; onSaved: () => void }) 
                     </table>
                   )}
                   {s.problems.length > 0 && <p className="sdms-warn">Correct in the sheet: {s.problems.join("; ")}</p>}
+                  {!!s.ignored?.length && <p className="lib-muted">Changed in the file but not sent (change on SDMS itself): {s.ignored.join("; ")}</p>}
                   {s.still_missing.length > 0 && <p className="lib-muted">Still missing after this: {s.still_missing.join("; ")}</p>}
                 </details>
               </li>
@@ -136,11 +145,14 @@ export function SdmsUpdate({ api, onSaved }: { api: Api; onSaved: () => void }) 
           {running && <div><RefreshCw size={14} className="spin" aria-hidden="true" /> <b>Saving to SDMS…</b> {job.done} of {job.total}</div>}
           {running && <div className="sdms-bar"><span style={{ width: `${job.total ? Math.round((job.done / job.total) * 100) : 5}%` }} /></div>}
           {job.status === "FAILED" && job.error && <div className="alert-box alert-error" role="alert"><AlertCircle size={18} aria-hidden="true" /><div>{job.error}</div></div>}
-          {job.results.length > 0 && (
-            <table className="sdms-table sdms-fit">
+          {job.results.length > 0 && (<>
+            <p><b>{job.results.filter((r) => !r.error).length}</b> saved and confirmed on SDMS
+              {job.results.some((r) => r.error) && <>, <b className="sdms-warn">{job.results.filter((r) => r.error).length}</b> not saved (listed first)</>}.</p>
+            <table className="sdms-table sdms-results">
+              <colgroup><col style={{ width: "28%" }} /><col style={{ width: "20%" }} /><col /></colgroup>
               <thead><tr><th>Student</th><th>Saved</th><th>Result</th></tr></thead>
               <tbody>
-                {job.results.map((r) => (
+                {[...job.results].sort((x, y) => Number(!x.error) - Number(!y.error)).map((r) => (
                   <tr key={r.student_id}>
                     <td><b>{r.name}</b><small>{r.class}</small></td>
                     <td>{r.saved.join(", ") || "—"}</td>
@@ -149,7 +161,7 @@ export function SdmsUpdate({ api, onSaved }: { api: Api; onSaved: () => void }) 
                 ))}
               </tbody>
             </table>
-          )}
+          </>)}
         </div>
       )}
     </div>

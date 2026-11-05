@@ -235,7 +235,7 @@ def apaar(school_id: str, school) -> Optional[bytes]:
         return None
     data = load(school_id)
     rows = _in_class_order(rows, data)
-    read = any("apaar" in s for s in data["students"])
+    read = any("apaar" in s or "apaarIdStatus" in s["general"] for s in data["students"])
     pending = [r for r in rows if not r["apaar_id"]]
     done = [r for r in rows if r["apaar_id"]]
     cols = [("#", 3), ("Class", 9), ("Student", 15), ("Father's name", 14), ("PEN", 10), ("AADHAAR", 10),
@@ -318,3 +318,78 @@ def compare(school_id: str, school, result: Dict[str, Any]) -> bytes:
     intro = ("PARAKH's students are the classes the teachers fetched; parentage on PARAKH is Part A1's guardian name. "
              + (f"{c['udise_higher_classes']} UDISE+ students in classes PARAKH does not cover are left out." if c.get("udise_higher_classes") else ""))
     return build("UDISE+ and PARAKH: students compared", _school(school, data, "From the app's last reads of both"), tiles, sections, intro)
+
+
+def _when(iso: str) -> str:
+    try:
+        return datetime.fromisoformat(str(iso).rstrip("Z")).strftime("%d %b %Y, %I:%M %p") + " UTC"
+    except ValueError:
+        return str(iso or "")
+
+
+def profile(school, found: Dict[str, Any]) -> bytes:
+    """UDISE+ School Profile & Facilities: where each form stands, every question still needed with its exact place
+    (DCF item, and sheet and row of the app's workbook), totals that do not add up, and what the app updated."""
+    year = found.get("year") or ""
+    forms, needed, problems = found["forms"], found["needed"], found["problems"]
+    updated = [u for u in found["updated"] if not year or u.get("year") in (None, year)]
+    info = {"name": found["school"].get("name") or getattr(school, "school_name", ""),
+            "udise": found["school"].get("udise_code") or getattr(school, "udise_code", ""),
+            "session": f"Session {year}" if year else "", "source": "UDISE+ as read " + _when(found["read_at"])}
+    tiles = [("Forms", len(forms), "info"), ("Questions asked", sum(f["questions"] for f in forms), "info"),
+             ("Answered", sum(f["answered"] for f in forms), "good"), ("Still needed", len(needed), "bad" if needed else "good"),
+             ("Totals to correct", len(problems), "bad" if problems else "good"), ("Updated from the app", len(updated), "info"),
+             ("Forms certified", sum(1 for f in forms if f["certified"]), "warn")]
+    sections = [
+        {"title": "Forms", "note": "Answered = questions asked of this school (its classes, and 'if Yes' questions only after a Yes) "
+                                   "that have an answer on UDISE+.",
+         "columns": [("DCF items", 10), ("Form", 32), ("Answered", 9), ("Still needed", 9), ("Last saved on UDISE+", 13),
+                     ("Certified", 7), ("Workbook sheet", 20)],
+         "rows": [[f["dcf"], f["title"] + (f"\nCould not be read: {f['error']}" if f["error"] else ""),
+                   f"{f['answered']} of {f['questions']}", f["needed"] or "—", (f["modified"] or "never")[:16], "Yes" if f["certified"] else "No",
+                   f["sheet"]] for f in forms]},
+        {"title": "Still needed", "note": "Each question to answer, where it is: the DCF item on UDISE+, and the sheet and row "
+                                          "in the workbook downloaded from the app.",
+         "columns": [("#", 3), ("DCF items", 9), ("Item", 8), ("Question", 40), ("Workbook: sheet, row", 18), ("Allowed answers", 22)],
+         "rows": [[n, x["dcf"], x["item"], x["question"], f"{x['sheet']}, row {x['row']}", x["allowed"]] for n, x in enumerate(needed, 1)],
+         "empty": "Every question asked of this school has an answer on UDISE+."},
+        {"title": "Totals that do not add up", "note": "UDISE+ refuses to save these forms until they agree.",
+         "columns": [("DCF items", 10), ("Form", 30), ("What to correct", 60)],
+         "rows": [[p["dcf"], p["title"], p["message"]] for p in problems], "empty": "None."},
+        {"title": f"Updated from the app{' for ' + year if year else ''}", "note": "Every answer the app saved to UDISE+: when, "
+                                                                                    "where, what it was and what it is now.",
+         "columns": [("#", 3), ("When", 12), ("DCF items", 8), ("Item", 8), ("Question", 33), ("Before", 11), ("After", 11), ("Result", 10)],
+         "rows": [[n, _when(u["at"]), u["dcf"], u["item"], u["question"], u["before"] if u["before"] not in (None, "") else "—",
+                   u["after"], u["result"]] for n, u in enumerate(reversed(updated), 1)],
+         "empty": "Nothing has been saved from the app yet."},
+    ]
+    return build("UDISE+ School Profile & Facilities: status", info, tiles, sections)
+
+
+def teachers(school, found: Dict[str, Any]) -> bytes:
+    """UDISE+ Teacher module: each kind of staff, who is complete, every field still needed with its exact place in
+    the workbook (sheet, row, column), and what the app updated."""
+    groups, needed = found["groups"], found["needed"]
+    updated = found["updated"]
+    info = {"name": getattr(school, "school_name", ""), "udise": getattr(school, "udise_code", ""), "session": "",
+            "source": "UDISE+ Teacher module as read " + _when(found["read_at"])}
+    total = sum(g["staff"] for g in groups)
+    tiles = [("Staff", total, "info"), ("Complete on UDISE+", sum(g["complete"] for g in groups), "good"),
+             ("Staff with fields needed", sum(1 for g in groups for p in g["people"] if p["missing"]), "bad"),
+             ("Fields still needed", len(needed), "bad" if needed else "good"), ("Updated from the app", len(updated), "info")]
+    people = [[g["label"], p["name"], p["national_code"] or "—", "Yes" if p["complete_on_udise"] else "No",
+               len(p["missing"]) or "—", f"{g['label'][:31]}, row {p['row']}"] for g in groups for p in g["people"]]
+    sections = [
+        {"title": "Staff", "note": "Complete = UDISE+ shows all forms of the person as complete and nothing asked is empty.",
+         "columns": [("Kind", 14), ("Name", 24), ("National code", 14), ("Forms complete", 9), ("Fields needed", 9), ("Workbook: sheet, row", 22)],
+         "rows": people, "empty": "No staff on UDISE+."},
+        {"title": "Still needed", "note": "Each empty field, and exactly where it is in the workbook downloaded from the app.",
+         "columns": [("#", 3), ("Name", 18), ("Form", 6), ("Field", 34), ("Workbook: sheet, cell", 18), ("Allowed answers", 25)],
+         "rows": [[n, x["staff"], x["form"], x["field"], f"{x['sheet']}, {x['column']}{x['row']}", x["allowed"]]
+                  for n, x in enumerate(needed, 1)], "empty": "Every field asked is filled on UDISE+."},
+        {"title": "Updated from the app", "note": "Every value the app saved to UDISE+: when, who, what it was and what it is now.",
+         "columns": [("#", 3), ("When", 12), ("Name", 16), ("Form", 6), ("Field", 26), ("Before", 13), ("After", 13), ("Result", 10)],
+         "rows": [[n, _when(u["at"]), u["staff"], u["form"], u["field"], u["before"] or "—", u["after"], u["result"]]
+                  for n, u in enumerate(reversed(updated), 1)], "empty": "Nothing has been saved from the app yet."},
+    ]
+    return build("UDISE+ Teacher module: status", info, tiles, sections)

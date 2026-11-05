@@ -175,7 +175,7 @@ def start(school_id: str, only_rows: Optional[List[int]] = None) -> Dict[str, An
         return {"started": False, "error": "Nothing to add: every row has something to correct, or was added already."}
     session = udise_sessions._load(school_id)
     if not (session.get("services", {}).get("sdms") or {}).get("connected"):
-        return {"started": False, "error": "SDMS is not connected. Press 'Connect UDISE+' on the Home page first."}
+        return {"started": False, "error": udise_sessions.sdms_not_connected(school_id)}
     with _lock:
         if (JOBS.get(school_id) or {}).get("status") == "RUNNING":
             return {"started": False, "error": "Adding is already running."}

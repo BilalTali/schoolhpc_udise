@@ -285,7 +285,7 @@ h1, h2, h3, h4 { font-family: var(--font-heading); letter-spacing: -0.02em; }
   .tb-menu { display: inline-grid; place-items: center; }
   .topbar { padding: 0.8rem 1rem; }
   .content { padding: 1rem 1rem 2rem; }
-  .auth-page { grid-template-columns: 1fr; }
+  .auth-page { grid-template-columns: minmax(0, 1fr); }
   .auth-brand { padding: 2rem 1.5rem; }
   .auth-pitch h1 { font-size: 1.7rem; }
 }
@@ -575,3 +575,122 @@ select.reg-box { padding-right: 1.8rem; font-weight: 600; cursor: pointer; }
 .reg-field > span { font-size: 0.8rem; font-weight: 700; color: var(--ink-2, #475569); }
 .reg-field .reg-box { width: 100%; }
 .reg-toolbar { display: flex; flex-wrap: wrap; gap: 0.6rem; align-items: flex-end; margin: 0.4rem 0 0.8rem; }
+
+/* results of a save run: readable columns (names never broken letter by letter) */
+.sdms-results { width: 100%; table-layout: fixed; }
+.sdms-results th, .sdms-results td { white-space: normal; overflow-wrap: normal; word-break: normal; vertical-align: top; }
+.sdms-results td small { display: block; color: var(--ink-2); font-size: 0.78rem; }
+
+/* ------------------------------------------------------------ phones and small tablets
+   Everything fits the screen width; a table too wide for the screen scrolls sideways inside its own box
+   (never the whole page); inputs are 16px so the phone does not zoom in when one is tapped. */
+.form-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); }
+.kpi-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr)); }
+.hub-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 230px), 1fr)); }
+.report-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr)); }
+img, svg, video, canvas { max-width: 100%; }
+
+@media (max-width: 640px) {
+  input, select, textarea, .form-input, .form-select, .reg-box { font-size: 16px; }
+  .content { padding: 0.85rem 0.75rem 1.75rem; }
+  .topbar { padding: 0.65rem 0.75rem; gap: 0.6rem; }
+  .tb-titles h1 { font-size: 1.1rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .shell-footer { padding: 0.9rem 0.9rem 1.2rem; }
+
+  /* panels and cards: less padding, headers and button rows wrap */
+  .ui-panel { padding: 1rem 0.9rem; border-radius: 14px; }
+  .kpi-card { padding: 1rem 1.1rem; }
+  .home-card { padding: 1.1rem 1rem; }
+  .panel-header > div, .modal-header > div, .card-editor-header > div, .hub-back,
+  .sdms-actions, .conn-actions, .conn-row, .pc-actions, .bulk-footer { flex-wrap: wrap; }
+  .panel-title { min-width: 0; }
+
+  /* fixed minimum widths that are wider than a phone */
+  .roster-search-input, .bulk-toolbar > .form-select, .bulk-fill .card-input, .bulk-fill .card-text-wrap,
+  .sdms-actions .form-input { min-width: 0; width: 100%; flex: 1 1 100%; }
+  .server-activity ul { flex-basis: 100%; }
+  .as-list li b { min-width: 0; }
+  .reg-toolbar > * { flex: 1 1 100%; }
+  .sdms-filters label, .sdms-find { flex: 1 1 100%; }
+
+  /* tables: scroll sideways inside their own box; words are not broken letter by letter */
+  .sdms-table { display: block; max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .sdms-fit th, .sdms-fit td { overflow-wrap: break-word; word-break: normal; min-width: 8.5rem; }
+  .sdms-fit td:last-child, .sdms-fit th:last-child { min-width: 0; }
+  .sdms-fit td:first-child, .sdms-fit th:first-child { min-width: 0; }
+  .sdms-results { table-layout: auto; }
+  .sdms-results th, .sdms-results td { min-width: 7rem; }
+  .data-table th, .data-table td { padding: 0.55rem 0.6rem; }
+  .sdms-tiles, .sdms-tiles-6 { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.5rem; }
+  .sdms-tile b { font-size: 1.2rem; }
+
+  /* buttons big enough to tap */
+  .btn { min-height: 40px; }
+  .btn-sm { min-height: 34px; }
+  .sdms-tab, .pa-tabs button { padding: 0.55rem 0.7rem; }
+  .sdms-tabs, .pa-tabs, .report-tabs { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .sdms-tab, .pa-tabs button, .report-tabs > * { flex: 0 0 auto; white-space: nowrap; }
+
+  /* dialogs fill the phone screen */
+  .modal-overlay { padding: 0; align-items: stretch; }
+  .modal-dialog { max-width: 100%; max-height: 100dvh; border-radius: 0; overflow-y: auto; }
+  .modal-dialog.card-editor, .modal-dialog.preview-dialog { height: 100dvh; max-height: 100dvh; }
+  .modal-header { padding: 0.9rem 1rem; gap: 0.6rem; flex-wrap: wrap; }
+  .modal-body { padding: 1rem; }
+  .sdms-form { padding: 0.9rem 0.85rem; }
+
+  /* the card editor: part list across the top, the form below */
+  .card-editor-body { padding: 0.85rem; }
+}
+@media (max-width: 640px) {
+  .auth-panel { padding: 1.25rem 0.75rem 2rem; }
+  .auth-brand { padding: 1.5rem 1rem; }
+}
+
+/* activities: quick fill levels (Beginner / Proficient / Advanced / Mixed) wrap on phones */
+@media (max-width: 640px) {
+  .qf-level { flex-wrap: wrap; width: 100%; gap: 0.35rem 0.75rem; }
+  .qf-level > span { flex: 1 0 100%; min-width: 0; }
+  .qf-find { max-width: 100%; }
+}
+@media (max-width: 640px) {
+  .modal-header.lib-dialog-header { flex-wrap: nowrap; }
+  .modal-dialog.lib-dialog { max-height: 100dvh; height: 100dvh; }
+  .lib-dialog-header > div { min-width: 0; }
+}
+
+/* grid items may shrink: a wide table scrolls in its own box instead of stretching the page (School Register,
+   SDMS lists) - on every screen size */
+.sdms > *, .sdms-pair > *, .home-grid > *, .hub-grid > *, .hub-detail { min-width: 0; }
+
+@media (max-width: 640px) {
+  /* inputs at 16px even where a class sets a smaller size (the phone zooms in on smaller ones) */
+  input:not([type=checkbox]):not([type=radio]):not([type=range]), select, textarea { font-size: 16px !important; }
+  .roster-search-input input { min-height: 2.2rem; }
+
+  /* stage buttons wrap instead of running off the screen */
+  .stage-switch-bar { flex-wrap: wrap; }
+  .stage-switch-btn { min-height: 38px; }
+
+  /* tap targets of at least 32px */
+  summary { min-height: 36px; display: list-item; padding: 0.45rem 0; }
+  .lib-name-btn { min-height: 32px; padding: 0.3rem 0; justify-content: center; }
+  .portal-link-btn { min-height: 34px; padding: 0.35rem 0.5rem; }
+  .parakh-pill { min-height: 36px; min-width: 36px; justify-content: center; }
+  .alert-close { min-width: 36px; min-height: 36px; }
+  .lib-switch { min-height: 34px; }
+  input[type=checkbox], input[type=radio] { width: 20px; height: 20px; }
+
+  /* text no smaller than 12px */
+  .lib-filter-label, .lib-badge, .sdms-chip, .status-tag, .status-pill, .udise-badge, .sdms-table th, .data-table th,
+  .lib-table th { font-size: 12px; }
+}
+@media (max-width: 640px) {
+  /* buttons inside table rows keep their size (the copy and switch-off buttons were squeezed to 4 and 21px) */
+  .data-table td button, .sdms-table td button { flex-shrink: 0; min-width: 32px; min-height: 32px; }
+  input[type=checkbox], input[type=radio] { width: 24px; height: 24px; }
+  label:has(> input[type=checkbox]), label:has(> input[type=radio]) { padding-block: 0.4rem; }
+}
+@media (max-width: 640px) {
+  button[title^="Reconnect to PARAKH"] { min-height: 34px; }
+}

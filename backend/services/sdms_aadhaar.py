@@ -58,7 +58,10 @@ def overview(school_id: str) -> Optional[Dict[str, Any]]:
     for s in data["students"]:
         g, a = s["general"], s.get("apaar") or {}
         group = group_of(g)
-        apaar_id = a.get("apaarId") or a.get("apaarIdDesc") or None
+        # the student record SDMS sends with every fetch has the APAAR ID and its status (1 'Generated'); SDMS's APAAR
+        # list (read on request, or kept after generating here) adds its message and whether generation is allowed
+        apaar_id = next((v for v in (g.get("apaarId"), a.get("apaarId"), a.get("apaarIdDesc"))
+                         if v not in (None, "", "NA", "0", 0)), None)
         allowed = a.get("isApaarGenAllowed") if "isApaarGenAllowed" in a else None
         rows.append({"student_id": g.get("studentId"), "name": g.get("studentName"), "class": g.get("classDesc"),
                      "section": g.get("sectionDesc"), "pen": g.get("studentCodeNat"), "gender": g.get("gender"),
@@ -66,19 +69,22 @@ def overview(school_id: str) -> Optional[Dict[str, Any]]:
                      "group": group, "status": g.get("uuidStatusDesc"), "reason": g.get("uuidValidateRemarks"),
                      "checked_on": g.get("uuidValidateDate"), "mbu": a.get("mbuStatusDesc"),
                      "apaar_id": apaar_id if apaar_id not in ("NA", "") else None,
-                     "apaar_status": a.get("apaarRemarksMessage") or a.get("apaarIdStatusValue"), "apaar_date": a.get("apaarIdGenDate"),
+                     "apaar_status": a.get("apaarRemarksMessage") or a.get("apaarIdStatusValue") or g.get("apaarIdStatusDesc") or None,
+                     "apaar_date": a.get("apaarIdGenDate") or g.get("apaarIdGenDate"),
                      # SDMS's own flag when read; else its rule (a PEN and a verified AADHAAR, no APAAR ID yet)
                      # SDMS's rule: a PEN and a verified AADHAAR, no APAAR ID yet - and its own flag, once read
                      "apaar_ready": not (apaar_id and apaar_id != "NA") and group == "verified" and bool(g.get("studentCodeNat"))
                                     and (allowed is None or allowed in (1, "1", True)),
                      "apaar_blocked": None if (apaar_id and apaar_id != "NA") or group == "verified"
-                                      else "verify the AADHAAR first"})
+                                      else "verify the AADHAAR first",
+                     "apaar_allowed": allowed})
     rows.sort(key=lambda r: (str(r["class"] or ""), str(r["section"] or ""), str(r["name"] or "")))
     counts = {k: sum(1 for r in rows if r["group"] == k) for k in ("verified", "retry", "mismatch", "no_aadhaar")}
     counts["apaar_ready"] = sum(1 for r in rows if r["apaar_ready"])
     counts["apaar_done"] = sum(1 for r in rows if r["apaar_id"])
     counts["apaar_waiting"] = sum(1 for r in rows if not r["apaar_id"] and r["apaar_blocked"])     # AADHAAR to fix first
-    return {"fetched_at": data["fetched_at"], "counts": counts, "students": rows, "apaar_read": any("apaar" in s for s in data["students"])}
+    return {"fetched_at": data["fetched_at"], "counts": counts, "students": rows,
+            "apaar_read": any("apaar" in s or "apaarIdStatus" in s["general"] for s in data["students"])}
 
 
 def progress(school_id: str) -> Dict[str, Any]:
@@ -89,7 +95,7 @@ def progress(school_id: str) -> Dict[str, Any]:
 def _session(school_id: str) -> Dict[str, Any]:
     session = udise_sessions._load(school_id)
     if not (session.get("services", {}).get("sdms") or {}).get("connected"):
-        raise client.UdiseError("SDMS is not connected. Press 'Connect UDISE+' first.")
+        raise client.UdiseError(udise_sessions.sdms_not_connected(school_id))
     return session
 
 

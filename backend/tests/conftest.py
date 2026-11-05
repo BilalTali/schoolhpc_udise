@@ -159,6 +159,15 @@ def filled_row(stage_code: str) -> dict:
 
 
 @pytest.fixture(autouse=True)
+def no_real_sdms_sign_out(monkeypatch, request):
+    """Disconnect / Connect sign the SDMS session out on SDMS's server: never from a test (made-up cookies must not
+    reach the real site). The test of the sign-out itself mocks the network instead."""
+    if "real_sign_out" not in request.keywords:
+        from backend.services import udise_sessions
+        monkeypatch.setattr(udise_sessions, "sign_out_remote", lambda school_id: None)
+
+
+@pytest.fixture(autouse=True)
 def fresh_login_limits():
     """Wrong passwords in one test never slow down the logins of the next."""
     from backend.services import login_limits

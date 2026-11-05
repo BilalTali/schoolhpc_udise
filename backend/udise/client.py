@@ -217,6 +217,11 @@ def _handed_token(url: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+def _oauth_error(url: str) -> str:
+    from urllib.parse import parse_qs
+    return (parse_qs(urlsplit(url).query).get("oauthError") or [""])[0]
+
+
 def open_services(http: requests.Session) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, List[Dict[str, Any]]]]:
     """Opens every service with the signed-in connection: {service: what it handed back}, {service: its trail}."""
     found, trails = {}, {}
@@ -229,10 +234,17 @@ def open_services(http: requests.Session) -> Tuple[Dict[str, Dict[str, Any]], Di
             on_sign_in = shape["host"] == urlsplit(AUTH).netloc
             token = _handed_token(url)
             cookies = {c.name: c.value for c in http.cookies if c.domain.lstrip(".").endswith(svc["host"])}
-            connected = not on_sign_in and resp.status_code < 400 and bool(token or cookies or shape["host"] == svc["host"])
-            found[key] = {"connected": connected, "token": token, "cookies": cookies, "landed": url if connected else "",
-                          "why": "" if connected else ("UDISE+ asked to sign in again for this service" if on_sign_in
-                                                       else f"the service answered HTTP {resp.status_code}")}
+            # a service that sends the browser back to its own login page (SDMS: ...v1/login?oauthError=auth_failed)
+            # refused the sign-in - often because the same account is signed in to it in a browser at the same time
+            refused = "oauthError" in url or urlsplit(url).path.rstrip("/").endswith("/login")
+            connected = not on_sign_in and not refused and resp.status_code < 400 \
+                and bool(token or cookies or shape["host"] == svc["host"])
+            found[key] = {"connected": connected, "token": token, "cookies": cookies, "landed": url,
+                          "why": "" if connected else (
+                              "UDISE+ asked to sign in again for this service" if on_sign_in else
+                              f"{svc['name']} refused the sign-in ({_oauth_error(url) or 'login page'}) - if this account is "
+                              "open in a browser, sign out there, then press Connect again" if refused else
+                              f"the service answered HTTP {resp.status_code}")}
             trail.append({"note": "result", "connected": connected, "token_fields": sorted(token) if token else [],
                           "service_cookies": sorted(cookies)})
         except UdiseError as exc:

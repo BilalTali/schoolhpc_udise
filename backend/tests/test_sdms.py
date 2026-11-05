@@ -92,7 +92,7 @@ def test_the_excel_follows_the_form_one_sheet_per_class_and_the_totals(world):
     sdms_data.start("s2")
     wait("s2")
     wb = load_workbook(io.BytesIO(sdms_data.excel("s2")))
-    assert wb.sheetnames == ["Classes", "All students", "Class 1", "Class 2"]
+    assert wb.sheetnames == ["Classes", "All students", "Class 1", "Class 2", "Lists"]
     ws = wb["All students"]
     tabs = [c.value for c in ws[1] if c.value]
     assert tabs == ["Student", "1. General Information", "2. Enrolment Details", "3. Other Details"]
@@ -160,3 +160,28 @@ def test_the_new_admissions_sheet_has_the_add_student_fields_then_the_rest_with_
     assert wb["Lists"].sheet_state == "hidden" and [c.value for c in wb["Lists"]["A"][1:3]] == ["Class 1", "Class 2"]
     assert len(ws.data_validations.dataValidation) > 10 and not ws.protection.sheet
     assert ws.max_row <= 3 or all(c.value is None for c in ws[4])     # no existing student's details in it
+
+
+def test_a_read_sdms_refuses_without_a_reason_is_asked_once_more(monkeypatch):
+    """SDMS answers a busy read with HTTP 200, status false and no reason: asked again once (reads change nothing)."""
+    from backend.udise import sdms as sdms_client
+    answers = [{"status": False, "httpStatus": 200, "error": None}, {"status": True, "data": {"studentId": 7}}]
+
+    class Resp:
+        status_code, headers = 200, {}
+
+        def __init__(self, body):
+            self.body = body
+
+        def json(self):
+            return self.body
+    c = object.__new__(sdms_client.Sdms)
+    c.http = type("H", (), {"cookies": type("C", (), {"get": lambda *a, **k: None})(),
+                            "get": lambda self, *a, **k: Resp(answers.pop(0))})()
+    c._lock, c._next = __import__("threading").Lock(), 0
+    monkeypatch.setattr(sdms_client.time, "sleep", lambda s: None)
+    assert c.get("api/cy/students/7") == {"studentId": 7}
+    answers[:] = [{"status": False, "error": None}, {"status": False, "error": None}]
+    with pytest.raises(client.UdiseError) as e:
+        c.get("api/cy/students/7")
+    assert "gave no reason" in str(e.value) and "Open the student on the SDMS website" in str(e.value)

@@ -4,8 +4,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { SchoolHome, UdiseCard } from "./SchoolHome";
 
 const api = { base: "/api/v1", onUnauthorized: vi.fn() };
-const services = (on: string[]) => ["dcf", "profile", "teacher", "sdms"].map((key) => ({
-  key, name: key, connected: on.includes(key), why: on.includes(key) ? "" : "UDISE+ asked to sign in again for this service" }));
+const services = (on: string[], checked: string[] = []) => ["dcf", "profile", "teacher", "sdms"].map((key) => ({
+  key, name: key, connected: on.includes(key), checked: checked.includes(key),
+  why: on.includes(key) ? "" : "UDISE+ asked to sign in again for this service" }));
 
 function fakeServer(answers: Record<string, unknown>) {
   const sent: { path: string; body: unknown }[] = [];
@@ -48,14 +49,16 @@ describe("SchoolHome", () => {
     await userEvent.click(screen.getByRole("button", { name: "Next: captcha" }));
     expect(await screen.findByAltText(/UDISE\+ captcha/)).toBeInTheDocument();
 
-    fakeServer({ "/school/udise/status": { connected: true, username: "school01", connected_at: "x", services: services(["sdms", "dcf"]) },
+    fakeServer({ "/school/udise/status": { connected: true, username: "school01", connected_at: "x", services: services(["sdms", "dcf"], ["sdms"]) },
                  "/school/udise/verify-captcha": { success: true, status: "authenticated", connected: true, username: "school01",
-                                                    services: services(["sdms", "dcf"]) } });
+                                                    services: services(["sdms", "dcf"], ["sdms"]) } });
     await userEvent.type(screen.getByLabelText(/6 characters/), "AB12CD");
     await userEvent.click(screen.getByRole("button", { name: "Sign in" }));
     expect(await screen.findByText(/2 of 4 services connected/)).toBeInTheDocument();
     const sdms = screen.getByText("Student module (SDMS)").closest("li")!;
-    expect(within(sdms).getByText("Session saved")).toBeInTheDocument();
+    expect(within(sdms).getByText("Connected (checked just now)")).toBeInTheDocument();   // UDISE+ answered
+    const dcf = screen.getByText(/data capture/i).closest("li")!;
+    expect(within(dcf).getByText(/Session saved - not checked/)).toBeInTheDocument();       // saved, not asked
     expect(screen.queryAllByRole("link")).toEqual([]);                  // no links out of the app
     expect(sent.find((s) => s.path === "/school/udise/connect")?.body).toEqual({ username: "school01", password: "secret" });
   });

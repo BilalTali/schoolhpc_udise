@@ -43,7 +43,16 @@ def _next_step(r: Dict[str, Any]) -> str:
         return "Generate the APAAR ID with the parent's consent (step 3 / consent sheet)"
     if r["group"] == "mismatch" and "invalid aadhaar" in str(r["reason"] or "").lower():
         return "The AADHAAR number on SDMS is wrong: enter it again from the card (step 2)"
-    return NEXT_STEP.get(r["group"], "Check the student's form on SDMS (PEN missing)")
+    if r["group"] == "verified":
+        if not r.get("pen"):
+            return "Check the student's form on SDMS (PEN missing)"
+        status = str(r.get("apaar_status") or "")
+        if "error" in status.lower() or "regenerate" in status.lower():
+            return "SDMS's APAAR service failed: generate again later (consent sheet)"
+        if r.get("apaar_allowed") not in (None, 1, "1", True):
+            return "Requested on SDMS: wait for the APAAR ID (usually a few hours), then read the APAAR status again"
+        return "Read the APAAR status again (SDMS has not said why it is not generated yet)"
+    return NEXT_STEP.get(r["group"], "Check the student's form on SDMS")
 
 
 def status_excel(school_id: str) -> Optional[bytes]:

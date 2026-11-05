@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
-import { AlertCircle, ArrowRightLeft, CheckCircle2, Download, Fingerprint, Inbox, RefreshCw, Upload, UserPlus } from "lucide-react";
+import { AlertCircle, ArrowRightLeft, Building2, CheckCircle2, ClipboardCheck, Download, FileSpreadsheet, Fingerprint, IdCard, Inbox,
+  RefreshCw, School, Upload, UserPlus, Users } from "lucide-react";
+import { ApaarSheet } from "./ApaarSheet";
+import { ProfilePage } from "./ProfilePage";
+import { SchoolData } from "./RegisterPage";
+import { SdmsAdmit } from "./SdmsAdmit";
+import { SdmsUpdate } from "./SdmsUpdate";
+import { TeachersPage } from "./TeachersPage";
 import type { LucideIcon } from "lucide-react";
 import { CardHub } from "./CardHub";
 import { ApiError, apiFetch, call } from "./api";
@@ -33,14 +40,59 @@ const TOOLS: { kind: Kind; title: string; file: string; about: string; confirm: 
 
 const ICONS: Record<Kind, LucideIcon> = { shift: ArrowRightLeft, dropbox: Inbox, import: UserPlus, aadhaar: Fingerprint };
 
+// Every bulk Excel of the app on one page: each card opens the same panel its own page uses (nothing works differently).
 export function BulkTools({ api }: { api: Api }) {
+  const sdms = (sheet: "students" | "completion" | "new-admissions", label: string) => (
+    <button type="button" className="btn btn-outline" onClick={async () => alertIf(await downloadSheet(api, `/school/udise/sdms/${sheet}.xlsx`,
+      `SDMS_${sheet}.xlsx`))}><Download size={15} aria-hidden="true" /> {label}</button>);
+  const cards = [
+    { key: "details", title: "Update student details (SDMS)", icon: FileSpreadsheet, stat: "SDMS", statLabel: "download · upload",
+      about: "Every student's full SDMS form in Excel: change any coloured column and upload it back to update SDMS.",
+      body: () => <div className="ui-panel">{sdms("students", "Download all details (Excel)")}<SdmsUpdate api={api} full onSaved={() => undefined} /></div> },
+    { key: "completion", title: "Complete incomplete SDMS forms", icon: ClipboardCheck, stat: "SDMS", statLabel: "download · upload",
+      about: "Only the students whose SDMS form is not complete, with just the fields still missing: fill the yellow cells, upload, save.",
+      body: () => <div className="ui-panel">{sdms("completion", "Download incomplete forms only")}<SdmsUpdate api={api} onSaved={() => undefined} /></div> },
+    { key: "admit", title: "New admissions (SDMS)", icon: UserPlus, stat: "SDMS", statLabel: "download · upload",
+      about: "Add new students from one sheet: checked first, added on SDMS only when you press Add.",
+      body: () => <div className="ui-panel">{sdms("new-admissions", "Download new admissions sheet")}<SdmsAdmit api={api} onAdded={() => undefined} /></div> },
+    ...TOOLS.map((t) => ({ key: t.kind, title: t.title, about: t.about, icon: ICONS[t.kind], stat: "SDMS", statLabel: "download · upload",
+                           body: () => <BulkTool api={api} tool={t} /> })),
+    { key: "apaar", title: "APAAR generation (consent sheet)", icon: IdCard, stat: "APAAR", statLabel: "download · upload",
+      about: "Generate APAAR IDs in bulk from the parents' physical consent: download, fill each consent, upload, generate.",
+      body: () => <ApaarCard api={api} /> },
+    { key: "profile", title: "School profile & facilities (UDISE+)", icon: School, stat: "Profile", statLabel: "download · upload",
+      about: "The yearly school forms (DCF 1.31 to 2.28): download, fill, upload, check and save.", body: () => <ProfilePage api={api} /> },
+    { key: "staff", title: "Teachers and staff (UDISE+)", icon: Users, stat: "Teachers", statLabel: "download · upload",
+      about: "Every staff member's forms on the UDISE+ Teacher module: download, fill, upload and check.", body: () => <TeachersPage api={api} /> },
+    { key: "school-data", title: "School Data: attendance, parents, marks", icon: Building2, stat: "School Register", statLabel: "download · upload",
+      about: "Days present per month, the name on the HPC card and summative marks for every student; goes to the teachers' cards.",
+      body: () => <SchoolData api={api} onSaved={() => undefined} /> },
+  ];
   return (
     <div className="sdms-page">
-      <p className="lib-muted">Fetch the students on the Students (SDMS) page first: the sheets list them as SDMS has them. Keep UDISE+ connected while a run goes.</p>
-      <CardHub label="Bulk tools" cards={TOOLS.map((t) => ({ key: t.kind, title: t.title, about: t.about, icon: ICONS[t.kind],
-                                                              body: () => <BulkTool api={api} tool={t} /> }))} />
+      <p className="lib-muted">Every Excel you download, fill and upload back, in one place (files you only download are on Reports). SDMS, APAAR, profile and staff sheets need UDISE+ connected
+        (fetch the students on Students (SDMS) first); School Register sheets need the register fetched from PARAKH.</p>
+      <CardHub label="Bulk Excel" cards={cards} />
     </div>
   );
+}
+
+function alertIf(message: string | null) {
+  if (message) window.alert(message);
+}
+
+function ApaarCard({ api }: { api: Api }) {
+  const [ready, setReady] = useState<number | null>(null);
+  const load = useCallback(async () => {
+    try {
+      const v = await call<{ apaar_read: boolean; counts: { apaar_ready: number } }>(api, "GET", "/school/udise/sdms/aadhaar");
+      setReady(v.apaar_read ? v.counts.apaar_ready : 0);
+    } catch {
+      setReady(0);
+    }
+  }, [api]);
+  useEffect(() => { void load(); }, [load]);
+  return ready === null ? <p className="lib-muted">Loading…</p> : <ApaarSheet api={api} ready={ready} onDone={() => { void load(); }} />;
 }
 
 function BulkTool({ api, tool }: { api: Api; tool: (typeof TOOLS)[number] }) {

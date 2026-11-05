@@ -20,7 +20,19 @@ const REPORTS = [
   { name: "aadhaar", file: "AADHAAR_pending.pdf", title: "AADHAAR pending", about: "Students not verified with UIDAI, grouped by reason, with what to do." },
   { name: "apaar", file: "APAAR_status.pdf", title: "APAAR ID status", about: "Pending with SDMS's reason and the next step; then the IDs generated." },
   { name: "completion", file: "SDMS_forms_pending.pdf", title: "SDMS forms pending", about: "Each student's required fields still empty or wrong." },
+  { name: "profile", file: "UDISE_School_Profile_status.pdf", title: "School Profile & Facilities", about: "Each yearly form: what is still needed (DCF item, workbook sheet and row) and what the app updated." },
+  { name: "teachers", file: "UDISE_Teachers_status.pdf", title: "Teacher module (staff)", about: "Each staff member: what is still needed (sheet and cell in the Excel) and what the app updated." },
   { name: "compare", file: "UDISE_vs_PARAKH.pdf", title: "UDISE+ vs PARAKH", about: "On one and not the other, and details that differ." },
+];
+
+// Records to download only (Excel): nothing to fill and upload back - those are on the Bulk Excel page
+const RECORDS = [
+  { key: "apaar-status", path: "/school/udise/sdms/apaar/status.xlsx", file: "APAAR_status.xlsx", title: "APAAR status",
+    about: "Every student's APAAR: generated (with the ID) or pending with SDMS's reason and what to do next." },
+  { key: "reconciliation", path: "/school/register/reports/reconciliation.xlsx", file: "UDISE_APAAR_PARAKH_report.xlsx",
+    title: "UDISE+ / APAAR / PARAKH", about: "Matched students, APAAR on both sides, the differences, and who is only on one side." },
+  { key: "school-report", path: "/school/register/reports/school.xlsx", file: "School_Register_report.xlsx", title: "School report",
+    about: "Every student with teacher, card status, attendance, parents and marks; by teacher; who needs attention." },
 ];
 
 export function ReportsPage({ api }: { api: Api }) {
@@ -32,6 +44,11 @@ export function ReportsPage({ api }: { api: Api }) {
   const pdf = async (name: string, file: string) => {
     setBusy(name);
     setError(await downloadSheet(api, `/school/udise/reports/${name}.pdf`, file));
+    setBusy(null);
+  };
+  const excel = async (key: string, path: string, file: string) => {
+    setBusy(key);
+    setError(await downloadSheet(api, path, file));
     setBusy(null);
   };
   const compare = async () => {
@@ -117,6 +134,9 @@ export function ReportsPage({ api }: { api: Api }) {
         ...REPORTS.map((r) => ({ key: r.name, title: r.title, about: r.about, icon: FileDown, statLabel: busy === r.name ? "making…" : "PDF",
                                  stat: busy === r.name ? <RefreshCw size={20} className="spin" aria-hidden="true" /> : "",
                                  onOpen: () => { if (busy === null) void pdf(r.name, r.file); } })),
+        ...RECORDS.map((r) => ({ key: r.key, title: r.title, about: r.about, icon: FileDown, statLabel: busy === r.key ? "making…" : "Excel",
+                                 stat: busy === r.key ? <RefreshCw size={20} className="spin" aria-hidden="true" /> : "",
+                                 onOpen: () => { if (busy === null) void excel(r.key, r.path, r.file); } })),
         { key: "compare-view", title: "Compare on screen", icon: GitCompare, tone: "info" as const,
           about: "UDISE+ and PARAKH side by side: who is on one only, and the details that differ.", body: () => comparePanel },
       ]} />

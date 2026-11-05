@@ -14,7 +14,6 @@ import {
   ShieldCheck,
   ArrowLeft,
   RefreshCw,
-  Plus,
   UserX,
   FileCheck2,
   Sparkles,
@@ -53,9 +52,13 @@ const AadhaarPage = lazy(() => import("./AadhaarPage").then((m) => ({ default: m
 const ReportsPage = lazy(() => import("./ReportsPage").then((m) => ({ default: m.ReportsPage })));
 const BulkTools = lazy(() => import("./BulkTools").then((m) => ({ default: m.BulkTools })));
 const SdmsPage = lazy(() => import("./SdmsPage").then((m) => ({ default: m.SdmsPage })));
+const ProfilePage = lazy(() => import("./ProfilePage").then((m) => ({ default: m.ProfilePage })));
+const TeachersPage = lazy(() => import("./TeachersPage").then((m) => ({ default: m.TeachersPage })));
+const RegisterPage = lazy(() => import("./RegisterPage").then((m) => ({ default: m.RegisterPage })));
 const ActivitiesGrid = lazy(() => import("./activities/ActivitiesGrid").then((m) => ({ default: m.ActivitiesGrid })));
 const LevelsGrid = lazy(() => import("./activities/LevelsGrid").then((m) => ({ default: m.LevelsGrid })));
 import { CaptchaStep } from "./CaptchaStep";
+import { ParakhTeachers } from "./ParakhTeachers";
 import { SchoolHome, UdiseCard } from "./SchoolHome";
 import { CardHub } from "./CardHub";
 import type { CaptchaResult } from "./CaptchaStep";
@@ -176,6 +179,8 @@ interface SchoolStats {
   school_name: string;
   udise_code: string;
   total_teachers: number;
+  teacher_accounts?: number;      // of the teachers, those with a login in this app
+  from_register?: boolean;        // counted from the School Register (database)
   total_jobs: number;
   total_students: number;
   submitted_and_verified: number;
@@ -185,6 +190,8 @@ interface SchoolStats {
 
 interface HpcStatus {
   logged_in: boolean;
+  checked?: boolean;                // PARAKH was asked just now
+  ended?: boolean;                  // PARAKH no longer accepts the saved session
   user?: string;
   school?: string;
   role?: string;
@@ -1138,6 +1145,25 @@ export default function App() {
       .catch(() => undefined);
   }, [user]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // "Save ready students to PARAKH" (no Excel) started an upload on the server: follow it live like any upload
+  useEffect(() => {
+    if (!user || user.role !== "TEACHER") return;
+    const follow = async () => {
+      const res = await apiFetch("/teacher/upload/jobs");
+      if (!res.ok) return;
+      const jobs: UploadJobStatus[] = await res.json();
+      const running = jobs.find((j) => j.status === "PENDING" || j.status === "IN_PROGRESS") || jobs[0];
+      if (running) {
+        setValidationReport(null);
+        setActiveJobId(String(running.job_id));
+        setIsSubmitting(running.status === "PENDING" || running.status === "IN_PROGRESS");
+      }
+    };
+    const onStarted = () => { void follow().catch(() => undefined); };
+    window.addEventListener("hpc-upload-started", onStarted);
+    return () => window.removeEventListener("hpc-upload-started", onStarted);
+  }, [user]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // After a page reload: an upload still running is shown live again; else the last checked file (with its Sync
   // button, no need to check it again); else the last finished upload (with its saved / not-saved Excel files).
   useEffect(() => {
@@ -1648,8 +1674,9 @@ export default function App() {
   const onLibrary = location.pathname.startsWith("/activities");
   const onSdms = !isTeacher && location.pathname.startsWith("/udise/sdms");
   const onUdise = !isTeacher && location.pathname.startsWith("/udise");                 // the UDISE+ area
-  const onHome = !isTeacher && !onLibrary && !onUdise && location.pathname !== "/hpc";   // the school's home: HPC and UDISE+
-  const inHpc = isTeacher || onLibrary || location.pathname === "/hpc";                   // the HPC area (PARAKH)
+  const onRegister = !isTeacher && location.pathname.startsWith("/register");          // the School Register
+  const onHome = !isTeacher && !onLibrary && !onUdise && !onRegister && location.pathname !== "/hpc";   // the school's home: HPC and UDISE+
+  const inHpc = isTeacher || onLibrary || onRegister || location.pathname === "/hpc";     // the HPC area (PARAKH)
   const hpcOpen = new URLSearchParams(location.search).get("open");
   const schoolView = hpcOpen === "teachers" || hpcOpen === "students" ? hpcOpen : null;   // a card opened; else the cards
   const parakh = isTeacher ? teacherHpcStatus : schoolHpcStatus;
@@ -1658,7 +1685,7 @@ export default function App() {
     : location.pathname.startsWith("/udise/aadhaar") ? PAGES.aadhaar
     : location.pathname.startsWith("/udise/bulk") ? PAGES.sdms_bulk
     : location.pathname.startsWith("/udise/reports") ? PAGES.udise_reports : onUdise ? PAGES.udise
-    : onHome ? PAGES.school_home
+    : onRegister ? PAGES.register : onHome ? PAGES.school_home
     : schoolView ? PAGES[schoolView === "teachers" ? "school_teachers" : "school_students"] : PAGES.hpc_home;
   const goTeacher = (tab: TeacherTab) => {
     if (tab === "roster") loadTeacherRoster(activeTeacherStage);
@@ -1727,10 +1754,20 @@ export default function App() {
               {inHpc && (
                 <>
                   <div className="sb-section">HPC</div>
-                  <button type="button" className={`sb-item ${!onLibrary && schoolView === "teachers" ? "active" : ""}`} onClick={() => goSchool("teachers")}>
+                  {!isTeacher && (
+                    <NavLink to="/register" onClick={() => setNavOpen(false)} className={({ isActive }) => `sb-item ${isActive ? "active" : ""}`}>
+                      <Building2 size={17} className="sb-lead" aria-hidden="true" /><span className="sb-text"><b>School Register</b><small>Every student from PARAKH</small></span>
+                    </NavLink>
+                  )}
+                  {!isTeacher && (
+                    <NavLink to="/udise/bulk" onClick={() => setNavOpen(false)} className={({ isActive }) => `sb-item ${isActive ? "active" : ""}`}>
+                      <Layers size={17} className="sb-lead" aria-hidden="true" /><span className="sb-text"><b>Bulk Excel</b><small>Every upload and download</small></span>
+                    </NavLink>
+                  )}
+                  <button type="button" className={`sb-item ${!onLibrary && !onRegister && schoolView === "teachers" ? "active" : ""}`} onClick={() => goSchool("teachers")}>
                     <Users size={17} className="sb-lead" aria-hidden="true" /><span className="sb-text"><b>Teachers</b><small>Accounts and classes</small></span>
                   </button>
-                  <button type="button" className={`sb-item ${!onLibrary && schoolView === "students" ? "active" : ""}`} onClick={() => goSchool("students")}>
+                  <button type="button" className={`sb-item ${!onLibrary && !onRegister && schoolView === "students" ? "active" : ""}`} onClick={() => goSchool("students")}>
                     <GraduationCap size={17} className="sb-lead" aria-hidden="true" /><span className="sb-text"><b>Students</b><small>Every class at a glance</small></span>
                   </button>
                   <NavLink to="/activities/preparatory" onClick={() => setNavOpen(false)} className={({ isActive }) => `sb-item ${isActive ? "active" : ""}`}>
@@ -1754,7 +1791,7 @@ export default function App() {
                     <ShieldCheck size={17} className="sb-lead" aria-hidden="true" /><span className="sb-text"><b>AADHAAR &amp; APAAR</b><small>Verify, correct, generate APAAR</small></span>
                   </NavLink>
                   <NavLink to="/udise/bulk" onClick={() => setNavOpen(false)} className={({ isActive }) => `sb-item ${isActive ? "active" : ""}`}>
-                    <Layers size={17} className="sb-lead" aria-hidden="true" /><span className="sb-text"><b>Bulk tools</b><small>Shift, Dropbox, import, AADHAAR</small></span>
+                    <Layers size={17} className="sb-lead" aria-hidden="true" /><span className="sb-text"><b>Bulk Excel</b><small>Every upload and download</small></span>
                   </NavLink>
                   <NavLink to="/udise/reports" onClick={() => setNavOpen(false)} className={({ isActive }) => `sb-item ${isActive ? "active" : ""}`}>
                     <FileCheck2 size={17} className="sb-lead" aria-hidden="true" /><span className="sb-text"><b>Reports</b><small>PDFs, UDISE+ vs PARAKH</small></span>
@@ -1792,7 +1829,8 @@ export default function App() {
           {inHpc && <button type="button" className={`parakh-pill ${parakh?.logged_in ? "on" : "off"}`} onClick={openParakh}
                   aria-label={parakh?.logged_in ? "PARAKH connected - show connection" : "Not connected to PARAKH - connect"}>
             <span className="dot" aria-hidden="true" />
-            <span>{parakh?.logged_in ? "PARAKH connected" : "PARAKH not connected"}</span>
+            <span>{parakh?.logged_in ? (parakh.checked === false && parakh.reason ? "PARAKH not answering" : "PARAKH connected")
+              : parakh?.ended ? "PARAKH session ended" : "PARAKH not connected"}</span>
             {!parakh?.logged_in && <span className="pill-cta">Connect</span>}
           </button>}
         </header>
@@ -1803,7 +1841,10 @@ export default function App() {
         <Suspense fallback={<div className="lib-muted" role="status">Loading…</div>}>
         <Routes>
           <Route path="/activities/:stage?" element={user ? <ActivityLibraryPage api={cardsApi} isAdmin={user.role === "SCHOOL_ADMIN"} /> : null} />
+          <Route path="/register" element={user?.role === "SCHOOL_ADMIN" ? <RegisterPage api={cardsApi} /> : null} />
           <Route path="/udise/sdms" element={user?.role === "SCHOOL_ADMIN" ? <SdmsPage api={cardsApi} /> : null} />
+          <Route path="/udise/teachers" element={user?.role === "SCHOOL_ADMIN" ? <TeachersPage api={cardsApi} /> : null} />
+          <Route path="/udise/profile" element={user?.role === "SCHOOL_ADMIN" ? <ProfilePage api={cardsApi} /> : null} />
           <Route path="/udise/aadhaar" element={user?.role === "SCHOOL_ADMIN" ? <AadhaarPage api={cardsApi} /> : null} />
           <Route path="/udise/reports" element={user?.role === "SCHOOL_ADMIN" ? <ReportsPage api={cardsApi} /> : null} />
           <Route path="/udise/bulk" element={user?.role === "SCHOOL_ADMIN" ? <BulkTools api={cardsApi} /> : null} />
@@ -1811,11 +1852,13 @@ export default function App() {
             ? <div className="udise-page">
                 <CardHub cards={[
                   { key: "sdms", title: "Students (SDMS)", icon: GraduationCap, about: "Every student's form, what is left to complete, new admissions.", onOpen: () => navigate("/udise/sdms") },
+                  { key: "profile", title: "School Profile & Facilities", icon: School, about: "The yearly school forms (DCF 1.31 to 2.28): download as Excel, fill, upload and save.", onOpen: () => navigate("/udise/profile") },
+                  { key: "teachers", title: "Teacher module (staff)", icon: Users, about: "Every staff member's forms: what is needed, Excel download and upload, new staff.", onOpen: () => navigate("/udise/teachers") },
                   { key: "aadhaar", title: "AADHAAR & APAAR", icon: ShieldCheck, about: "Verify with UIDAI, correct mismatches, generate APAAR IDs.", onOpen: () => navigate("/udise/aadhaar") },
-                  { key: "bulk", title: "Bulk tools", icon: Layers, about: "Class or section shift, Dropbox, import and AADHAAR corrections from Excel.", onOpen: () => navigate("/udise/bulk") },
-                  { key: "reports", title: "Reports", icon: FileCheck2, about: "PDFs of what is pending, and UDISE+ compared with PARAKH.", onOpen: () => navigate("/udise/reports") },
+                  { key: "bulk", title: "Bulk Excel", icon: Layers, about: "Every Excel to download, fill and upload back: SDMS, APAAR consent, school profile, staff and the School Register.", onOpen: () => navigate("/udise/bulk") },
+                  { key: "reports", title: "Reports", icon: FileCheck2, about: "PDFs and Excel records: what is pending, APAAR status, UDISE+ / APAAR / PARAKH, the school report.", onOpen: () => navigate("/udise/reports") },
                 ]} />
-                <UdiseCard api={cardsApi} onOpenSdms={() => navigate("/udise/sdms")} />
+                <UdiseCard api={cardsApi} onOpenSdms={() => navigate("/udise/sdms")} onOpenProfile={() => navigate("/udise/profile")} onOpenTeachers={() => navigate("/udise/teachers")} />
               </div> : null} />
           <Route path="*" element={<>
         {user?.role === "SCHOOL_ADMIN" && onHome && (
@@ -1872,9 +1915,17 @@ export default function App() {
 
             {!schoolView && (
               <CardHub cards={[
-                { key: "teachers", title: "Teachers", icon: Users, stat: schoolStats?.total_teachers ?? "…", statLabel: "accounts", tone: "info",
+                { key: "register", title: "School Register", icon: Building2, tone: "info",
+                  about: "Every student from PARAKH, teachers' classes, working days, max marks and the School Data workbook.",
+                  onOpen: () => navigate("/register") },
+                { key: "bulk", title: "Bulk Excel", icon: Layers, tone: "info",
+                  about: "Every Excel to download, fill and upload back: School Data, SDMS, APAAR consent, profile and staff.",
+                  onOpen: () => navigate("/udise/bulk") },
+                { key: "teachers", title: "Teachers", icon: Users, stat: schoolStats?.total_teachers ?? "…",
+                  statLabel: schoolStats?.from_register ? `on PARAKH · ${schoolStats.teacher_accounts ?? 0} with a login` : "accounts", tone: "info",
                   about: "Teacher accounts, their classes and their PARAKH connection.", onOpen: () => goSchool("teachers") },
-                { key: "students", title: "Students", icon: GraduationCap, stat: schoolStats?.total_students ?? "…", statLabel: "in the classes",
+                { key: "students", title: "Students", icon: GraduationCap, stat: schoolStats?.total_students ?? "…",
+                  statLabel: schoolStats?.from_register ? "in the School Register" : "in the classes",
                   tone: "info", about: "Every class's students and how far their progress cards are.", onOpen: () => goSchool("students") },
                 { key: "library", title: "Activity Library", icon: BookOpen, about: "Activities from PARAKH for each stage, grade and subject.",
                   onOpen: () => navigate("/activities/preparatory") },
@@ -1890,7 +1941,8 @@ export default function App() {
               </div>
             )}
 
-            {/* Teachers */}
+            {/* Teachers: from PARAKH (login ID = PARAKH ID; the school sets this app's password) */}
+            {schoolView === "teachers" && <ParakhTeachers api={cardsApi} onChanged={fetchSchoolData} />}
             {schoolView === "teachers" && (
             <div className="ui-panel">
               <div className="panel-header">
@@ -1899,17 +1951,15 @@ export default function App() {
                   <button onClick={fetchSchoolData} className="btn btn-outline" style={{ padding: "0.5rem 0.85rem" }}>
                     <RefreshCw size={15} /> Refresh
                   </button>
-                  <button onClick={() => setShowAddTeacherModal(true)} className="btn btn-primary">
-                    <Plus size={16} /> Add Class Teacher
-                  </button>
+
                 </div>
               </div>
 
               {teachers.length === 0 ? (
                 <div style={{ textAlign: "center", padding: "2.5rem 1rem", color: "var(--text-muted)" }}>
                   <GraduationCap size={40} style={{ margin: "0 auto 0.75rem", opacity: 0.4 }} />
-                  <p style={{ fontWeight: 600 }}>No teachers added yet.</p>
-                  <p style={{ fontSize: "0.85rem" }}>Click "+ Add Class Teacher" to assign teachers to Grade 3-8 sections.</p>
+                  <p style={{ fontWeight: 600 }}>No teacher logins yet.</p>
+                  <p style={{ fontSize: "0.85rem" }}>Create them from PARAKH's list above: each teacher's login ID is their PARAKH ID.</p>
                 </div>
               ) : (
                 <div className="data-table-wrapper">
@@ -2146,9 +2196,9 @@ export default function App() {
                                     <div className={`student-avatar ${avatarCls}`}>{initials}</div>
                                     <div>
                                       <div style={{ fontWeight: 700, color: "var(--chakra-navy)" }}>{s.student_name}</div>
-                                      <div style={{ fontSize: "0.74rem", color: "var(--text-light)" }}>
-                                        Mother Tongue: {s.mother_tongue || "Kashmiri"}
-                                      </div>
+                                      {s.mother_tongue && <div style={{ fontSize: "0.75rem", color: "var(--text-light)" }}>
+                                        Mother Tongue: {s.mother_tongue}
+                                      </div>}
                                     </div>
                                   </div>
                                 </td>
@@ -3188,10 +3238,11 @@ const PAGES: Record<string, PageInfo> = {
   settings: { title: "Class settings", desc: "Working days, max marks, medium and declaration for the whole class." },
   upload: { title: "Excel & upload", desc: "Download the class file, fill it, and send everything to PARAKH." },
   school_home: { title: "Home", desc: "Your school's work: HPC on PARAKH, and UDISE+." },
+  register: { title: "School Register", desc: "Every student of the school from PARAKH, and which teacher has them." },
   udise: { title: "UDISE+", desc: "One sign-in for its four services: data capture, school profile, teachers and students." },
   hpc_home: { title: "HPC", desc: "Holistic Progress Cards on PARAKH: teachers, students and activities." },
   udise_reports: { title: "Reports", desc: "Printable PDFs of what is pending, and UDISE+ compared with PARAKH." },
-  sdms_bulk: { title: "Bulk tools (SDMS)", desc: "Class or section shift, Send to Dropbox, Import from the Dropbox and AADHAAR corrections, from Excel." },
+  sdms_bulk: { title: "Bulk Excel", desc: "Every Excel you download, fill and upload back. Files you only download are on Reports." },
   aadhaar: { title: "AADHAAR & APAAR", desc: "Verify students' AADHAAR with UIDAI, correct mismatches, and generate APAAR IDs." },
   sdms: { title: "Students on UDISE+ (SDMS)", desc: "Every student of every class as SDMS holds them, current session." },
   school_teachers: { title: "Teachers", desc: "Teacher accounts, their classes and their PARAKH connection." },

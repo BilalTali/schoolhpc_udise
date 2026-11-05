@@ -25,7 +25,7 @@ interface UdiseStatus {
   connected: boolean;
   username: string;
   connected_at: string | null;
-  services: { key: string; name: string; connected: boolean; why: string }[];
+  services: { key: string; name: string; connected: boolean; checked?: boolean; why: string }[];   // checked: UDISE+ answered just now
 }
 interface StepResult extends Partial<UdiseStatus> {
   success: boolean;
@@ -69,7 +69,7 @@ export function SchoolHome({ api, onOpenHpc, onOpenUdise, teachers, students }: 
   );
 }
 
-export function UdiseCard({ api, onOpenSdms }: { api: Api; onOpenSdms: () => void }) {
+export function UdiseCard({ api, onOpenSdms, onOpenProfile, onOpenTeachers }: { api: Api; onOpenSdms: () => void; onOpenProfile?: () => void; onOpenTeachers?: () => void }) {
   const [status, setStatus] = useState<UdiseStatus | null>(null);
   const [step, setStep] = useState<"idle" | "login" | "captcha" | "otp">("idle");
   const [username, setUsername] = useState("");
@@ -125,6 +125,7 @@ export function UdiseCard({ api, onOpenSdms }: { api: Api; onOpenSdms: () => voi
 
   const connectedKeys = new Set((status?.services || []).filter((s) => s.connected).map((s) => s.key));
   const why = Object.fromEntries((status?.services || []).map((s) => [s.key, s.why]));
+  const checked = new Set((status?.services || []).filter((s) => s.checked).map((s) => s.key));
 
   return (
     <section className="home-card home-udise" aria-labelledby="udise-title">
@@ -210,9 +211,17 @@ export function UdiseCard({ api, onOpenSdms }: { api: Api; onOpenSdms: () => voi
               <b>{name}</b>
               <small>{what}</small>
               {status && (connectedKeys.has(key)
-                ? <span className="udise-badge on">Session saved</span>
+                ? (checked.has(key)
+                    ? <span className="udise-badge on">Connected (checked just now)</span>
+                    : <span className="udise-badge">Session saved - not checked{why[key] ? ` (${why[key]})` : ""}</span>)
                 : <span className="udise-badge off">Not connected{why[key] ? ` - ${why[key]}` : ""}</span>)}
             </span>
+            {key === "profile" && connectedKeys.has(key) && onOpenProfile && (
+              <button type="button" className="btn btn-primary udise-open" onClick={onOpenProfile}>Open forms</button>
+            )}
+            {key === "teacher" && connectedKeys.has(key) && onOpenTeachers && (
+              <button type="button" className="btn btn-primary udise-open" onClick={onOpenTeachers}>Open staff</button>
+            )}
             {key === "sdms" && connectedKeys.has(key) && (
               <button type="button" className="btn btn-primary udise-open" onClick={onOpenSdms}>View students</button>
             )}

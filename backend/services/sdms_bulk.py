@@ -83,7 +83,7 @@ def _int(cell: Any) -> Optional[int]:
 def _sdms(school_id: str) -> Sdms:
     session = udise_sessions._load(school_id)
     if not (session.get("services", {}).get("sdms") or {}).get("connected"):
-        raise client.UdiseError("SDMS is not connected. Press 'Connect UDISE+' first.")
+        raise client.UdiseError(udise_sessions.sdms_not_connected(school_id))
     return Sdms(session)
 
 
