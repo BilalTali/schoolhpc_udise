@@ -32,7 +32,7 @@ interface CheckJob {
   blocking?: { problem: string; students: number }[];  // what keeps Part-B-complete students from being saved
   students: CheckStudent[];
 }
-interface CheckStatus { job: CheckJob | null; settings_complete: boolean; settings_missing: string[] }
+interface CheckStatus { job: CheckJob | null; settings_complete: boolean; settings_missing: string[]; register_changed?: boolean }
 
 const POLL_MS = 1500;
 const time = (iso: string | null) => (iso ? new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "");
@@ -287,6 +287,12 @@ export function TemplatePanel({ api, stage, total, onFix, onOpenSettings }: {
           </div>
         )}
         {job?.status === "FAILED" && <div className="alert-box alert-error lib-inline-alert" role="alert"><AlertCircle size={18} aria-hidden="true" /><div>{job.error}</div></div>}
+        {job?.status === "COMPLETED" && status?.register_changed && (
+          <div className="alert-box alert-warning lib-inline-alert" role="status">
+            <AlertCircle size={18} aria-hidden="true" />
+            <div>The school changed the School Register (attendance, parents or marks) after this check, so the numbers
+              below are out of date. Press <b>Check the class again</b>.</div>
+          </div>)}
         {job?.status === "COMPLETED" && (<>
           <p className="tp-summary"><CheckCircle2 size={16} color="#046A38" aria-hidden="true" /> Ready as of {time(job.finished_at)}: <b>{job.ready} of {job.total}</b> students have Part B complete.{" "}
             <b>{job.complete ?? 0}</b> can be saved to PARAKH now.</p>

@@ -86,6 +86,15 @@ def get_settings(school_id: str, stage: str, session: str) -> Dict[str, Any]:
                 "subjects": [{"n": n, "name": s} for n, s in subjects(stage)]}
 
 
+def last_change(school_id: str) -> Optional[datetime]:
+    """When the School Register's values (settings, attendance, parents, marks) last changed (UTC), or None."""
+    from sqlalchemy import func
+    with SessionLocal() as db:
+        a = db.query(func.max(RegisterStudentData.updated_at)).filter_by(school_id=school_id).scalar()
+        b = db.query(func.max(RegisterSetting.updated_at)).filter_by(school_id=school_id).scalar()
+    return max([t for t in (a, b) if t is not None], default=None)
+
+
 def _whole(value: Any) -> Optional[int]:
     if value is None or str(value).strip() == "":
         return None

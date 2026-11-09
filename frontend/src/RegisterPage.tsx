@@ -358,6 +358,10 @@ export function SchoolData({ api, onSaved }: { api: Api; onSaved: () => void }) 
             {Object.keys(check.summary.left_out).length > 0 && <> · left out of the file: {Object.entries(check.summary.left_out).map(([s, n]) => `${s} ${n}`).join(", ")}</>}
             {check.summary.already_applied_at && <> · this same file was saved on {when(check.summary.already_applied_at)}</>}
             {check.status === "APPLIED" && <> · <b>saved {when(check.applied_at)}</b></>}</p>
+          {check.status === "CHECKED" && check.summary.ready > 0 && (
+            <p className="sdms-warn">Not saved yet: nothing goes into the School Register until you press Save.{" "}
+              <button type="button" className="btn btn-primary btn-sm" disabled={!!busy} onClick={apply}>
+                {busy === "saving" ? "Saving…" : `Save ${check.summary.ready} students now`}</button></p>)}
           {check.rows.length > 0 && (
             <div className="sdms-scroll"><table className="sdms-table sdms-fit">
               <thead><tr><th>Sheet, row</th><th>Student</th><th>Outcome</th><th>Details</th></tr></thead>

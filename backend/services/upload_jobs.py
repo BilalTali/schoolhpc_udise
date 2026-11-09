@@ -105,8 +105,12 @@ def _grid_hooks(client: Portal, teacher_id: Optional[str]) -> Dict[str, Any]:
         return {}
     from backend.services import activity_library, class_settings, class_template
 
-    def settings_for(stage, sid):
-        return class_settings.row_values(stage, class_settings.for_teacher(teacher_id, stage))
+    cache: Dict[str, Dict[str, Any]] = {}
+
+    def settings_for(stage, sid):                       # once per stage, not once per student
+        if stage not in cache:
+            cache[stage] = class_settings.row_values(stage, class_settings.for_teacher(teacher_id, stage))
+        return cache[stage]
     return {"extra_values": lambda stage, sid: class_template.dashboard_values(teacher_id, client.ay, stage, sid),
             "base_values": settings_for,
             "resolver_for": lambda stage: activity_library.resolver_for_teacher(teacher_id, stage)}

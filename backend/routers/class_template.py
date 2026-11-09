@@ -95,8 +95,24 @@ def check_status(stage: str, teacher: Teacher = Depends(require_teacher)):
     settings = class_settings.view(stage, class_settings.load(teacher.id, stage), teacher.school_id)
     path = _roster_file(teacher, stage)
     students = len(json.loads(path.read_text(encoding="utf-8"))) if path.exists() else 0
-    return {"job": class_template.job_view(class_template.latest(teacher.id, stage)),
-            "settings_complete": settings["complete"], "settings_missing": settings["missing"], "students": students}
+    job = class_template.latest(teacher.id, stage)
+    return {"job": class_template.job_view(job),
+            "settings_complete": settings["complete"], "settings_missing": settings["missing"], "students": students,
+            "register_changed": _register_changed_since(teacher, job)}
+
+
+def _register_changed_since(teacher: Teacher, job) -> bool:
+    """True when the school changed the School Register after this check finished: its result is out of date."""
+    from datetime import datetime
+    from backend.services import register_data
+    if not job or not job.get("finished_at"):
+        return False
+    try:
+        changed = register_data.last_change(teacher.school_id)
+        finished = datetime.fromisoformat(job["finished_at"]).replace(tzinfo=None)    # both UTC
+    except Exception:
+        return False
+    return bool(changed and changed > finished)
 
 
 def _labels(teacher: Teacher, stage: str) -> Dict[str, str]:

@@ -574,8 +574,8 @@ def bulk_mix(client: Portal, owner: str, teacher_id: str, session: str, stage: s
         notes_last = sorted(mixed.items(), key=lambda kv: record_kind(kv[1][0].label, kv[0]) == "levels")
         for key, (f, _, _) in notes_last:              # notes after levels: a level mixed now counts for its note
             current = draft[key] if key in draft else to_api_value(f, f.read(loaded[part_of[key].col]))
-            if not replace and not _blank(current):
-                continue
+            if not _blank(current) and (not replace or key in STUDENT_DEFAULTS):
+                continue                                  # a default never replaces what is there (Urdu stays Urdu)
             if record_kind(f.label, f.key) == "levels":
                 part_b = b_part.load(raw[s["student_id"]].get(b_part.col)) if b_part else []
                 value = note_from_levels(f, {**draft, **changes.get(s["student_id"], {})}, loaded[part_of[key].col],

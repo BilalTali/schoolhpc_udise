@@ -348,7 +348,8 @@ def test_mix_every_question_at_once(teacher_client):
     assert festival["rows"][0]["value"] in festival["field"]["suggestions"]
     # everything is filled now: only-empty fills nothing more; replace fills them all again
     assert client.post(url, json={"fields": fields}).json()["cells"] == 0
-    assert client.post(url, json={"fields": fields, "replace": True}).json()["cells"] == done["cells"]
+    tongue = next(f["filled"] for f in done["fields"] if f["key"] == "a1_mother_tongue")
+    assert client.post(url, json={"fields": fields, "replace": True}).json()["cells"] == done["cells"] - tongue   # a default never replaces
 
 
 def test_mix_all_fills_name_and_age_from_records_and_never_the_hand(teacher_client):
@@ -363,3 +364,13 @@ def test_mix_all_fills_name_and_age_from_records_and_never_the_hand(teacher_clie
     assert rows["a2_name"]["value"] == "Test Student"                       # the class list's name
     assert rows["a2_age"]["value"].isdigit() and 5 <= int(rows["a2_age"]["value"]) <= 20      # from the date of birth
 
+
+
+def test_mix_with_replace_never_overwrites_a_mother_tongue_that_is_there(teacher_client):
+    client, _ = teacher_client
+    saved = client.put(f"{API}/teacher/hpc-cards/Preparatory/bulk", json={"field": "a1_mother_tongue", "values": {"1001": "Urdu"}})
+    assert saved.status_code == 200, saved.text
+    client.post(f"{API}/teacher/hpc-cards/Preparatory/bulk-mix",
+                json={"fields": ["a1_mother_tongue"], "replace": True, "apply": True})
+    row = client.get(f"{API}/teacher/hpc-cards/Preparatory/bulk", params={"field": "a1_mother_tongue"}).json()["rows"][0]
+    assert row["value"] == "Urdu"

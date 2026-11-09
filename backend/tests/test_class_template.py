@@ -615,3 +615,22 @@ def test_precheck_takes_marks_and_parent_from_the_school_register(world):
             db.query(RegisterStudentData).filter_by(school_id=teacher.school_id).delete()
             db.query(RegisterStudent).filter_by(school_id=teacher.school_id).delete()
             db.commit()
+
+
+def test_the_check_says_when_the_school_register_changed_after_it(world):
+    from datetime import datetime, timedelta
+    from backend.models.register import RegisterSetting
+    client, portal, lookups, teacher, _ = world
+    run_check(client)
+    assert client.get(f"{API}/teacher/template/Preparatory/check").json()["register_changed"] is False
+    with SessionLocal() as db:
+        db.query(RegisterSetting).filter_by(school_id=teacher.school_id).delete()
+        db.add(RegisterSetting(school_id=teacher.school_id, stage="Preparatory", session="2627", version=1,
+                               values={"working_days": [20] * 12}, updated_at=datetime.utcnow() + timedelta(seconds=5)))
+        db.commit()
+    try:
+        assert client.get(f"{API}/teacher/template/Preparatory/check").json()["register_changed"] is True
+    finally:
+        with SessionLocal() as db:
+            db.query(RegisterSetting).filter_by(school_id=teacher.school_id).delete()
+            db.commit()
