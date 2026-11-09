@@ -590,3 +590,28 @@ def test_send_class_saves_the_ready_students_through_the_usual_upload(world):
     assert "3001" in saved_ids and "3003" not in saved_ids                         # only complete cards reach PARAKH
     after = next(j for j in client.get(f"{API}/teacher/upload/jobs").json() if j["job_id"] == job_id)
     assert after["status"] in ("COMPLETED", "PARTIAL_SUCCESS") and after["success_count"] >= 1
+
+
+def test_precheck_takes_marks_and_parent_from_the_school_register(world):
+    """The pre-check uses what the save uses: a student's marks and parent from the School Register are not
+    'empty'. (It once listed every student's marks as missing while the save had them.)"""
+    from backend.models.register import RegisterStudent, RegisterStudentData
+    client, portal, lookups, teacher, _ = world
+    with SessionLocal() as db:
+        db.query(RegisterStudentData).filter_by(school_id=teacher.school_id).delete()
+        db.query(RegisterStudent).filter_by(school_id=teacher.school_id).delete()
+        reg = RegisterStudent(school_id=teacher.school_id, stage="Preparatory", parakh_student_id="3001", student_name="S")
+        db.add(reg)
+        db.flush()
+        db.add(RegisterStudentData(school_id=teacher.school_id, student_id=reg.id, session="2627",
+                                   father_name="ABDUL RASHID", marks={str(n): 40 for n in range(1, 7)}))
+        db.commit()
+    try:
+        body = client.get(f"{API}/teacher/template/Preparatory/precheck").json()
+        listed = lambda word: {s["student_id"] for i in body["items"] if word in i["question"] for s in i["students"]}
+        assert "3001" not in listed("marks obtained") and "3001" not in listed("Guardian Name")
+    finally:
+        with SessionLocal() as db:
+            db.query(RegisterStudentData).filter_by(school_id=teacher.school_id).delete()
+            db.query(RegisterStudent).filter_by(school_id=teacher.school_id).delete()
+            db.commit()

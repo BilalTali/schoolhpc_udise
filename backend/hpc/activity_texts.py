@@ -7,8 +7,9 @@ What an activity looks like on a card (B1, B2, B3): the library's content, adjus
              a line at the top of the activity text ("Curricular Goal: ... | Competency: ..."), which PARAKH prints.
   approach   (Middle, the school's own activities) "Any Other" holding only the codes is not an approach: removed. Art Education is
              Art-Integrated and Physical Education is Sports-Integrated by definition; a real "Any Other" text
-             ("Inquiry Based") stays. Otherwise no approach is ticked and the card's check says so (PARAKH needs
-             one before it counts the activity finished): set it in the Activity Library.
+             ("Inquiry Based") stays. When nothing else is left, "Any Other" stays with a real approach written in
+             ("Activity-Based Learning") instead of the codes: PARAKH counts an activity without an approach as
+             unfinished, and these activities are finished in every other way.
 """
 import copy
 import re
@@ -18,6 +19,7 @@ CODES_LINE = "Curricular Goal: {goals} | Competency: {competencies}"
 ACTIVITY_LIMIT = 4000                                   # PARAKH's activity text limit (field_limits b.activity)
 BY_SUBJECT = {"SAE": 1, "SPE": 2}                       # Middle: Art-Integrated, Sports-Integrated
 ANY_OTHER = 5
+FALLBACK_APPROACH = "Activity-Based Learning"           # Any Other's text when the codes were all it had
 _CODE_WORD = re.compile(r"^(?=[A-Z0-9 .\-]*\d)[A-Z0-9][A-Z0-9 .\-]{0,14}$")   # "R1CG 2", "C-2.2", "SSC -1.2"
 
 
@@ -49,12 +51,15 @@ def for_card(stage: str, content: Dict[str, Any], subjects: List[str], known: Op
     if stage.lower().startswith("mid") and school_made:
         approaches = [int(a) for a in out.get("approaches") or [] if str(a).isdigit() and int(a) > 0]
         other = str(out.get("any-other") or "").strip()
-        if ANY_OTHER in approaches and (not other or codes_only(other)):
+        removed = ANY_OTHER in approaches and (not other or codes_only(other))
+        if removed:
             approaches = [a for a in approaches if a != ANY_OTHER]
             other = ""
         for s in subjects or []:
             if s in BY_SUBJECT and BY_SUBJECT[s] not in approaches:
                 approaches.append(BY_SUBJECT[s])
+        if not approaches and removed:
+            approaches, other = [ANY_OTHER], FALLBACK_APPROACH
         out["approaches"], out["any-other"] = sorted(approaches), other
     return out
 

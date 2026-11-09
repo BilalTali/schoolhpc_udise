@@ -43,6 +43,16 @@ def _where(part, f) -> str:
     return f"Excel file - sheet '{{stage}}', column '{f.label}' (or the student's card)"
 
 
+def _school_values(teacher, stage: str, session: str, student_id: str) -> Dict[str, Any]:
+    """What the School Register gives this student's card (as sync.school_values does on the save); {} when none."""
+    from backend.services import register_data
+    from backend.hpc.portal import stage_code
+    try:
+        return register_data.for_cards(teacher.school_id, stage_code(stage).capitalize(), str(session), str(student_id))
+    except Exception:
+        return {}
+
+
 def precheck(client: Portal, teacher, stage: str, students: List[Dict[str, Any]], resolve) -> Dict[str, Any]:
     """Before the class check: every empty required answer - and every answer PARAKH would refuse (too long, not
     one of the choices ...) - of every student, from what the app holds (saved
@@ -70,12 +80,15 @@ def precheck(client: Portal, teacher, stage: str, students: List[Dict[str, Any]]
         sid = s["student_id"]
         draft = hpc_cards.load_draft(teacher.id, session, stage, sid) or {}
         values = draft.get("values") or {}
+        school = _school_values(teacher, stage, session, sid)    # attendance, parent, marks: the School Register's
         before = sum(len(g["students"]) for g in groups.values())
         for part in st.PARTS:
             fd = part.load(raw[sid].get(part.col))
             part_name = f"{part.code} - {part.title.split(' - ', 1)[-1]}"
             for f in part.fields(lookups):
-                if f.key in values:
+                if f.key in school:                               # wins, as on every save to PARAKH
+                    value = school[f.key]
+                elif f.key in values:
                     value = values[f.key]
                 elif f.key in from_settings:
                     value = from_settings[f.key]

@@ -44,7 +44,7 @@ def test_b3_codes_in_any_other_are_not_an_approach():
     assert not activity_texts.codes_only("Inquiry Based") and not activity_texts.codes_only("Model Making")
     lang = activity_texts.for_card("Middle", {"approaches": [5], "any-other": "R3CG 1 , R3C-1.1", "gl": ["R3CG1"],
                                               "cpt": ["R3C1.1"], "desc": ["", ""]}, ["SL3"], known=set())
-    assert lang["approaches"] == [] and lang["any-other"] == ""                        # unknown: left unticked
+    assert lang["approaches"] == [5] and lang["any-other"] == "Activity-Based Learning"   # a real approach, not codes
     art = activity_texts.for_card("Middle", {"approaches": [5], "any-other": "DMCG 1 , DMC-1.1"}, ["SAE"], known=set())
     pe = activity_texts.for_card("Middle", {"approaches": [5], "any-other": "PECG1,C-1.5"}, ["SPE"], known=set())
     assert art["approaches"] == [1] and pe["approaches"] == [2]
