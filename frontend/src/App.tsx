@@ -12,6 +12,7 @@ import {
   LogOut,
   Building2,
   ShieldCheck,
+  Shuffle,
   ArrowLeft,
   RefreshCw,
   UserX,
@@ -59,6 +60,9 @@ const ActivitiesGrid = lazy(() => import("./activities/ActivitiesGrid").then((m)
 const LevelsGrid = lazy(() => import("./activities/LevelsGrid").then((m) => ({ default: m.LevelsGrid })));
 import { CaptchaStep } from "./CaptchaStep";
 import { ParakhTeachers } from "./ParakhTeachers";
+import { DummyFill } from "./DummyFill";
+import { AccessGate } from "./AccessGate";
+import { downloadSheet } from "./downloadSheet";
 import { SchoolHome, UdiseCard } from "./SchoolHome";
 import { CardHub } from "./CardHub";
 import type { CaptchaResult } from "./CaptchaStep";
@@ -540,6 +544,15 @@ export default function App() {
     apiFetch("/auth/me")
       .then(async (res) => { if (res.ok) setUser(userFromProfile(await res.json())); })
       .catch(() => undefined);
+  }, []);
+  // The portal's access key (set by the admin): asked before anything else until this browser has entered it.
+  const [needKey, setNeedKey] = useState(false);
+  useEffect(() => {
+    apiFetch("/access/status").then(async (r) => { if (r.ok) { const s = await r.json(); setNeedKey(!!s.required && !s.granted); } })
+      .catch(() => undefined);
+    const ask = () => setNeedKey(true);
+    window.addEventListener("ta-access-key", ask);
+    return () => window.removeEventListener("ta-access-key", ask);
   }, []);
   useEffect(() => {                                       // the school's teacher tab says whose it is in its title
     if (openedAsTeacherTab() && user?.role === "TEACHER") document.title = `${user.name} (teacher tab) - Teacher Assist`;
@@ -1511,6 +1524,8 @@ export default function App() {
     </svg>
   );
 
+  if (needKey) return <AccessGate onUnlocked={() => window.location.reload()} />;
+
   // ─── Signed out: a calm split page ──────────────────────────────────────
   if (!user) {
     return (
@@ -1941,6 +1956,16 @@ export default function App() {
                   onOpen: () => navigate("/activities/preparatory") },
                 { key: "parakh", title: "PARAKH connection", icon: ShieldCheck, stat: schoolHpcStatus?.logged_in ? "Connected" : "Not connected",
                   tone: schoolHpcStatus?.logged_in ? "good" : "warn", about: "The school's own sign-in to PARAKH.", onOpen: openParakh },
+                { key: "records", title: "HPC records (Excel)", icon: FileSpreadsheet, tone: "info",
+                  about: "Download every student's HPC card as the app keeps it - every part and answer - for the school's records.",
+                  onOpen: async () => {
+                    setStatusMsg({ type: "info", text: "Making the HPC records Excel…" });
+                    const problem = await downloadSheet(cardsApi, "/school/hpc/records.xlsx", "HPC_records.xlsx");
+                    setStatusMsg(problem ? { type: "error", text: problem } : { type: "success", text: "HPC records downloaded." });
+                  } },
+                { key: "dummy", title: "Dummy attendance & marks", icon: Shuffle, tone: "warn",
+                  about: "Fill the School Register's empty days present and marks at random inside a range you set.",
+                  body: () => <DummyFill api={cardsApi} /> },
               ]} />
             )}
             {schoolView && (

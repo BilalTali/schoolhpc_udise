@@ -64,7 +64,7 @@ def test_class_settings_refuse_max_marks_that_are_not_numbers(raw):
     from backend.services import class_settings
     n = class_settings.marks_subjects("Preparatory")[0][0]
     clean, problems, _ = class_settings.validate("Preparatory", {"max_marks": {n: raw}})
-    assert f"max_marks.{n}" in problems and clean["max_marks"][n] is None
+    assert f"max_marks.{n}" in problems and clean["max_marks"][n] == class_settings.DEFAULT_MAX_MARKS   # refused; the default stays
 
 
 # M-1: attendance per month: 0-31, present <= working, working <= the days in that month

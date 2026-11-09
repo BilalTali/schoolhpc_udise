@@ -1,6 +1,7 @@
 """
 Authentication Router: School Registration (One School = One UDISE) & Login
 """
+import hmac
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -94,10 +95,16 @@ def login(payload: LoginRequest, request: Request, response: Response, db: Sessi
     from backend import config
     if config.APP_ADMIN_LOGIN and clean_id_lower == config.APP_ADMIN_LOGIN:
         admin = db.query(PlatformAdmin).filter(PlatformAdmin.login == config.APP_ADMIN_LOGIN).first()
+        if admin is None and config.APP_ADMIN_PASSWORD:          # the password kept in .env: the account follows it
+            admin = PlatformAdmin(login=config.APP_ADMIN_LOGIN, hashed_password=hash_password(config.APP_ADMIN_PASSWORD))
+            db.add(admin)
+            db.commit()
         if admin is None:
             raise HTTPException(status.HTTP_409_CONFLICT, {"setup_required": True, "message":
                                 "Set the admin's password first (only from a browser on the server PC)."})
-        if verify_password(payload.password, admin.hashed_password) and admin.is_active:
+        good = (hmac.compare_digest(payload.password.encode("utf-8"), config.APP_ADMIN_PASSWORD.encode("utf-8"))
+                if config.APP_ADMIN_PASSWORD else verify_password(payload.password, admin.hashed_password))
+        if good and admin.is_active:
             login_limits.succeeded(identifier)
             admin.last_login = datetime.utcnow()
             db.commit()

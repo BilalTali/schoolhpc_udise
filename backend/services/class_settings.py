@@ -21,6 +21,7 @@ from backend.services import audit
 
 UNUSUAL_DAYS = 26
 DEFAULT_MEDIUM, DEFAULT_LOCATION = "English", "Rural"      # the school's defaults; a teacher may change them
+DEFAULT_MAX_MARKS = 50                                     # summative max marks of every subject
 
 
 def marks_subjects(stage: str) -> List[Tuple[str, str]]:
@@ -30,7 +31,7 @@ def marks_subjects(stage: str) -> List[Tuple[str, str]]:
 
 def blank(stage: str) -> Dict[str, Any]:
     return {"medium": DEFAULT_MEDIUM, "rural_urban": DEFAULT_LOCATION, "working_days": [None] * 12,
-            "max_marks": {n: None for n, _ in marks_subjects(stage)}, "declaration": ""}
+            "max_marks": {n: DEFAULT_MAX_MARKS for n, _ in marks_subjects(stage)}, "declaration": ""}
 
 
 def validate(stage: str, values: Dict[str, Any], medium_options: Optional[List[str]] = None,
@@ -101,6 +102,7 @@ def missing(stage: str, values: Dict[str, Any]) -> List[str]:
 
 def row_values(stage: str, values: Dict[str, Any]) -> Dict[str, Any]:
     """The workbook-row values the settings give every student (before that student's exceptions)."""
+    values = with_default_marks(stage, values)
     out: Dict[str, Any] = {"a1_medium": values.get("medium", ""), "a1_rural_urban": values.get("rural_urban", "")}
     for i, d in enumerate(values.get("working_days") or []):
         out[f"a1_working_{i + 1}"] = "" if d is None else d
@@ -130,8 +132,15 @@ def load(teacher_id: str, stage: str) -> Optional[ClassSetting]:
         return row
 
 
+def with_default_marks(stage: str, values: Dict[str, Any]) -> Dict[str, Any]:
+    """A subject's max marks left empty count as the default (50)."""
+    given = values.get("max_marks") or {}
+    return {**values, "max_marks": {n: given.get(n) if given.get(n) not in (None, "") else DEFAULT_MAX_MARKS
+                                    for n, _ in marks_subjects(stage)}}
+
+
 def view(stage: str, row: Optional[ClassSetting]) -> Dict[str, Any]:
-    values = row.values if row else blank(stage)
+    values = with_default_marks(stage, row.values if row else blank(stage))
     return {"stage": stage, "values": values, "missing": missing(stage, values), "complete": not missing(stage, values),
             "version": row.version if row else 0,
             "updated_at": row.updated_at.isoformat(timespec="seconds") + "Z" if row and row.updated_at else None,

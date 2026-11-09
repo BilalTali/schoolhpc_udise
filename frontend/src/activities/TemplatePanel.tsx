@@ -161,14 +161,28 @@ export function TemplatePanel({ api, stage, total, onFix, onOpenSettings }: {
   // students), levels, every class-wide question and Part C (notes from its levels). Facts and anything already
   // entered are kept. Preview first, then apply, then the class is checked.
   const [mixMsg, setMixMsg] = useState<string | null>(null);
+  // While Global Mix works, a panel covers the page and says which step it is on, until the class check ends.
+  const [mixPhase, setMixPhase] = useState<null | "reading" | "mixing" | "checking">(null);
+  const [mixPlan, setMixPlan] = useState("");
+  const [mixStart, setMixStart] = useState(0);
+  const [mixClock, setMixClock] = useState(0);
+  useEffect(() => {
+    if (!mixPhase) return;
+    const t = window.setInterval(() => setMixClock(Date.now()), 1000);
+    return () => window.clearInterval(t);
+  }, [mixPhase]);
   const globalMix = async () => {
     setError(null);
     setMixMsg(null);
     setBusy(true);
+    setMixStart(Date.now());
+    setMixClock(Date.now());
+    setMixPhase("reading");
     try {
       type Mix = { seed: string; from_marks: number; grid: { cells: number; students: number; skipped: { student_name: string }[]; no_activity: string[] };
                    answers: { cells: number; students: number; skipped: { label: string; reason: string }[] } };
       const preview = await call<Mix>(api, "POST", `/teacher/activities-grid/${stage}/global-mix`, {});
+      setMixPhase(null);                                  // the question below is answered without the panel
       if (!preview.grid.cells && !preview.answers.cells) {
         setMixMsg("Nothing to mix: every answer that can be mixed is already filled.");
         return;
@@ -181,15 +195,31 @@ export function TemplatePanel({ api, stage, total, onFix, onOpenSettings }: {
           + "Only empty answers are filled; nothing you entered changes. Mother tongue, names and other facts are not filled. "
           + "Use it only when there is no time to fill the cards properly." + (notes.length ? ` (${notes.join("; ")})` : "") });
       if (!ok) return;
+      setMixPlan(`Filling ${preview.grid.cells} activity/level cells and ${preview.answers.cells} answers`);
+      setMixStart(Date.now());
+      setMixPhase("mixing");
       const done = await call<Mix>(api, "POST", `/teacher/activities-grid/${stage}/global-mix`, { apply: true, seed: preview.seed });
-      setMixMsg(`Filled ${done.grid.cells} activity/level cells and ${done.answers.cells} answers. Checking the class now - then "Save ready students to PARAKH".`);
-      await startCheck();
+      setMixMsg(`Filled ${done.grid.cells} activity/level cells and ${done.answers.cells} answers. The class is checked - then "Save ready students to PARAKH".`);
+      setMixPhase("checking");                           // the panel stays until the check has finished
+      setPre(null);
+      await call(api, "POST", `/teacher/template/${stage}/check`);
+      for (;;) {
+        const s = await call<CheckStatus>(api, "GET", `/teacher/template/${stage}/check`);
+        if (!alive.current) return;
+        setStatus(s);
+        if (s.job?.status !== "RUNNING") break;
+        await new Promise((r) => window.setTimeout(r, POLL_MS));
+      }
+      refresh();
     } catch (e: any) {
       setError(e.message);
     } finally {
       setBusy(false);
+      setMixPhase(null);
     }
   };
+  const mixSeconds = Math.max(0, Math.round((mixClock - mixStart) / 1000));
+  const mixElapsed = `${Math.floor(mixSeconds / 60)}:${String(mixSeconds % 60).padStart(2, "0")}`;
 
   const why = !settingsOk ? "Finish the class settings first." : !job || job.status !== "COMPLETED" ? "Check the class first."
     : job.ready === 0 ? "No student's Part B is complete yet - see the list below." : "";
@@ -210,7 +240,7 @@ export function TemplatePanel({ api, stage, total, onFix, onOpenSettings }: {
       <div className="tp-row">
         <button type="button" className="btn btn-outline" onClick={globalMix} disabled={running || preBusy || busy}
                 title="Emergency: fills every empty answer of the class at random (activities, levels, A-C)">
-          <RefreshCw size={14} aria-hidden="true" className={busy ? "spin" : ""} /> Global Mix (fill all empty)
+          <RefreshCw size={14} aria-hidden="true" className={busy ? "spin" : ""} /> {busy ? "Mixing…" : "Global Mix (fill all empty)"}
         </button>
         <button type="button" className="btn btn-outline" onClick={check} disabled={running || preBusy}>
           <RefreshCw size={14} aria-hidden="true" className={running || preBusy ? "spin" : ""} />
@@ -218,6 +248,30 @@ export function TemplatePanel({ api, stage, total, onFix, onOpenSettings }: {
         </button>
         <span className="lib-muted">Uses the cards the app already keeps, so it takes seconds; only a student not read yet is read from PARAKH. Nothing is saved – the upload checks every student against PARAKH again.</span>
       </div>
+
+      {mixPhase && (
+        <div className="mix-overlay" role="alertdialog" aria-modal="true" aria-labelledby="mix-title" aria-describedby="mix-step">
+          <div className="mix-card">
+            <RefreshCw size={40} className="spin mix-spinner" aria-hidden="true" />
+            <h3 id="mix-title">Global Mix in progress</h3>
+            <p id="mix-step" className="mix-step" aria-live="polite">
+              {mixPhase === "reading" && "Step 1 of 3: looking for the class's empty answers…"}
+              {mixPhase === "mixing" && `Step 2 of 3: mixing - ${mixPlan.charAt(0).toLowerCase()}${mixPlan.slice(1)}…`}
+              {mixPhase === "checking" && (job?.status === "RUNNING"
+                ? `Step 3 of 3: checking the class - ${job.done} of ${job.total} students`
+                : "Step 3 of 3: checking the class…")}
+            </p>
+            {mixPhase === "checking" && job?.status === "RUNNING" && (
+              <div className="progress-bar-container" role="progressbar" aria-label="Checking the class" aria-valuemin={0}
+                   aria-valuemax={job.total} aria-valuenow={job.done}>
+                <div className="progress-fill" style={{ width: `${job.total ? (job.done / job.total) * 100 : 0}%` }} />
+              </div>
+            )}
+            <p className="mix-wait"><b>Please wait.</b> Do not close or leave this page until this panel goes away.</p>
+            <p className="mix-time">Time: {mixElapsed}</p>
+          </div>
+        </div>
+      )}
 
       <div aria-live="polite">
         {pre && <PrecheckView result={pre} onStart={startCheck} onClose={() => setPre(null)} />}

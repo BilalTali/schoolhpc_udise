@@ -82,6 +82,10 @@ export async function apiFetch(path: string, init: RequestInit = {}, base: strin
   const send = () => fetch(`${base}${path}`, { ...init, headers, credentials: "include" });
   let res = await send();
   if (tab && path.startsWith("/auth/logout")) leaveTab();             // the teacher tab signed out: only it ended
+  if (res.status === 403 && !path.startsWith("/access/")) {            // the portal's access key is needed first
+    const body = await res.clone().json().catch(() => null);
+    if (body?.detail?.access_key) window.dispatchEvent(new Event("ta-access-key"));
+  }
   // Renew and retry once - also for /auth/me, the check on page load (the 15-minute cookie may have gone);
   // never for logging in, out or renewing itself.
   if (res.status === 401 && !NO_RENEW.some((p) => path.startsWith(p))) {

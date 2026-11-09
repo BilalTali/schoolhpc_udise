@@ -92,12 +92,45 @@ class Lookups:
             except PortalError:                            # a school login may not read the bank: only saves need it
                 records = []
         self.activities: Dict[int, Dict[str, Any]] = dict(stored)
+        self._keep(stage_code)
         for a in records:
             a["content"] = json.loads(a.get("activity_data_json") or "{}")
             # Activities with pictures need the page's image re-upload step, which we don't do.
             has_images = any((a["content"].get("dt") or {}).get("img") or [])
             if a.get("hpc_stage") == stage_code and not has_images:
                 self.activities[int(a["id"])] = a
+
+    # A copy of the lists (not the activities) is kept per PARAKH school and stage, so the school's records Excel
+    # can turn stored cards into words without signing in to PARAKH.
+    SNAPSHOT_KEYS = ("medium", "location", "interests", "grades", "sections", "domains")
+
+    def _keep(self, stage_code: str) -> None:
+        try:
+            school = str(getattr(self.portal, "school_id", "") or "")
+            if not school.isdigit():
+                return
+            from backend.config import DATA_DIR
+            folder = DATA_DIR / "lookups"
+            folder.mkdir(parents=True, exist_ok=True)
+            data = {k: getattr(self, k) for k in self.SNAPSHOT_KEYS}
+            (folder / f"{school}_{stage_code.lower()}.json").write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        except Exception:                                  # a copy for reports only: never stops the real work
+            pass
+
+    @classmethod
+    def offline(cls, parakh_school_id: Any, stage_code: str) -> Optional["Lookups"]:
+        """The lists as last kept for this PARAKH school and stage, or None. Activities from the app's library."""
+        from backend.config import DATA_DIR
+        path = DATA_DIR / "lookups" / f"{str(parakh_school_id)}_{stage_code.lower()}.json"
+        if not str(parakh_school_id).isdigit() or not path.is_file():
+            return None
+        data = json.loads(path.read_text(encoding="utf-8"))
+        lk = cls.__new__(cls)
+        lk.portal = None
+        for k in cls.SNAPSHOT_KEYS:
+            setattr(lk, k, data.get(k) or [])
+        lk.activities = dict(ACTIVITY_SOURCE(stage_code) if ACTIVITY_SOURCE else {})
+        return lk
 
     def activity_label(self, bank_id: Any) -> str:
         a = self.activities.get(int(bank_id)) if str(bank_id).isdigit() else None

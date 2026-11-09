@@ -575,6 +575,25 @@ def register_settings_save(payload: RegisterSettingsRequest, admin: School = Dep
     return out
 
 
+@router.get("/hpc/records.xlsx")
+def hpc_records_workbook(admin: School = Depends(require_school_admin)):
+    """Everything the app holds of every student's HPC card, for the school's records (from the stored copy)."""
+    from backend.services import hpc_records
+    client = None
+    if admin.hpc_login_id:                        # only when PARAKH's lists were never kept for a stage
+        try:
+            client = hpc_sessions.portal_for(KIND, admin.id, admin.hpc_login_id, admin.hpc_password)
+        except Exception:
+            client = None
+    try:
+        content, name = hpc_records.workbook(admin.id, client)
+    except hpc_records.Problem as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
+    audit.record(f"school_admin:{admin.id}", "hpc_records_download", "school", admin.id, school_id=admin.id)
+    return StreamingResponse(io.BytesIO(content), headers={"Content-Disposition": f'attachment; filename="{name}"'},
+                             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
 @router.get("/register/data.xlsx")
 def register_data_workbook(admin: School = Depends(require_school_admin)):
     from backend.services import register_data
@@ -608,6 +627,33 @@ def register_data_apply(payload: RegisterApplyRequest, admin: School = Depends(r
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Confirm first: this saves the rows into the School Register.")
     try:
         return register_data.apply(admin.id, payload.import_id, f"school_admin:{admin.id}")
+    except register_data.Problem as exc:
+        raise _register_problem(exc)
+
+
+class RangeRequest(BaseModel):
+    low: float = Field(..., ge=0)
+    high: float = Field(..., ge=0)
+
+
+class DummyFillRequest(BaseModel):
+    stage: Optional[str] = None                  # None: every stage
+    attendance: Optional[RangeRequest] = None    # % of each month's working days
+    marks: Optional[RangeRequest] = None         # marks obtained, never above the subject's max marks
+    apply: bool = False                          # False: how many cells would be filled (nothing is saved)
+
+
+@router.post("/register/data/dummy-fill")
+def register_dummy_fill(payload: DummyFillRequest, admin: School = Depends(require_school_admin)):
+    """Fills EMPTY days present and marks obtained at random inside a range (every student their own value);
+    what was uploaded or entered stays. Preview first (apply=false), then apply."""
+    from backend.services import register_data
+    try:
+        return register_data.dummy_fill(
+            admin.id,
+            (payload.attendance.low, payload.attendance.high) if payload.attendance else None,
+            (int(payload.marks.low), int(payload.marks.high)) if payload.marks else None,
+            _stage_name(payload.stage) if payload.stage else None, payload.apply, f"school_admin:{admin.id}")
     except register_data.Problem as exc:
         raise _register_problem(exc)
 
@@ -849,8 +895,7 @@ class ApaarRequest(BaseModel):
 def sdms_aadhaar_overview(admin: School = Depends(require_school_admin)):
     found = sdms_aadhaar.overview(admin.id)
     if found is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Read the staff from UDISE+ first (Teacher module)." if name == "teachers"
-                            else "Fetch the students from SDMS first.")
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Fetch the students from SDMS first.")
     return {**found, **sdms_aadhaar.progress(admin.id)}
 
 

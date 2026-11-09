@@ -275,3 +275,71 @@ def test_every_cell_of_the_school_data_sheet_has_a_border(world):
             if type(c).__name__ != "MergedCell" and not all(getattr(c.border, s).style == "thin" for s in sides)]
     assert ws.max_row == 102 and bare == []
     assert ws["L3"].fill.fgColor.rgb.endswith("FFFBEB")          # a fill-in cell keeps its colour, now with a border
+
+
+def test_max_marks_are_50_until_the_school_sets_its_own(world):
+    client, h, *_ = world
+    got = client.get(f"{API}/school/register/settings", headers=h, params={"stage": "Preparatory"}).json()
+    assert set(got["values"]["max_marks"].values()) == {50}
+
+
+def test_dummy_fill_fills_only_empty_cells_inside_the_range_each_student_their_own(world):
+    client, h, _, school_id = world
+    days = _settings(client, h)                                   # max marks 100; April 20 days, June 0
+    url = f"{API}/school/register/data/dummy-fill"
+    body = {"stage": "Preparatory", "attendance": {"low": 70, "high": 95}, "marks": {"low": 25, "high": 45}}
+    preview = client.post(url, headers=h, json=body).json()
+    assert preview["applied"] is False and preview["students"] == 100
+    assert preview["months"] == 100 * sum(1 for d in days if d) and preview["marks"] == 100 * 6
+    with SessionLocal() as db:
+        assert db.query(RegisterStudentData).filter_by(school_id=school_id).count() == 0     # a preview saves nothing
+
+    # one student already has April and R1 from the school's own sheet: those stay
+    wb = _book(client, h)
+    ws = wb["Preparatory"]
+    keep_id = ws.cell(row=3, column=1).value
+    ws.cell(row=3, column=12, value=11)                           # April present
+    ws.cell(row=3, column=28, value=7)                            # R1 marks
+    check = _upload(client, h, wb).json()
+    assert client.post(f"{API}/school/register/data/apply", headers=h,
+                       json={"import_id": check["id"], "confirm": True}).status_code == 200
+
+    done = client.post(url, headers=h, json={**body, "apply": True}).json()
+    assert done["applied"] is True and done["students"] == 100
+    with SessionLocal() as db:
+        rows = db.query(RegisterStudentData).filter_by(school_id=school_id, session="2627").all()
+    assert len(rows) == 100
+    kept = next(r for r in rows if r.student_id == keep_id)
+    assert kept.present[0] == 11 and kept.marks["1"] == 7          # what the school entered is never replaced
+    for r in rows:
+        for i, wd in enumerate(days):
+            if not wd:
+                assert r.present[i] is None                         # a month without working days stays empty
+            elif r.student_id != keep_id or i:
+                assert round(wd * 0.70) - 1 <= r.present[i] <= wd * 0.95
+        for n, m in r.marks.items():
+            if r.student_id != keep_id or n != "1":
+                assert 25 <= m <= 45
+    assert len({tuple(r.present) for r in rows}) > 10             # mixed: not the same numbers for everyone
+    again = client.post(url, headers=h, json={**body, "apply": True}).json()
+    assert again["students"] == 0                                 # nothing empty is left: nothing changes
+
+
+def test_dummy_marks_never_go_above_the_subjects_max_marks(world):
+    client, h, _, school_id = world
+    days = [20] + [None] * 11
+    client.put(f"{API}/school/register/settings", headers=h, json={"stage": "Preparatory", "values": {
+        "working_days": days, "max_marks": {str(n): 30 for n in range(1, 7)}}})
+    client.post(f"{API}/school/register/data/dummy-fill", headers=h,
+                json={"marks": {"low": 25, "high": 45}, "apply": True})
+    with SessionLocal() as db:
+        marks = [m for r in db.query(RegisterStudentData).filter_by(school_id=school_id) for m in r.marks.values()]
+    assert marks and max(marks) <= 30 and min(marks) >= 25
+
+
+def test_dummy_fill_needs_a_sensible_range(world):
+    client, h, *_ = world
+    url = f"{API}/school/register/data/dummy-fill"
+    assert client.post(url, headers=h, json={}).status_code in (400, 409, 422)
+    bad = client.post(url, headers=h, json={"attendance": {"low": 90, "high": 60}})
+    assert bad.status_code in (400, 409, 422) and "range" in bad.text.lower()

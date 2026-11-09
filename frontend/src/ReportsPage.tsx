@@ -27,6 +27,8 @@ const REPORTS = [
 
 // Records to download only (Excel): nothing to fill and upload back - those are on the Bulk Excel page
 const RECORDS = [
+  { key: "hpc-records", path: "/school/hpc/records.xlsx", file: "HPC_records.xlsx", title: "HPC records (everything entered)",
+    about: "Every student's HPC card as the app keeps it - every part, every answer, in words - for the school's records." },
   { key: "apaar-status", path: "/school/udise/sdms/apaar/status.xlsx", file: "APAAR_status.xlsx", title: "APAAR status",
     about: "Every student's APAAR: generated (with the ID) or pending with SDMS's reason and what to do next." },
   { key: "reconciliation", path: "/school/register/reports/reconciliation.xlsx", file: "UDISE_APAAR_PARAKH_report.xlsx",

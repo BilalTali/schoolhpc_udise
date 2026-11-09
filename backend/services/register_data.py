@@ -66,8 +66,11 @@ def subjects(stage: str) -> List[Tuple[str, str]]:
     return credit.summative_subjects(stage.lower())
 
 
+DEFAULT_MAX_MARKS = 50                           # summative max marks of every subject until the school sets its own
+
+
 def blank(stage: str) -> Dict[str, Any]:
-    return {"working_days": [None] * 12, "max_marks": {n: None for n, _ in subjects(stage)}}
+    return {"working_days": [None] * 12, "max_marks": {n: DEFAULT_MAX_MARKS for n, _ in subjects(stage)}}
 
 
 def get_settings(school_id: str, stage: str, session: str) -> Dict[str, Any]:
@@ -77,6 +80,7 @@ def get_settings(school_id: str, stage: str, session: str) -> Dict[str, Any]:
             return {"stage": stage, "session": session, "values": blank(stage), "version": 0, "updated_at": None,
                     "subjects": [{"n": n, "name": s} for n, s in subjects(stage)]}
         values = {**blank(stage), **(row.values or {})}
+        values["max_marks"] = {n: (values.get("max_marks") or {}).get(n) or DEFAULT_MAX_MARKS for n, _ in subjects(stage)}
         return {"stage": stage, "session": session, "values": values, "version": row.version,
                 "updated_at": row.updated_at.isoformat(timespec="seconds") + "Z" if row.updated_at else None,
                 "subjects": [{"n": n, "name": s} for n, s in subjects(stage)]}
@@ -731,4 +735,96 @@ def levels_from_marks(school_id: str, stage: str, session: str, parakh_ids: List
             continue
         average = sum(percents.values()) / len(percents)
         out[str(pid)] = {domain: level_for(percents.get(i, average)) for i, domain in enumerate(domains)}
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Dummy fill (the school's choice): attendance and marks at random inside a range, only where empty
+# ---------------------------------------------------------------------------
+
+def dummy_fill(school_id: str, attendance: Optional[Tuple[float, float]], marks: Optional[Tuple[int, int]],
+               stage: Optional[str] = None, apply: bool = False, by: str = "") -> Dict[str, Any]:
+    """attendance: (low %, high %) of each month's working days; marks: (low, high) marks obtained, never above the
+    subject's max marks. Every student gets their own random value inside the range. Only EMPTY cells are filled:
+    what was uploaded or entered stays. A month without working days stays empty. apply=False: counts only."""
+    import math
+    import random
+    from backend.services import audit
+    if attendance is None and marks is None:
+        raise Problem("Choose attendance, marks or both.")
+    if attendance is not None:
+        lo, hi = attendance
+        if not (0 <= lo <= hi <= 100):
+            raise Problem("Attendance range: from 0 to 100 %, the first number not above the second.")
+    if marks is not None:
+        lo_m, hi_m = marks
+        if not (0 <= lo_m <= hi_m):
+            raise Problem("Marks range: 0 or more, the first number not above the second.")
+    session = session_of(school_id)
+    rng = random.Random()
+    stamp = "dummy:" + datetime.utcnow().strftime("%Y-%m-%d")
+    out: Dict[str, Any] = {"session": session, "stages": {}, "students": 0, "months": 0, "marks": 0, "notes": []}
+    with SessionLocal() as db:
+        q = db.query(RegisterStudent).filter(RegisterStudent.school_id == school_id, RegisterStudent.missing_since.is_(None))
+        if stage:
+            q = q.filter(RegisterStudent.stage == stage)
+        students = q.all()
+        if not students:
+            raise Problem("The register is empty: fetch the students from PARAKH first.")
+        stored = {d.student_id: d for d in db.query(RegisterStudentData).filter_by(school_id=school_id, session=session)}
+        for st in [s for s in STAGES if any(x.stage == s for x in students)]:
+            values = get_settings(school_id, st, session)["values"]
+            days = values["working_days"]
+            maxes = values["max_marks"]
+            subs = [n for n, _ in subjects(st)]
+            if attendance is not None and not any(d for d in days if d):
+                out["notes"].append(f"{st}: no working days are set, so no attendance is filled. Set them in the "
+                                    "settings above first.")
+            counts = {"students": 0, "months": 0, "marks": 0}
+            for s in [x for x in students if x.stage == st]:
+                d = stored.get(s.id)
+                present = list((d.present if d else None) or []) + [None] * 12
+                present = present[:12]
+                got = dict((d.marks if d else None) or {})
+                months = filled = 0
+                if attendance is not None:
+                    for i, wd in enumerate(days):
+                        if wd and present[i] in (None, ""):
+                            low, high = math.ceil(wd * attendance[0] / 100), math.floor(wd * attendance[1] / 100)
+                            present[i] = rng.randint(min(low, high), max(low, high))
+                            months += 1
+                if marks is not None:
+                    for n in subs:
+                        top = maxes.get(n) or DEFAULT_MAX_MARKS
+                        if got.get(n) in (None, ""):
+                            a, b = min(marks[0], top), min(marks[1], top)
+                            got[n] = rng.randint(a, b)
+                            filled += 1
+                if not (months or filled):
+                    continue
+                counts["students"] += 1
+                counts["months"] += months
+                counts["marks"] += filled
+                if apply:
+                    if d is None:
+                        d = RegisterStudentData(school_id=school_id, student_id=s.id, session=session, sources={})
+                        db.add(d)
+                        stored[s.id] = d
+                    sources = dict(d.sources or {})
+                    if months:
+                        d.present, sources["present"] = present, stamp
+                    if filled:
+                        d.marks, sources["marks"] = got, stamp
+                    d.sources = sources
+            out["stages"][st] = counts
+            for k in ("students", "months", "marks"):
+                out[k] += counts[k]
+        if apply:
+            db.commit()
+    if apply:
+        audit.record(by or f"school_admin:{school_id}", "register_dummy_fill", "register", school_id, None,
+                     {"stage": stage or "all", "attendance": attendance, "marks": marks,
+                      "students": out["students"], "months": out["months"], "marks_filled": out["marks"]},
+                     school_id=school_id)
+    out["applied"] = apply
     return out

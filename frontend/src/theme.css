@@ -701,3 +701,27 @@ img, svg, video, canvas { max-width: 100%; }
 .teacher-tab-login .form-input { flex: 1 1 7rem; min-width: 7rem; }
 .teacher-tab-banner { display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 1rem; background: #EFF6FF;
   border-bottom: 1px solid #BFDBFE; color: #1E3A8A; font-size: 0.86rem; }
+
+/* Global Mix: the page waits under a clear "in progress" panel until the mix and the class check end */
+.mix-overlay { position: fixed; inset: 0; z-index: 3000; display: grid; place-items: center; padding: 1rem;
+  background: rgba(15, 23, 42, 0.55); backdrop-filter: blur(2px); }
+.mix-card { width: min(460px, 100%); background: var(--surface); border-radius: 18px; box-shadow: var(--shadow-xl);
+  border-top: 5px solid var(--brand-500); padding: 1.6rem 1.5rem 1.3rem; text-align: center; display: grid; gap: 0.6rem; }
+.mix-card h3 { margin: 0.2rem 0 0; font-size: 1.25rem; color: var(--ink); }
+.mix-spinner { color: var(--brand-600); justify-self: center; }
+.mix-step { margin: 0; font-size: 1rem; color: var(--ink-2); font-weight: 600; }
+.mix-wait { margin: 0.3rem 0 0; color: var(--bad-700); font-size: 0.92rem; }
+.mix-time { margin: 0; color: var(--muted); font-size: 0.85rem; font-variant-numeric: tabular-nums; }
+.mix-card .progress-bar-container { margin: 0.2rem 0; }
+
+/* School HPC: dummy attendance and marks */
+.dummy-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr)); gap: 1rem; margin: 0.6rem 0 1rem; }
+.dummy-range { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.8rem; font-size: 0.88rem; color: var(--ink-2); }
+.dummy-range label { display: inline-flex; align-items: center; gap: 0.4rem; }
+.dummy-range .form-input { width: 5.5rem; }
+
+/* The portal's access key */
+.gate-page { grid-template-columns: minmax(0, 1fr); }
+.gate-card { max-width: 26rem; display: grid; gap: 0.6rem; }
+.gate-card h2 { margin: 0; font-size: 1.35rem; }
+.gate-icon { width: 52px; height: 52px; border-radius: 14px; display: grid; place-items: center; background: var(--brand-50); color: var(--brand-600); }

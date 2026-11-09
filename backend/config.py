@@ -88,6 +88,9 @@ UPLOAD_KEEP_DAYS = int(os.getenv("HPC_UPLOAD_KEEP_DAYS", "30"))
 # The admin (one account above every school): its login ID. The password is set once, on first
 # sign-in, from a browser on the server PC itself; it is stored only as a hash.
 APP_ADMIN_LOGIN = os.getenv("HPC_APP_ADMIN_LOGIN", "").strip().lower()
+# Or the admin's password kept in .env too (HPC_APP_ADMIN_PASSWORD): then it is the password, and changing .env
+# changes it; the first-sign-in setup is not needed.
+APP_ADMIN_PASSWORD = os.getenv("HPC_APP_ADMIN_PASSWORD", "")
 
 # Largest workbook a teacher may upload (M-6).
 MAX_UPLOAD_BYTES = int(float(os.getenv("HPC_MAX_UPLOAD_MB", "20")) * 1024 * 1024)

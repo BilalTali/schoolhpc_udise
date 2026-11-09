@@ -87,16 +87,32 @@ async def security_headers(request: Request, call_next):
     return response
 
 
+# The portal's access key (set by the app admin): every API call waits for it, except the gate itself.
+_GATE_OPEN = ("/api/v1/access/",)
+
+
+@app.middleware("http")
+async def access_key_gate(request: Request, call_next):
+    path = request.url.path
+    if path.startswith("/api/") and not path.startswith(_GATE_OPEN) and request.method != "OPTIONS":
+        from backend.services import access_key
+        if not access_key.unlocked(request.cookies.get(access_key.COOKIE)):
+            return JSONResponse(status_code=403, content={"detail": {
+                "access_key": True, "message": "Enter the portal's access key first."}})
+    return await call_next(request)
+
+
 @app.exception_handler(UnsafePath)
 async def unsafe_path(request: Request, exc: UnsafePath):
     """An id, stage or file name that would reach outside its folder (C-1, C-2)."""
     return JSONResponse(status_code=400, content={"detail": str(exc)})
 
 
+from backend.routers.access import router as access_router  # noqa: E402
 from backend.routers.register_reports import school_router as register_reports_router  # noqa: E402
 from backend.routers.register_reports import teacher_router as register_teacher_reports_router  # noqa: E402
 
-for router in (auth_router, schools_router, teachers_router, hpc_cards_router, activity_library_router,
+for router in (access_router, auth_router, schools_router, teachers_router, hpc_cards_router, activity_library_router,
                activities_grid_router, class_template_router, platform_router, register_reports_router,
                register_teacher_reports_router):
     app.include_router(router, prefix="/api/v1")

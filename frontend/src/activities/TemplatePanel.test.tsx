@@ -222,3 +222,47 @@ describe("Class settings", () => {
     expect(result.violations.map((v) => v.id)).toEqual([]);
   });
 });
+
+describe("Global Mix shows that it is working until the class check ends", () => {
+  it("covers the page with the step it is on: looking, mixing, checking - then it goes away", async () => {
+    const fake = fakeTemplate({ job: null, settings_complete: true });
+    let finishMix: () => void = () => {};
+    let polls = 0;
+    const mix = { seed: "s1", from_marks: 0, grid: { cells: 12, students: 3, skipped: [], no_activity: [] },
+                  answers: { cells: 30, students: 3, skipped: [] } };
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = new URL(String(input)).pathname.replace("/api/v1", "");
+      if (path.endsWith("/global-mix")) {
+        const body = JSON.parse(String(init?.body || "{}"));
+        if (!body.apply) return json(200, mix);
+        await new Promise<void>((r) => { finishMix = r; });            // the mix takes a while
+        return json(200, mix);
+      }
+      if (path.endsWith("/check") && init?.method === "POST") return json(200, job([student("1", true)], "RUNNING"));
+      if (path.endsWith("/check")) {
+        polls += 1;
+        const j = fake.state.calls.length && polls > 2 ? job([student("1", true)]) : polls > 1 ? job([student("1", true)], "RUNNING") : null;
+        return json(200, { job: j, settings_complete: true, settings_missing: [] });
+      }
+      return json(404, { detail: "no fake" });
+    }));
+    fake.state.calls.push({ method: "x", path: "x" });
+    render(<TemplatePanel api={api} stage="Preparatory" total={3} onFix={vi.fn()} onOpenSettings={vi.fn()} />);
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole("button", { name: /Global Mix/ }));
+    const confirmBox = await screen.findByRole("alertdialog", { name: /fill every empty answer/ });
+    expect(screen.queryByText("Global Mix in progress")).toBeNull();     // the question is answered without the panel
+    await user.click(within(confirmBox).getByRole("button", { name: "Mix and fill" }));
+
+    expect(await screen.findByText("Global Mix in progress")).toBeInTheDocument();
+    expect(screen.getByText(/Step 2 of 3: mixing - filling 12 activity\/level cells and 30 answers/)).toBeInTheDocument();
+    expect(screen.getByText(/Do not close or leave this page/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Mixing…" })).toBeDisabled();
+
+    finishMix();
+    expect(await screen.findByText(/Step 3 of 3: checking the class/)).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText("Global Mix in progress")).toBeNull(), { timeout: 6000 });
+    expect(screen.getByText(/Filled 12 activity\/level cells and 30 answers/)).toBeInTheDocument();
+  }, 15000);
+});

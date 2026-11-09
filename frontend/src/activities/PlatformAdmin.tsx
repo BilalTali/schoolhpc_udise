@@ -25,12 +25,13 @@ interface TeacherRow {
 interface ActivityRow { id: string; title: string; stage: string; grade: string; subjects: string[]; made_by: string; state: string }
 interface AuditRow { at: string; actor: string; school: string; action: string; entity: string; entity_id: string | null }
 
-type Tab = "overview" | "schools" | "activities" | "audit";
+type Tab = "overview" | "schools" | "activities" | "audit" | "access";
 const TABS: { key: Tab; label: string; icon: typeof LayoutDashboard }[] = [
   { key: "overview", label: "Overview", icon: LayoutDashboard },
   { key: "schools", label: "Schools & teachers", icon: Building2 },
   { key: "activities", label: "Activities for every school", icon: BookOpen },
   { key: "audit", label: "Audit trail", icon: ClipboardList },
+  { key: "access", label: "Portal access key", icon: KeyRound },
 ];
 
 export function PlatformAdmin({ api, onLogout }: { api: Api; onLogout: () => void }) {
@@ -64,6 +65,7 @@ export function PlatformAdmin({ api, onLogout }: { api: Api; onLogout: () => voi
       {tab === "schools" && <Schools api={api} say={say} />}
       {tab === "activities" && <Activities api={api} say={say} />}
       {tab === "audit" && <Audit api={api} onError={(t) => say(t, "error")} />}
+      {tab === "access" && <AccessKey api={api} say={say} />}
     </div>
   );
 }
@@ -292,5 +294,55 @@ function Audit({ api, onError }: { api: Api; onError: (t: string) => void }) {
         </tbody>
       </table>
     </section>
+  );
+}
+
+
+// The portal's access key: everyone enters it before using the portal (sign-in included). Only its hash is kept.
+function AccessKey({ api, say }: { api: Api; say: (t: string, type?: "success" | "error") => void }) {
+  const [state, setState] = useState<{ set: boolean; version: number; set_at: string | null } | null>(null);
+  const [key, setKey] = useState("");
+  const [again, setAgain] = useState("");
+  const load = useCallback(() => {
+    call<{ set: boolean; version: number; set_at: string | null }>(api, "GET", "/platform/access-key").then(setState)
+      .catch((e) => say(e.message, "error"));
+  }, [api]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); }, [load]);
+  const save = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (key !== again) { say("The two keys are not the same.", "error"); return; }
+    try {
+      setState(await call(api, "PUT", "/platform/access-key", { key }));
+      setKey(""); setAgain("");
+      say("Access key saved. Everyone enters the new key the next time they open the portal; give it to the people who may use it.");
+    } catch (err) { say((err as Error).message, "error"); }
+  };
+  const remove = async () => {
+    if (!window.confirm("Remove the access key? The portal opens to anyone who reaches it (the sign-in still protects each account).")) return;
+    try { setState(await call(api, "DELETE", "/platform/access-key")); say("The access key is removed."); }
+    catch (err) { say((err as Error).message, "error"); }
+  };
+  return (
+    <div className="ui-panel">
+      <div className="panel-header"><div className="panel-title"><KeyRound size={20} aria-hidden="true" /><span>Portal access key</span></div></div>
+      <p className="form-hint">Before anyone can use the portal - even the sign-in page - their browser must be unlocked with this key.
+        Give it only to the schools and teachers who may use the portal. Only a scrambled (hashed) copy is kept, so it cannot
+        be shown again: write it down. Changing it locks every browser until the new key is entered.</p>
+      <p>{state === null ? "Loading…" : state.set
+        ? <><b>A key is set</b>{state.set_at && <> (since {formatWhen(state.set_at)})</>}. Everyone must enter it.</>
+        : <><b>No key is set</b>: the portal is open to anyone who reaches it.</>}</p>
+      <form className="conn-form" onSubmit={save} style={{ maxWidth: "26rem" }}>
+        <label className="form-label" htmlFor="pa-key">{state?.set ? "New access key" : "Access key"}</label>
+        <input id="pa-key" type="password" className="form-input" value={key} onChange={(e) => setKey(e.target.value)}
+               minLength={6} autoComplete="new-password" required />
+        <label className="form-label" htmlFor="pa-key2">Type it again</label>
+        <input id="pa-key2" type="password" className="form-input" value={again} onChange={(e) => setAgain(e.target.value)}
+               minLength={6} autoComplete="new-password" required />
+        <button type="submit" className="btn btn-primary" disabled={key.length < 6}>
+          <KeyRound size={15} aria-hidden="true" /> {state?.set ? "Change the key" : "Set the key"}
+        </button>
+      </form>
+      {state?.set && <p><button type="button" className="btn btn-outline btn-sm" onClick={remove}><Power size={14} aria-hidden="true" /> Remove the key</button></p>}
+    </div>
   );
 }
