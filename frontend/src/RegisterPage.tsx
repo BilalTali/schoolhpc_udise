@@ -362,7 +362,7 @@ export function SchoolData({ api, onSaved }: { api: Api; onSaved: () => void }) 
               <tbody>{check.rows.map((r) => (
                 <tr key={`${r.sheet}${r.row}`}><td>{r.sheet} {r.row}</td><td>{r.name} <small>{r.parakh_id}</small></td>
                   <td className={r.outcome === "ready" ? "" : "sdms-warn"}>{r.outcome === "ready" ? "Ready" : r.outcome === "review" ? "Review" : "Correct"}</td>
-                  <td>{r.problems.length ? r.problems.join("; ") : `Changes: ${r.changes.map((c) => FIELD_NAMES[c] || c).join(", ")}`}</td></tr>))}
+                  <td className="sdms-long">{r.problems.length ? r.problems.join("; ") : `Changes: ${r.changes.map((c) => FIELD_NAMES[c] || c).join(", ")}`}</td></tr>))}
               </tbody></table></div>)}
           {check.status === "CHECKED" && check.summary.ready > 0 && (
             <button type="button" className="btn btn-primary" disabled={!!busy} onClick={apply}>

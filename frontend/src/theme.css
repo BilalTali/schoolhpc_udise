@@ -489,9 +489,11 @@ h1, h2, h3, h4 { font-family: var(--font-heading); letter-spacing: -0.02em; }
 .sdms-pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr)); gap: 1rem; align-items: start; }
 .sdms-pair > .ui-panel { margin: 0; }
 .sdms-fit { table-layout: auto; }
-.sdms-fit th, .sdms-fit td { white-space: normal; vertical-align: top; overflow-wrap: anywhere; }
+.sdms-fit th, .sdms-fit td { white-space: normal; vertical-align: top; overflow-wrap: break-word; }
 .sdms-fit td small { display: block; color: var(--ink-2); font-size: 0.76rem; margin-top: 0.1rem; }
-.sdms-fit td:last-child { white-space: nowrap; width: 1%; }
+.sdms-fit td:last-child:has(> button, > .btn, > a) { white-space: nowrap; width: 1%; }   /* a buttons column stays narrow; long text wraps */
+.sdms-table.sdms-fit td.sdms-long { min-width: 18rem; white-space: normal; width: auto; }   /* problems, notes: enough room to read */
+@media (max-width: 640px) { .sdms-table.sdms-fit td.sdms-long { min-width: 14rem; } }
 .sdms-chip { display: inline-block; font-size: 0.74rem; font-weight: 700; padding: 0.1rem 0.5rem; border-radius: 999px; white-space: nowrap; }
 .sdms-chip.ok { background: #ECFDF5; color: #065F46; }
 .sdms-chip.todo { background: #FEF3C7; color: #92400E; }

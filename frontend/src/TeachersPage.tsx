@@ -177,7 +177,7 @@ export function TeachersPage({ api }: { api: Api }) {
                   <thead><tr><th>Name</th><th>National code</th><th>Forms complete on UDISE+</th><th>Still needed</th><th>Excel row</th></tr></thead>
                   <tbody>{g.people.map((p, i) => (
                     <tr key={i}><td><b>{p.name}</b></td><td>{p.national_code || "—"}</td><td>{p.complete_on_udise ? "Yes" : "No"}</td>
-                      <td className={p.missing.length ? "sdms-warn" : ""}>{p.missing.length ? p.missing.join("; ") : "—"}
+                      <td className={`sdms-long${p.missing.length ? " sdms-warn" : ""}`}>{p.missing.length ? p.missing.join("; ") : "—"}
                         {Object.keys(p.errors).length > 0 && <small> · could not read: {Object.values(p.errors).join("; ")}</small>}</td>
                       <td>{p.row}</td></tr>))}
                   </tbody>
