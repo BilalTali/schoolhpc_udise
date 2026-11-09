@@ -343,3 +343,24 @@ def test_dummy_fill_needs_a_sensible_range(world):
     assert client.post(url, headers=h, json={}).status_code in (400, 409, 422)
     bad = client.post(url, headers=h, json={"attendance": {"low": 90, "high": 60}})
     assert bad.status_code in (400, 409, 422) and "range" in bad.text.lower()
+
+
+def test_deleted_columns_are_refused_not_read_shifted(world):
+    """A school deleted the parents' and month columns: the marks must never be read as days present."""
+    client, h, _, _ = world
+    _settings(client, h)
+    wb = _book(client, h)
+    ws = wb["Preparatory"]
+    ws.delete_cols(10, 2 + 12 + 4)                    # Name on the card, mother/guardian, 12 months, worked out
+    r = _upload(client, h, wb)
+    assert r.status_code == 422, r.text
+    assert "deleted or moved" in r.text and "Name on the HPC card" in r.text
+
+
+def test_changed_working_days_or_max_marks_in_headings_are_fine(world):
+    client, h, _, _ = world
+    _settings(client, h)
+    wb = _book(client, h)
+    client.put(f"{API}/school/register/settings", headers=h, json={"stage": "Preparatory", "values": {
+        "working_days": [21] * 12, "max_marks": {str(n): 50 for n in range(1, 7)}}})
+    assert _upload(client, h, wb).status_code == 200

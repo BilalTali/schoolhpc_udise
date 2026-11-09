@@ -410,6 +410,11 @@ def workbook(school_id: str) -> Tuple[bytes, str]:
 # Check (preview) and apply
 # ---------------------------------------------------------------------------
 
+def _bare(title: str) -> str:
+    """A column heading without its trailing "(…)" (working days or max marks, which the school may change)."""
+    return re.sub(r"\s*\([^()]*\)\s*$", "", _text(title))
+
+
 def _text(v: Any) -> str:
     if v is None:
         return ""
@@ -462,6 +467,15 @@ def check(school_id: str, content: bytes, file_name: str, by: str) -> Dict[str, 
         heads = [_text(c.value) for c in ws[2]]
         if heads[:len(IDENTITY)] != IDENTITY:
             raise Problem(f"Sheet '{stage}': its columns were changed - download a new workbook.")
+        # Every column is read by its place: a deleted or moved column would shift the rest (marks read as days
+        # present). The headings must match the template's (the numbers in brackets may differ: settings change).
+        expected = [_bare(t) for _, t in _columns(stage, {"values": settings})]
+        got = [_bare(h) for h in heads[:len(expected)]] + [""] * max(0, len(expected) - len(heads))
+        if got != expected:
+            gone = [t for t in expected if t not in got]
+            raise Problem(f"Sheet '{stage}': columns were deleted or moved"
+                          + (f" (missing: {', '.join(gone[:6])}{'…' if len(gone) > 6 else ''})" if gone else "")
+                          + ". Every column must stay where the app put it: download a new workbook and fill that.")
         subs = subjects(stage)
         first_month = len(IDENTITY) + len(PARENTS)
         marks_at = first_month + 12 + 4
