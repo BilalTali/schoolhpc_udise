@@ -42,7 +42,7 @@ def _choices(teacher: Teacher, stage: str):
 def get_settings(stage: str, teacher: Teacher = Depends(require_teacher)):
     stage = _stage(teacher, stage)
     medium, location = _choices(teacher, stage)
-    return {**class_settings.view(stage, class_settings.load(teacher.id, stage)),
+    return {**class_settings.view(stage, class_settings.load(teacher.id, stage), teacher.school_id),
             "choices": {"medium": medium or [], "rural_urban": location or [],
                         "loaded": medium is not None}}
 
@@ -92,7 +92,7 @@ def precheck(stage: str, teacher: Teacher = Depends(require_teacher)):
 @router.get("/template/{stage}/check")
 def check_status(stage: str, teacher: Teacher = Depends(require_teacher)):
     stage = _stage(teacher, stage)
-    settings = class_settings.view(stage, class_settings.load(teacher.id, stage))
+    settings = class_settings.view(stage, class_settings.load(teacher.id, stage), teacher.school_id)
     path = _roster_file(teacher, stage)
     students = len(json.loads(path.read_text(encoding="utf-8"))) if path.exists() else 0
     return {"job": class_template.job_view(class_template.latest(teacher.id, stage)),

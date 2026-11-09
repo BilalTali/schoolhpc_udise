@@ -28,6 +28,8 @@ interface CheckJob {
   finished_at: string | null;
   error: string | null;
   ready: number;
+  complete?: number;                                  // ready to save as they are (nothing else missing)
+  blocking?: { problem: string; students: number }[];  // what keeps Part-B-complete students from being saved
   students: CheckStudent[];
 }
 interface CheckStatus { job: CheckJob | null; settings_complete: boolean; settings_missing: string[] }
@@ -135,7 +137,7 @@ export function TemplatePanel({ api, stage, total, onFix, onOpenSettings }: {
   // an upload, and saves it with the usual upload (its progress shows under Excel & upload)
   const [sent, setSent] = useState<string | null>(null);
   const send = async () => {
-    const ready = status?.job?.ready ?? 0;
+    const ready = status?.job?.complete ?? status?.job?.ready ?? 0;
     const ok = await confirm({ title: "Save to PARAKH now?", confirmLabel: "Save to PARAKH",
       message: `The ${ready} ready student${ready === 1 ? "" : "s"} are checked against PARAKH and saved there, with what you chose in the app and the school's attendance and marks. A card that is not complete is not sent.` });
     if (!ok) return;
@@ -285,16 +287,28 @@ export function TemplatePanel({ api, stage, total, onFix, onOpenSettings }: {
           </div>
         )}
         {job?.status === "FAILED" && <div className="alert-box alert-error lib-inline-alert" role="alert"><AlertCircle size={18} aria-hidden="true" /><div>{job.error}</div></div>}
-        {job?.status === "COMPLETED" && (
-          <p className="tp-summary"><CheckCircle2 size={16} color="#046A38" aria-hidden="true" /> Ready as of {time(job.finished_at)}: <b>{job.ready} of {job.total}</b> students have Part B complete.</p>
-        )}
+        {job?.status === "COMPLETED" && (<>
+          <p className="tp-summary"><CheckCircle2 size={16} color="#046A38" aria-hidden="true" /> Ready as of {time(job.finished_at)}: <b>{job.ready} of {job.total}</b> students have Part B complete.{" "}
+            <b>{job.complete ?? 0}</b> can be saved to PARAKH now.</p>
+          {!!job.blocking?.length && (
+            <div className="alert-box alert-warning lib-inline-alert" role="status">
+              <AlertCircle size={18} aria-hidden="true" />
+              <div>Still missing before {job.ready - (job.complete ?? 0)} of the Part-B-complete cards can be saved:
+                <ul className="tp-blocking">{job.blocking.slice(0, 8).map((b) => (
+                  <li key={b.problem}>{b.problem.replace(/: required$/, "")} - <b>{b.students}</b> student{b.students === 1 ? "" : "s"}</li>))}
+                </ul>
+                Parents' names, attendance and summative marks come from the school's <b>School Register</b> (School Data
+                workbook, or "Dummy attendance &amp; marks" on the school's HPC page) - ask your school to enter them.
+              </div>
+            </div>)}
+        </>)}
         {error && <div className="alert-box alert-error lib-inline-alert" role="alert"><AlertCircle size={18} aria-hidden="true" /><div>{error}</div></div>}
       </div>
 
       <div className="tp-row">
-        <button type="button" className="btn btn-primary" onClick={send} disabled={!!why || busy}
-                title="No Excel: the ready students go to PARAKH straight from what is chosen in the app">
-          <CheckCircle2 size={15} aria-hidden="true" /> Save ready students to PARAKH ({job?.status === "COMPLETED" ? job.ready : "?"})
+        <button type="button" className="btn btn-primary" onClick={send} disabled={!!why || busy || (job?.status === "COMPLETED" && !(job.complete ?? job.ready))}
+                title="No Excel: the students with nothing missing go to PARAKH straight from what is chosen in the app">
+          <CheckCircle2 size={15} aria-hidden="true" /> Save ready students to PARAKH ({job?.status === "COMPLETED" ? job.complete ?? job.ready : "?"})
         </button>
         <button type="button" className="btn btn-green" onClick={() => download(false)} disabled={!!why || busy}
                 aria-describedby={why ? "tp-why" : undefined}>

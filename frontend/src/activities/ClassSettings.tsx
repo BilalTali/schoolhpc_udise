@@ -17,6 +17,7 @@ interface SettingsView {
   months: { key: string; name: string; max: number }[];
   choices: { medium: string[]; rural_urban: string[]; loaded: boolean };
   warnings?: Record<string, string>;
+  from_school?: { working_days: boolean[]; max_marks: boolean };
 }
 
 type Form = { medium: string; rural_urban: string; working_days: string[]; max_marks: Record<string, string>; declaration: string };
@@ -164,6 +165,9 @@ export function ClassSettings({ api, stage, onSaved }: { api: Api; stage: string
 
       <fieldset className="lib-fieldset">
         <legend className="form-label">Working days each month</legend>
+        {view.from_school?.working_days.some(Boolean) && (
+          <p className="lib-muted">The months marked "school" come from the School Register and are used on every save to PARAKH;
+            you only need to fill a month the school left empty.</p>)}
         <div className="cs-tools">
           <button type="button" className="portal-link-btn" onClick={() => set({ working_days: form.working_days.map(() => form.working_days[0]) })}
                   disabled={!form.working_days[0]}>Copy April to every month</button>
@@ -174,7 +178,7 @@ export function ClassSettings({ api, stage, onSaved }: { api: Api; stage: string
             const key = `working_days.${i}`;
             return (
               <div key={m.key} className="cs-month">
-                <label htmlFor={`${id}-m-${i}`}>{m.name}</label>
+                <label htmlFor={`${id}-m-${i}`}>{m.name}{view.from_school?.working_days[i] && <small className="cs-school"> school</small>}</label>
                 <input id={`${id}-m-${i}`} className={`form-input ${allProblems[key] ? "cs-bad" : ""}`} inputMode="numeric" value={form.working_days[i]}
                        aria-invalid={!!allProblems[key]} aria-describedby={allProblems[key] || warnings[key] ? `${id}-wd-${i}` : undefined}
                        onChange={(e) => set({ working_days: form.working_days.map((d, j) => (j === i ? e.target.value : d)) })} />
@@ -190,6 +194,8 @@ export function ClassSettings({ api, stage, onSaved }: { api: Api; stage: string
       {view.marks_subjects.length > 0 && (
         <fieldset className="lib-fieldset">
           <legend className="form-label">Maximum summative marks per subject</legend>
+          {view.from_school?.max_marks && (
+            <p className="lib-muted">From the School Register (used on every save to PARAKH) - nothing to set here.</p>)}
           <div className="cs-tools">
             <label className="cs-inline">Same for every subject:
               <input className="form-input cs-small" inputMode="decimal" value={same} onChange={(e) => setSame(e.target.value)} />

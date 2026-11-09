@@ -350,3 +350,31 @@ def test_global_mix_gives_levels_from_the_schools_marks(grid_client, monkeypatch
     assert all(v[f"b_lvl_PSLS1_{a}"] == "Beginner" for a in ("awareness", "sensitivity", "creativity"))
     level = client.get(f"{API}/teacher/hpc-cards/Preparatory/bulk", params={"field": "c_PSLS3_awareness"}).json()["rows"]
     assert next(r for r in level if r["student_id"] == "1001")["value"] == "Advanced"                   # Part C
+
+
+def test_global_mix_then_check_says_exactly_what_still_blocks_a_save(grid_client, monkeypatch):
+    """Global Mix fills Part B for everyone; the check then says which cards can be saved now, and what the school
+    still has to give (parent's name, marks) - and 'Save ready students' never sends a card PARAKH would refuse."""
+    import time as _time
+    from backend.routers import class_template as ct_router
+    client, portal, _ = grid_client
+    monkeypatch.setattr(ct_router, "_portal", lambda teacher: portal)
+    lookups = hpc_cards.lookups_for(None, None, "Preparatory")
+    grade = activity_grid.grade_id_of("Preparatory", {"grade": "Grade 5"})
+    entries = [{"key": "P85", "label": "P85", "subjects": list(SUBJ), "grade_id": grade}]
+    from backend.hpc.stages import activity_grid as grid_rules
+    monkeypatch.setattr(activity_grid, "_context", lambda c, t, st: (entries, {e["key"]: e["key"] for e in entries},
+                                                                         grid_rules.resolver_from_lookups(lookups)))
+    client.post(f"{API}/teacher/activities-grid/Preparatory/global-mix", json={"apply": True})
+    client.put(f"{API}/teacher/settings/Preparatory", json={"values": {"working_days": [22] * 12}})
+    client.post(f"{API}/teacher/template/Preparatory/check")
+    for _ in range(200):
+        job = client.get(f"{API}/teacher/template/Preparatory/check").json()["job"]
+        if job and job["status"] != "RUNNING":
+            break
+        _time.sleep(0.05)
+    assert job["ready"] == 3 and job["complete"] == 0                     # Part B done; the school's data is not
+    problems = {b["problem"]: b["students"] for b in job["blocking"]}
+    assert any("Guardian Name" in p for p in problems) and any("marks obtained" in p for p in problems)
+    sent = client.post(f"{API}/teacher/send/Preparatory")
+    assert sent.status_code == 409 and "School Register" in sent.text and portal.saved == []

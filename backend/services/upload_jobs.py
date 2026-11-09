@@ -45,8 +45,7 @@ def file_settings(client: Portal, teacher_id: Optional[str], path: Path, choices
             medium, location = list(lk.options(lk.medium)), list(lk.options(lk.location))
         except Exception:                                 # PARAKH's lists not at hand: the choices are not checked
             medium = location = None
-        saved = class_settings.load(teacher_id, stage)
-        now = saved.values if saved else class_settings.blank(stage)
+        now = class_settings.for_teacher(teacher_id, stage)
         blank = lambda v: v in (None, "")                 # an empty cell keeps the app's setting ...
         days = raw["working_days"]                        # ... except working days: the sheet's months exactly
         raw = {**raw, **{k: now.get(k, "") for k in ("medium", "rural_urban", "declaration") if blank(raw.get(k))},
@@ -107,8 +106,7 @@ def _grid_hooks(client: Portal, teacher_id: Optional[str]) -> Dict[str, Any]:
     from backend.services import activity_library, class_settings, class_template
 
     def settings_for(stage, sid):
-        row = class_settings.load(teacher_id, stage)
-        return class_settings.row_values(stage, row.values) if row else {}
+        return class_settings.row_values(stage, class_settings.for_teacher(teacher_id, stage))
     return {"extra_values": lambda stage, sid: class_template.dashboard_values(teacher_id, client.ay, stage, sid),
             "base_values": settings_for,
             "resolver_for": lambda stage: activity_library.resolver_for_teacher(teacher_id, stage)}

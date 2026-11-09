@@ -56,8 +56,7 @@ def precheck(client: Portal, teacher, stage: str, students: List[Dict[str, Any]]
     st = get_stage(stage)
     ids = [s["student_id"] for s in students]
     raw, _ = card_store.class_parts(client, owner, session, stage, ids, [p.col for p in st.PARTS], False)
-    saved = class_settings.load(teacher.id, stage)
-    from_settings = class_settings.row_values(stage, saved.values) if saved else {}
+    from_settings = class_settings.row_values(stage, class_settings.for_teacher(teacher.id, stage, teacher.school_id))
     labels = {}
     groups: Dict[tuple, Dict[str, Any]] = {}
     complete = 0
@@ -152,7 +151,25 @@ def job_view(job: Optional[Dict[str, Any]], with_names: bool = True) -> Optional
                 for r in results]
     return {"id": job["id"], "stage": job["stage"], "status": job["status"], "done": job["done"], "total": job["total"],
             "seconds_left": int(left), "started_at": job["started_at"], "finished_at": job["finished_at"],
-            "error": job["error"], "ready": sum(r["ready"] for r in results), "students": students}
+            "error": job["error"], "ready": sum(r["ready"] for r in results),
+            "complete": sum(complete(r) for r in results), "blocking": blocking(results), "students": students}
+
+
+def complete(result: Dict[str, Any]) -> bool:
+    """Ready to save to PARAKH as it is: Part B complete and nothing else missing (a save refuses a card with any
+    required answer empty - the parent's name, marks obtained ...)."""
+    return bool(result.get("ready")) and not result.get("other_problems")
+
+
+def blocking(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """What keeps Part-B-complete students from being saved, most common first: [{problem, students}]."""
+    counts: Dict[str, int] = {}
+    for r in results:
+        if not r.get("ready"):
+            continue
+        for problem in dict.fromkeys(r.get("other_problems") or []):      # once per student
+            counts[problem] = counts.get(problem, 0) + 1
+    return [{"problem": p, "students": n} for p, n in sorted(counts.items(), key=lambda x: (-x[1], x[0]))]
 
 
 def _kept_card(client: Portal, teacher_id: str, session: str, stage: str, student_id: str) -> "sync.StudentData":
@@ -187,7 +204,7 @@ def start_check(client: Portal, teacher, stage: str, students: List[Dict[str, An
 def _run(job, client: Portal, teacher_id: str, stage: str, students, resolve, lookups) -> None:
     try:
         row = class_settings.load(teacher_id, stage)
-        settings = row.values if row else class_settings.blank(stage)
+        settings = class_settings.for_teacher(teacher_id, stage)
         job["settings"] = {"values": settings, "saved_at": row.updated_at.isoformat(timespec="seconds") + "Z"
                            if row and row.updated_at else None}
         for s in students:

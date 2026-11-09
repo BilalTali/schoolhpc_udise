@@ -139,9 +139,67 @@ def with_default_marks(stage: str, values: Dict[str, Any]) -> Dict[str, Any]:
                                     for n, _ in marks_subjects(stage)}}
 
 
-def view(stage: str, row: Optional[ClassSetting]) -> Dict[str, Any]:
-    values = with_default_marks(stage, row.values if row else blank(stage))
+DEFAULT_DECLARATION = "Yes"
+
+
+def school_values(school_id: Optional[str], stage: str) -> Dict[str, Any]:
+    """The School Register's working days and max marks for a stage ({} when the school has none). Every save to
+    PARAKH uses these over the teacher's (register_data.card_values), so the class settings start from them."""
+    if not school_id:
+        return {}
+    try:
+        from backend.hpc.portal import stage_code
+        from backend.services import register_data
+        session = register_data.session_of(school_id)
+        values = register_data.get_settings(school_id, stage_code(stage).capitalize(), session)["values"]
+    except Exception:                                      # no academic year yet, unknown stage: the teacher's own
+        return {}
+    return {"working_days": list(values.get("working_days") or [None] * 12), "max_marks": dict(values.get("max_marks") or {})}
+
+
+def effective(stage: str, values: Optional[Dict[str, Any]], school_id: Optional[str] = None) -> Dict[str, Any]:
+    """The settings in force: the teacher's, with every gap filled - medium English, Rural, declaration Yes, the
+    School Register's working days (a month the school set wins, as on the save; a month it left empty keeps the
+    teacher's) and its max marks (else 50). A teacher changes them only to differ from these defaults."""
+    out = {**blank(stage), **(values or {})}
+    out["medium"] = out.get("medium") or DEFAULT_MEDIUM
+    out["rural_urban"] = out.get("rural_urban") or DEFAULT_LOCATION
+    out["declaration"] = out.get("declaration") or DEFAULT_DECLARATION
+    school = school_values(school_id, stage)
+    own = (list(out.get("working_days") or []) + [None] * 12)[:12]
+    theirs = (list(school.get("working_days") or []) + [None] * 12)[:12]
+    out["working_days"] = [s if s is not None else t for s, t in zip(theirs, own)]
+    marks = dict(out.get("max_marks") or {})
+    for n, m in (school.get("max_marks") or {}).items():
+        if m not in (None, ""):
+            marks[n] = m
+    out["max_marks"] = marks
+    return with_default_marks(stage, out)
+
+
+def for_teacher(teacher_id: str, stage: str, school_id: Optional[str] = None) -> Dict[str, Any]:
+    """effective() for a teacher's saved settings (the school found from the teacher when not given)."""
+    row = load(teacher_id, stage)
+    if school_id is None:
+        school_id = row.school_id if row else _school_of(teacher_id)
+    return effective(stage, row.values if row else None, school_id)
+
+
+def _school_of(teacher_id: str) -> Optional[str]:
+    from backend.models.entities import Teacher
+    with SessionLocal() as db:
+        t = db.get(Teacher, teacher_id)
+        return t.school_id if t else None
+
+
+def view(stage: str, row: Optional[ClassSetting], school_id: Optional[str] = None) -> Dict[str, Any]:
+    if school_id is None and row is not None:
+        school_id = row.school_id
+    values = effective(stage, row.values if row else None, school_id)
+    school = school_values(school_id, stage)
     return {"stage": stage, "values": values, "missing": missing(stage, values), "complete": not missing(stage, values),
+            "from_school": {"working_days": [d is not None for d in (list(school.get("working_days") or []) + [None] * 12)[:12]],
+                            "max_marks": bool(school.get("max_marks"))},
             "version": row.version if row else 0,
             "updated_at": row.updated_at.isoformat(timespec="seconds") + "Z" if row and row.updated_at else None,
             "marks_subjects": [{"n": n, "name": s} for n, s in marks_subjects(stage)],

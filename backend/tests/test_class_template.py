@@ -122,6 +122,34 @@ def test_settings_validation_completeness_and_versions(world):
     assert class_settings.row_values("Preparatory", SETTINGS)["d_3_max"] == 50
 
 
+def test_settings_start_from_the_school_register_and_declaration_yes(world):
+    """A teacher has nothing to set: the School Register's working days and max marks, Yes, English, Rural."""
+    from backend.models.register import RegisterSetting
+    client = world[0]
+    with SessionLocal() as db:
+        t = db.query(Teacher).filter_by(username="tplteacher").first()
+        school_id = t.school_id
+        db.query(RegisterSetting).filter_by(school_id=school_id).delete()
+        db.add(RegisterSetting(school_id=school_id, stage="Preparatory", session="2627", version=1,
+                               values={"working_days": [None] * 5 + [25] + [None] * 6,
+                                       "max_marks": {str(n): 80 for n in range(1, 7)}}))
+        db.commit()
+    url = f"{API}/teacher/settings/Preparatory"
+    try:
+        first = client.get(url).json()
+        assert first["complete"] is True, first["missing"]
+        assert first["values"]["declaration"] == "Yes" and first["values"]["working_days"][5] == 25
+        assert first["values"]["max_marks"]["1"] == 80 and first["from_school"]["working_days"][5] is True
+        # a teacher's own month the school left empty is kept; the school's month wins (as on every save)
+        client.put(url, json={"values": {**SETTINGS, "working_days": [20] * 12}, "version": 0})
+        now = client.get(url).json()["values"]["working_days"]
+        assert now[0] == 20 and now[5] == 25
+    finally:
+        with SessionLocal() as db:
+            db.query(RegisterSetting).filter_by(school_id=school_id).delete()
+            db.commit()
+
+
 # ---------------------------------------------------------------------------
 # Readiness: the real save's Part B checks
 # ---------------------------------------------------------------------------

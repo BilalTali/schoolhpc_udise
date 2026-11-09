@@ -515,11 +515,17 @@ def send_class(stage: str, background_tasks: BackgroundTasks, teacher: Teacher =
     if not job or job.get("status") != "COMPLETED":
         raise HTTPException(status.HTTP_409_CONFLICT, "Check the class first (Excel & upload -> Check the class), "
                                                       "then send it to PARAKH.")
-    if not any(r.get("ready") for r in job.get("results") or []):
-        raise HTTPException(status.HTTP_409_CONFLICT, "No student is ready yet: the class check lists what is missing.")
+    results = job.get("results") or []
+    ready = {r["student_id"] for r in results if class_template.complete(r)}
+    if not ready:
+        if not any(r.get("ready") for r in results):
+            raise HTTPException(status.HTTP_409_CONFLICT, "No student is ready yet: the class check lists what is missing.")
+        top = "; ".join(f"{b['problem']} ({b['students']} students)" for b in class_template.blocking(results)[:4])
+        raise HTTPException(status.HTTP_409_CONFLICT, "Part B is complete, but no card can be saved yet - still missing: "
+                            f"{top}. Parents' names, attendance and marks come from the school's School Register.")
     file_name = f"HPC_{stage}_sent_from_app.xlsx"
     path = _upload_path(teacher, file_name)
-    class_template.build_download(teacher, stage, False, path, _labels(teacher, stage), None)
+    class_template.build_download(teacher, stage, False, path, _labels(teacher, stage), ready)   # complete cards only
     _check_file(teacher, path, file_name)
     from backend.services import audit
     audit.record(f"teacher:{teacher.id}", "send_class", "upload", stage, None, {"stage": stage})

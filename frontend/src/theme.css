@@ -727,3 +727,6 @@ img, svg, video, canvas { max-width: 100%; }
 .gate-card { max-width: 26rem; display: grid; gap: 0.6rem; }
 .gate-card h2 { margin: 0; font-size: 1.35rem; }
 .gate-icon { width: 52px; height: 52px; border-radius: 14px; display: grid; place-items: center; background: var(--brand-50); color: var(--brand-600); }
+.tp-blocking { margin: 0.35rem 0 0.4rem 1.1rem; padding: 0; }
+.tp-blocking li { margin: 0.1rem 0; }
+.cs-school { color: var(--brand-600, #C2410C); font-weight: 600; font-size: 0.72rem; }
