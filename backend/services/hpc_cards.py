@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from backend.hpc import sync
-from backend.hpc.fields import Field
+from backend.hpc.fields import STUDENT_DEFAULTS, Field
 from backend.hpc import checks, notes
 from backend.hpc.suggestions import FILL_ONLY, has_suggestions, mixable, multi_mix, record_kind, suggestions_for
 from backend.hpc.portal import Portal, stage_code
@@ -458,6 +458,9 @@ def bulk_mix(client: Portal, owner: str, teacher_id: str, session: str, stage: s
             skipped.append({"key": key, "label": key, "reason": "not a class-wide question"})
             continue
         pick = 1
+        if key in STUDENT_DEFAULTS:                      # the school's default (mother tongue: Kashmiri), not at random
+            mixed[key] = (f, [STUDENT_DEFAULTS[key]], 1)
+            continue
         if record_kind(f.label, f.key):
             mixed[key] = (f, [], 1)                      # from the records, worked out per student below
             continue

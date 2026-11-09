@@ -333,9 +333,10 @@ def test_mix_every_question_at_once(teacher_client):
     fields = ["a3_feel_1", "a3_feel_2", "a2_fav_festival", "a1_mother_tongue", "a3_resources", "b_self_1"]
     preview = client.post(url, json={"fields": fields}).json()
     assert preview["applied"] is False and preview["students"] >= 1
-    assert {f["key"] for f in preview["fields"]} == {"a3_feel_1", "a3_feel_2", "a2_fav_festival", "b_self_1"}
+    assert {f["key"] for f in preview["fields"]} == {"a3_feel_1", "a3_feel_2", "a2_fav_festival", "b_self_1",
+                                                     "a1_mother_tongue"}         # the mother tongue: Kashmiri
     reasons = {s["key"]: s["reason"] for s in preview["skipped"]}
-    assert "fact about each student" in reasons["a1_mother_tongue"] and "several options" in reasons["a3_resources"]
+    assert "a1_mother_tongue" not in reasons and "several options" in reasons["a3_resources"]
     before = client.get(f"{API}/teacher/hpc-cards/Preparatory/bulk", params={"field": "a3_feel_1"}).json()
     assert before["rows"][0]["in_draft"] is False                              # the preview saved nothing
 

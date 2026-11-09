@@ -323,7 +323,9 @@ def test_global_mix_fills_every_empty_answer_and_keeps_what_was_chosen(grid_clie
     assert by_id["1002"]["values"]["b_act_PSLS1"] == "P85"                          # PARAKH's activity kept
     fields = {f["key"] for f in done["answers"]["fields"]}
     assert "c_PSLS1_awareness" in fields and "c_PSLS1_remark" in fields and "a2_fav_festival" in fields
-    assert "a1_mother_tongue" not in fields                                          # a fact: left to the teacher
+    assert "a1_mother_tongue" in fields                                              # the school's default
+    tongue = client.get(f"{API}/teacher/hpc-cards/Preparatory/bulk", params={"field": "a1_mother_tongue"}).json()["rows"]
+    assert {r["value"] for r in tongue} == {"Kashmiri"}                              # the same for all, not at random
     note = client.get(f"{API}/teacher/hpc-cards/Preparatory/bulk", params={"field": "c_PSLS1_remark"}).json()["rows"]
     assert all(r["value"].startswith("Strength - ") for r in note)                  # written from the mixed levels
     festival = client.get(f"{API}/teacher/hpc-cards/Preparatory/bulk", params={"field": "a2_fav_festival"}).json()["rows"]

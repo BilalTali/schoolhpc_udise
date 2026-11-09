@@ -118,14 +118,37 @@ def old_layout_rows(rows: Dict[str, Dict[str, Any]]) -> List[str]:
     return [sid for sid, row in rows.items() if any(str(row.get(k) or "").strip() for k in old)]
 
 
+def _school_values_for(client: Portal, teacher_id: Optional[str]):
+    """(stage, student id) -> what the School Register gives that card (attendance, parent, marks); {} when none."""
+    from backend.database import SessionLocal as Session
+    from backend.models.entities import Teacher
+    from backend.hpc.portal import stage_code
+    from backend.services import register_data
+    with Session() as db:
+        teacher = db.get(Teacher, teacher_id) if teacher_id else None
+        school_id = teacher.school_id if teacher else None
+    session = str(getattr(client, "ay", "") or "")
+
+    def values(stage: str, sid: str) -> Dict[str, Any]:
+        if not school_id or not session:
+            return {}
+        try:
+            return register_data.for_cards(school_id, stage_code(stage).capitalize(), session, str(sid))
+        except Exception:
+            return {}
+    return values
+
+
 def file_cell_errors(client: Portal, teacher_id: Optional[str], path: Path, rows: Dict[str, Dict[str, Any]],
                      hooks: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Every cell the save would refuse (too long, not one of the choices, a required one empty), found from the
     file alone - the same rule as the save (Field.parse on the same values), without reading PARAKH - each with
     the sheet, row and column to fix."""
+    from backend.hpc.fields import with_default
     from backend.services import hpc_cards
     where, columns = workbook.layout(path)
     stages = workbook.detect_stages(path)
+    school = _school_values_for(client, teacher_id)          # the School Register's values win, as on the save
     base = hooks.get("base_values") or (lambda stage, sid: {})
     extra = hooks.get("extra_values") or (lambda stage, sid: {})
     lookups: Dict[str, Any] = {}
@@ -141,14 +164,14 @@ def file_cell_errors(client: Portal, teacher_id: Optional[str], path: Path, rows
                 lookups[stage] = None                     # PARAKH's lists not at hand: the full check finds these
         if lookups[stage] is None:
             continue
-        values = {**base(stage, sid), **row, **extra(stage, sid)}
+        values = {**base(stage, sid), **row, **extra(stage, sid), **school(stage, sid)}
         sheet, line = where.get(sid, (stage, 0))
         name = str(row.get(workbook.NAME_KEY) or sid)
         for part in get_stage(stage).PARTS:
             for f in part.fields(lookups[stage]):
                 if f.key not in values:
                     continue
-                _, problem = f.parse(values[f.key])
+                _, problem = f.parse(with_default(f.key, values[f.key]))    # an empty mother tongue is Kashmiri
                 if not problem:
                     continue
                 letter = columns.get(sheet, {}).get(f.key, ("", ""))[0]

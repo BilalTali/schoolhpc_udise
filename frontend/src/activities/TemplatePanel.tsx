@@ -194,7 +194,7 @@ export function TemplatePanel({ api, stage, total, onFix, onOpenSettings }: {
       const ok = await confirm({ title: "Global Mix: fill every empty answer?", confirmLabel: "Mix and fill",
         message: `Fills ${preview.grid.cells} activity/level cells and ${preview.answers.cells} answers at random for the whole class. `
           + (preview.from_marks ? `${preview.from_marks} student(s) get their levels from the school's summative marks (75%+ Advanced, 50%+ Proficient, else Beginner); the rest at random. ` : "")
-          + "Only empty answers are filled; nothing you entered changes. Mother tongue, names and other facts are not filled. "
+          + "Only empty answers are filled; nothing you entered changes. An empty mother tongue gets Kashmiri; other facts about a student are not filled. "
           + "Use it only when there is no time to fill the cards properly." + (notes.length ? ` (${notes.join("; ")})` : "") });
       if (!ok) return;
       setMixPlan(`Filling ${preview.grid.cells} activity/level cells and ${preview.answers.cells} answers`);
