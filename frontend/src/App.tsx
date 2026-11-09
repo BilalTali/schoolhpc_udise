@@ -35,7 +35,7 @@ import {
   X,
 } from "lucide-react";
 import { NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
-import { API_BASE, apiFetch } from "./api";
+import { API_BASE, apiFetch, teacherTab as openedAsTeacherTab } from "./api";
 import { ClassSettings } from "./activities/ClassSettings";
 import { TemplatePanel } from "./activities/TemplatePanel";
 import { UploadLive } from "./activities/UploadLive";
@@ -541,6 +541,9 @@ export default function App() {
       .then(async (res) => { if (res.ok) setUser(userFromProfile(await res.json())); })
       .catch(() => undefined);
   }, []);
+  useEffect(() => {                                       // the school's teacher tab says whose it is in its title
+    if (openedAsTeacherTab() && user?.role === "TEACHER") document.title = `${user.name} (teacher tab) - Teacher Assist`;
+  }, [user]);
 
   useEffect(() => {
     if (!user) return;
@@ -1821,6 +1824,12 @@ export default function App() {
       {navOpen && <button type="button" className="sb-scrim" aria-label="Close menu" onClick={() => setNavOpen(false)} />}
 
       <div className="shell-main">
+        {openedAsTeacherTab() && user?.role === "TEACHER" && (
+          <div className="teacher-tab-banner" role="note">
+            <Users size={16} aria-hidden="true" />
+            <span>Teacher tab: signed in as <b>{user.name}</b>. The school stays signed in in its own tab.</span>
+          </div>
+        )}
         <header className="topbar">
           <button type="button" className="tb-menu" aria-label="Open menu" onClick={() => setNavOpen(true)}><Menu size={20} /></button>
           <div className="tb-titles">

@@ -104,7 +104,8 @@ def test_settings_validation_completeness_and_versions(world):
     client, *_ = world
     url = f"{API}/teacher/settings/Preparatory"
     first = client.get(url).json()
-    assert first["complete"] is False and "Medium of instruction" in first["missing"]
+    assert first["complete"] is False and "Medium of instruction" not in first["missing"]     # English by default
+    assert (first["values"]["medium"], first["values"]["rural_urban"]) == ("English", "Rural")
     assert first["choices"]["medium"] == ["English", "Hindi"] and len(first["marks_subjects"]) == 6
 
     bad = client.put(url, json={"values": {**SETTINGS, "medium": "Klingon", "working_days": [22, 40] + [22] * 10}})

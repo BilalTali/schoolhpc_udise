@@ -20,6 +20,7 @@ from backend.models.settings import ClassSetting
 from backend.services import audit
 
 UNUSUAL_DAYS = 26
+DEFAULT_MEDIUM, DEFAULT_LOCATION = "English", "Rural"      # the school's defaults; a teacher may change them
 
 
 def marks_subjects(stage: str) -> List[Tuple[str, str]]:
@@ -28,7 +29,7 @@ def marks_subjects(stage: str) -> List[Tuple[str, str]]:
 
 
 def blank(stage: str) -> Dict[str, Any]:
-    return {"medium": "", "rural_urban": "", "working_days": [None] * 12,
+    return {"medium": DEFAULT_MEDIUM, "rural_urban": DEFAULT_LOCATION, "working_days": [None] * 12,
             "max_marks": {n: None for n, _ in marks_subjects(stage)}, "declaration": ""}
 
 

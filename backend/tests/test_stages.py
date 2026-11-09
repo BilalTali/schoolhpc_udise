@@ -58,9 +58,10 @@ def test_middle_teacher_feedback_follows_rubric_levels():
 def test_empty_row_reports_required_fields_and_writes_nothing():
     _, errors = sync.build_payloads("PREPARATORY", blank_student("PREPARATORY"), {}, make_lookups("PREPARATORY"))
     text = "\n".join(errors)
-    for expected in ("Mother Tongue: required", "How I feel", "No activity chosen for: Language 1 (R1)",
+    for expected in ("Mother/Father/Guardian Name: required", "How I feel", "No activity chosen for: Language 1 (R1)",
                      "summative max marks: required", "declaration"):
         assert expected in text
+    assert "Mother Tongue" not in text                  # an empty mother tongue is saved as Kashmiri (school default)
 
 
 def test_bad_values_are_reported():

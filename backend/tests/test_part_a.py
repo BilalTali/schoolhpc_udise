@@ -144,3 +144,24 @@ def test_a11_names_in_one_case_get_capitals():
 
 def test_a14_the_avatar_is_never_handed_out_at_random():
     assert not suggestions.mixable("a2_avatar", "My avatar (avat_01 ... avat_20)")
+
+
+# --- School defaults: mother tongue Kashmiri, English, Rural ---------------------------------------------------
+
+def test_an_empty_mother_tongue_is_saved_as_kashmiri_and_a_given_one_is_kept():
+    for stage in ("FOUNDATIONAL", "PREPARATORY", "MIDDLE"):
+        row = filled_row(stage)
+        row.pop("a1_mother_tongue")                                   # nothing on PARAKH, the workbook or the card
+        parts, errors = _payload(stage, row)
+        assert parts["part_a1"]["gen"][16] == "Kashmiri", stage
+        assert not [e for e in errors if "Mother Tongue" in e], errors
+        row["a1_mother_tongue"] = "Urdu"
+        parts, _ = _payload(stage, row)
+        assert parts["part_a1"]["gen"][16] == "Urdu", stage
+
+
+def test_class_settings_start_with_english_and_rural():
+    from backend.services import class_settings
+    blank = class_settings.blank("Preparatory")
+    assert (blank["medium"], blank["rural_urban"]) == ("English", "Rural")
+    assert "Medium of instruction" not in class_settings.missing("Preparatory", blank)

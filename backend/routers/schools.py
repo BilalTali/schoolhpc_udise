@@ -7,7 +7,7 @@ import os
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -257,6 +257,46 @@ def parakh_teacher_import(payload: ParakhTeachersImportRequest, admin: School = 
     audit.record(f"school_admin:{admin.id}", "teachers_from_parakh", "teacher", admin.id, None,
                  {"results": [{"parakh_id": r["parakh_id"], "status": r["status"]} for r in results]})
     return {"results": results}
+
+
+class TeacherParakhLogin(BaseModel):
+    hpc_login_id: str = Field(..., min_length=3, max_length=100)
+    hpc_password: str = Field(..., min_length=3, max_length=128)
+
+
+def _own_teacher(db: Session, admin: School, teacher_id: str) -> Teacher:
+    teacher = db.query(Teacher).filter(Teacher.id == teacher_id, Teacher.school_id == admin.id).first()
+    if not teacher:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Teacher not found in this school.")
+    if not teacher.is_active:
+        raise HTTPException(status.HTTP_409_CONFLICT, "This teacher's account is switched off. Switch it on first.")
+    return teacher
+
+
+@router.put("/teachers/{teacher_id}/parakh-login")
+def set_teacher_parakh_login(teacher_id: str, payload: TeacherParakhLogin, admin: School = Depends(require_school_admin),
+                             db: Session = Depends(get_db)):
+    """The school saves a teacher's own PARAKH login (stored encrypted), so the teacher tab connects with one captcha."""
+    teacher = _own_teacher(db, admin, teacher_id)
+    teacher.hpc_login_id = payload.hpc_login_id.strip()
+    teacher.hpc_password = payload.hpc_password
+    db.commit()
+    audit.record(f"school_admin:{admin.id}", "teacher_parakh_login_set", "teacher", teacher.id, None,
+                 {"hpc_login_id": teacher.hpc_login_id}, school_id=admin.id)          # never the password
+    return {"teacher_id": teacher.id, "hpc_login_id": teacher.hpc_login_id, "has_parakh_login": True}
+
+
+@router.post("/teachers/{teacher_id}/open-tab")
+def open_teacher_tab(teacher_id: str, response: Response, admin: School = Depends(require_school_admin),
+                     db: Session = Depends(get_db)):
+    """Signs a teacher in for ONE separate browser tab (its own cookies, used only by a tab that says it is this
+    teacher); the school stays signed in in its own tab. Opening another teacher replaces the teacher tab's session."""
+    from backend.services.auth_service import issue_session
+    teacher = _own_teacher(db, admin, teacher_id)
+    issue_session(response, db, teacher.id, "TEACHER", remember=False, tab=True)
+    audit.record(f"school_admin:{admin.id}", "teacher_tab_opened", "teacher", teacher.id, school_id=admin.id)
+    return {"teacher_id": teacher.id, "name": teacher.teacher_name, "tab": f"teacher:{teacher.id}",
+            "has_parakh_login": bool(teacher.hpc_login_id and teacher.hpc_password_encrypted)}
 
 
 @router.delete("/teachers/{teacher_id}", status_code=status.HTTP_204_NO_CONTENT)

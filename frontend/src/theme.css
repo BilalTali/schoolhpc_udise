@@ -694,3 +694,10 @@ img, svg, video, canvas { max-width: 100%; }
 @media (max-width: 640px) {
   button[title^="Reconnect to PARAKH"] { min-height: 34px; }
 }
+
+/* School Register, teachers: the teacher's PARAKH login and "Open as teacher" */
+.teacher-tab-cell { display: flex; flex-direction: column; gap: 0.4rem; min-width: 16rem; }
+.teacher-tab-login { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.teacher-tab-login .form-input { flex: 1 1 7rem; min-width: 7rem; }
+.teacher-tab-banner { display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 1rem; background: #EFF6FF;
+  border-bottom: 1px solid #BFDBFE; color: #1E3A8A; font-size: 0.86rem; }

@@ -29,6 +29,20 @@ from backend.models.entities import PlatformAdmin, RefreshToken, School, Teacher
 security = HTTPBearer(auto_error=False)
 ACCESS_COOKIE, REFRESH_COOKIE = "ta_access", "ta_refresh"
 CSRF_HEADER, CSRF_VALUE = "x-requested-with", "TeacherAssist"
+# A teacher tab the school opened ("Open as teacher"): its own cookies, used only by a tab that sends
+# "X-TA-Tab: teacher:<id>". The school's own session in the first tab is never touched.
+TAB_HEADER = "x-ta-tab"
+TAB_ACCESS_COOKIE, TAB_REFRESH_COOKIE = "ta_access_t", "ta_refresh_t"
+
+
+def tab_teacher(request: Request) -> Optional[str]:
+    """The teacher id a teacher tab says it is ("teacher:<id>"), or None for an ordinary tab."""
+    value = (request.headers.get(TAB_HEADER) or "").strip()
+    return value[len("teacher:"):] or None if value.startswith("teacher:") else None
+
+
+def _cookie_names(tab: bool):
+    return (TAB_ACCESS_COOKIE, TAB_REFRESH_COOKIE) if tab else (ACCESS_COOKIE, REFRESH_COOKIE)
 REFRESH_PATH = "/api/v1/auth"
 
 
@@ -88,8 +102,10 @@ def _set_cookie(response: Response, name: str, value: str, max_age: int, path: s
     response.set_cookie(name, value, max_age=max_age, httponly=True, secure=COOKIE_SECURE, samesite="lax", path=path)
 
 
-def issue_session(response: Response, db: Session, sub: str, role: str, remember: bool) -> Dict[str, Any]:
-    """Sets the access and refresh cookies for a newly signed-in (or refreshed) user."""
+def issue_session(response: Response, db: Session, sub: str, role: str, remember: bool,
+                  tab: bool = False) -> Dict[str, Any]:
+    """Sets the access and refresh cookies for a newly signed-in (or refreshed) user; tab: the teacher-tab cookies."""
+    access_name, refresh_name = _cookie_names(tab)
     access_exp = _now() + timedelta(minutes=ACCESS_COOKIE_MINUTES)
     epoch = _load_user(db, sub, role)["user"].token_epoch or 0
     access = jwt.encode({"sub": sub, "role": role, "typ": "access", "ep": epoch, "exp": access_exp, "iat": _now()},
@@ -102,41 +118,48 @@ def issue_session(response: Response, db: Session, sub: str, role: str, remember
     db.add(RefreshToken(id=jti, user_id=sub, role=role, remember=remember,
                         expires_at=refresh_exp.replace(tzinfo=None)))
     db.commit()
-    _set_cookie(response, ACCESS_COOKIE, access, ACCESS_COOKIE_MINUTES * 60, "/api")
-    _set_cookie(response, REFRESH_COOKIE, refresh, days * 86400, REFRESH_PATH)
+    _set_cookie(response, access_name, access, ACCESS_COOKIE_MINUTES * 60, "/api")
+    _set_cookie(response, refresh_name, refresh, days * 86400, REFRESH_PATH)
     return {"access_expires_in": ACCESS_COOKIE_MINUTES * 60}
 
 
 def rotate_session(request: Request, response: Response, db: Session) -> Dict[str, Any]:
-    """Exchanges a valid refresh cookie for new cookies. Reusing an old one revokes the user's sessions."""
-    token = request.cookies.get(REFRESH_COOKIE)
+    """Exchanges a valid refresh cookie for new cookies. Reusing an old one revokes the user's sessions.
+    A teacher tab renews its own cookies, and only for the teacher it was opened for."""
+    tab_id = tab_teacher(request)
+    tab = tab_id is not None
+    token = request.cookies.get(_cookie_names(tab)[1])
     if not token:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Please sign in.")
     try:
         payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
     except jwt.PyJWTError:
-        clear_session(response)
+        clear_session(response, tab)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Your session has expired. Please sign in again.")
     row = db.get(RefreshToken, payload.get("jti", ""))
     if payload.get("typ") != "refresh" or row is None:
-        clear_session(response)
+        clear_session(response, tab)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Your session has expired. Please sign in again.")
     if row.revoked_at is not None:
         # A rotated token used again: someone may hold a copy. End every session of this user.
         db.query(RefreshToken).filter(RefreshToken.user_id == row.user_id, RefreshToken.revoked_at.is_(None)) \
             .update({"revoked_at": _now().replace(tzinfo=None)})
         db.commit()
-        clear_session(response)
+        clear_session(response, tab)
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Your session has expired. Please sign in again.")
+    if tab and (row.user_id != tab_id or row.role != "TEACHER"):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "This tab was opened for another teacher. Close it and press "
+                                                          "'Open as teacher' again on the school's page.")
     _load_user(db, row.user_id, row.role)              # account still exists and is active
     row.revoked_at = _now().replace(tzinfo=None)
     db.commit()
-    return issue_session(response, db, row.user_id, row.role, bool(row.remember))
+    return issue_session(response, db, row.user_id, row.role, bool(row.remember), tab=tab)
 
 
 def end_session(request: Request, response: Response, db: Session) -> None:
+    tab = tab_teacher(request) is not None              # a teacher tab signs out only itself
     bearer = request.headers.get("authorization", "")
-    if bearer.lower().startswith("bearer "):          # the old login: logging out ends its tokens (M-2)
+    if not tab and bearer.lower().startswith("bearer "):          # the old login: logging out ends its tokens (M-2)
         try:
             payload = decode_token(bearer[7:].strip())
             user = _load_user(db, payload.get("sub", ""), payload.get("role", ""))["user"]
@@ -144,7 +167,7 @@ def end_session(request: Request, response: Response, db: Session) -> None:
             db.commit()
         except HTTPException:
             pass
-    token = request.cookies.get(REFRESH_COOKIE)
+    token = request.cookies.get(_cookie_names(tab)[1])
     if token:
         try:
             payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM], options={"verify_exp": False})
@@ -154,12 +177,13 @@ def end_session(request: Request, response: Response, db: Session) -> None:
                 db.commit()
         except jwt.PyJWTError:
             pass
-    clear_session(response)
+    clear_session(response, tab)
 
 
-def clear_session(response: Response) -> None:
-    response.delete_cookie(ACCESS_COOKIE, path="/api")
-    response.delete_cookie(REFRESH_COOKIE, path=REFRESH_PATH)
+def clear_session(response: Response, tab: bool = False) -> None:
+    access_name, refresh_name = _cookie_names(tab)
+    response.delete_cookie(access_name, path="/api")
+    response.delete_cookie(refresh_name, path=REFRESH_PATH)
 
 
 # ---------------------------------------------------------------------------
@@ -189,7 +213,19 @@ def _load_user(db: Session, user_id: str, role: str) -> Dict[str, Any]:
 
 def get_current_user(request: Request, credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
                      db: Session = Depends(get_db)) -> Dict[str, Any]:
-    if credentials:
+    tab_id = tab_teacher(request)
+    if tab_id is not None:                              # a teacher tab: only its own cookie, only its teacher
+        token = request.cookies.get(TAB_ACCESS_COOKIE)
+        if not token:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "This teacher tab has ended. Open it again from the "
+                                                              "school's page ('Open as teacher').")
+        payload = decode_token(token, expected_type="access")
+        if payload.get("sub") != tab_id or payload.get("role") != "TEACHER":
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "This tab was opened for another teacher. Close it and "
+                                                              "press 'Open as teacher' again on the school's page.")
+        if request.method not in ("GET", "HEAD", "OPTIONS") and request.headers.get(CSRF_HEADER) != CSRF_VALUE:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Missing request header.")
+    elif credentials:
         if not bearer_enabled():
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "This way of signing in has ended. Please sign in again.")
         payload = decode_token(credentials.credentials)

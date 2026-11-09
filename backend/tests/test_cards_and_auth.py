@@ -60,7 +60,7 @@ def test_card_draft_and_submit_flow(teacher_client):
     client, portal = teacher_client
     card = client.get(f"{API}/teacher/hpc-cards/Preparatory/1001").json()
     assert card["student"]["student_name"] == "TEST STUDENT" and card["ready"] is False and card["draft"] is None
-    assert any("Mother Tongue" in p for p in card["parts"][0]["problems"])
+    assert any("Guardian Name" in p for p in card["parts"][0]["problems"])
 
     # Autosave the whole card in two edits; the second must name the version it started from.
     row = filled_row("PREPARATORY")

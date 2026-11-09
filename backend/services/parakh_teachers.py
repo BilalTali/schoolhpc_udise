@@ -80,7 +80,9 @@ def list_teachers(db, school_id: str, client: Portal) -> List[Dict[str, Any]]:
         acc = _account(db, school_id, t["parakh_id"])
         out.append({**t, "account": None if acc is None else {
             "id": acc.id, "username": acc.username, "is_active": acc.is_active,
-            "login_matches": acc.username == t["parakh_id"].lower()}})
+            "login_matches": acc.username == t["parakh_id"].lower(),
+            "has_parakh_login": bool(acc.hpc_login_id and acc.hpc_password_encrypted),
+            "parakh_login_id": acc.hpc_login_id}})
     return out
 
 

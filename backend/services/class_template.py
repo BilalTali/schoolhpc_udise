@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Optional
 
 from backend.hpc import sync
 from backend.hpc.portal import Portal, PortalError
+from backend.hpc.fields import with_default
 from backend.hpc.stages import activity_grid, get_stage
 from backend.services import card_store, class_settings, hpc_cards
 
@@ -81,6 +82,7 @@ def precheck(client: Portal, teacher, stage: str, students: List[Dict[str, Any]]
                     value = from_settings[f.key]
                 else:
                     value = f.read(fd)
+                value = with_default(f.key, value)                # e.g. an empty mother tongue is saved as Kashmiri
                 where = "Activities (tab 2) - Part B answers" if part.code == "B" else _where(part, f).replace("{stage}", stage)
                 if (isinstance(value, list) and not value) or str(value if value is not None else "").strip() in ("", "[]"):
                     if f.required and part.code != "B":   # Part B's empty answers: the Activities grid says so below

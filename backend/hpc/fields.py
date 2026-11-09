@@ -19,6 +19,18 @@ Path = Tuple[Union[str, int], ...]
 POSITIONS = ("onehot", "flags", "inlist")   # options map to a place in a list, not to an answer code (H-4)
 
 
+# Answers that default when a student's card has none (the school's choice): used only when the value is empty -
+# a value on PARAKH, in the workbook or typed on the card always wins.
+STUDENT_DEFAULTS: Dict[str, str] = {"a1_mother_tongue": "Kashmiri"}
+
+
+def with_default(key: str, value: Any) -> Any:
+    """The value, or the school's default for that answer when it is empty."""
+    if key in STUDENT_DEFAULTS and not str(value if value is not None else "").strip():
+        return STUDENT_DEFAULTS[key]
+    return value
+
+
 @dataclass
 class Field:
     key: str                          # stable column id, e.g. "a1_mother_tongue"

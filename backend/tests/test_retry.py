@@ -52,7 +52,7 @@ def world(monkeypatch, tmp_path):
     client = TestClient(app)
     client.headers.update(session_headers(f"retry{tag}")[0])
     rows = {sid: filled_row("PREPARATORY") for sid in IDS}
-    rows["1003"] = {**rows["1003"], "a1_mother_tongue": ""}                  # a mistake in the file: INVALID
+    rows["1003"] = {**rows["1003"], "a1_guardian_name": ""}                  # a mistake in the file: INVALID
     folder = hpc_sessions.session_dir("teacher", tid)
     workbook.build([workbook.Section("Preparatory", [{"student_id": s, "student_name": f"TEST STUDENT {s}", "status": "IN_PROGRESS"}
                                                      for s in IDS], rows, make_lookups("PREPARATORY"))], folder / "uploaded_class.xlsx")

@@ -18,6 +18,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from backend.hpc.portal import STAGES as STAGE_NAMES, Portal, PortalError, stage_code
 from backend.hpc.stages import activity_grid, get_stage
+from backend.hpc.fields import with_default
 from backend.hpc.stages.common import Lookups, StudentContext
 
 
@@ -98,7 +99,7 @@ def build_payloads(stage: str, data: StudentData, row: Dict[str, Any], lookups: 
         fd = part.load(data.raw_parts.get(part.col))
         for f in part.fields(lookups):
             # A column missing from the workbook keeps the portal's value - but is still checked.
-            err = f.write(fd, row[f.key] if f.key in row else f.read(fd))
+            err = f.write(fd, with_default(f.key, row[f.key] if f.key in row else f.read(fd)))
             if err:
                 errors.append(f"{part.title}: {err}")
         parts[part.col] = fd
