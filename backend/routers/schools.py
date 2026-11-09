@@ -641,6 +641,7 @@ class DummyFillRequest(BaseModel):
     attendance: Optional[RangeRequest] = None    # % of each month's working days
     marks: Optional[RangeRequest] = None         # marks obtained, never above the subject's max marks
     apply: bool = False                          # False: how many cells would be filled (nothing is saved)
+    replace: bool = False                        # True: every cell again, not only the empty ones
 
 
 @router.post("/register/data/dummy-fill")
@@ -653,7 +654,8 @@ def register_dummy_fill(payload: DummyFillRequest, admin: School = Depends(requi
             admin.id,
             (payload.attendance.low, payload.attendance.high) if payload.attendance else None,
             (int(payload.marks.low), int(payload.marks.high)) if payload.marks else None,
-            _stage_name(payload.stage) if payload.stage else None, payload.apply, f"school_admin:{admin.id}")
+            _stage_name(payload.stage) if payload.stage else None, payload.apply, f"school_admin:{admin.id}",
+            payload.replace)
     except register_data.Problem as exc:
         raise _register_problem(exc)
 

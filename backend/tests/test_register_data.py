@@ -364,3 +364,27 @@ def test_changed_working_days_or_max_marks_in_headings_are_fine(world):
     client.put(f"{API}/school/register/settings", headers=h, json={"stage": "Preparatory", "values": {
         "working_days": [21] * 12, "max_marks": {str(n): 50 for n in range(1, 7)}}})
     assert _upload(client, h, wb).status_code == 200
+
+
+def test_dummy_fill_replace_overwrites_a_wrong_upload_and_empties_months_without_working_days(world):
+    client, h, _, school_id = world
+    days = _settings(client, h)                                   # June (index 2) has 0 working days
+    wb = _book(client, h)
+    ws = wb["Preparatory"]
+    wrong_id = ws.cell(row=3, column=1).value
+    ws.cell(row=3, column=12, value=3)                            # April present: wrong
+    ws.cell(row=3, column=28, value=99)                           # R1 marks: wrong
+    check = _upload(client, h, wb).json()
+    client.post(f"{API}/school/register/data/apply", headers=h, json={"import_id": check["id"], "confirm": True})
+    with SessionLocal() as db:                                    # a wrong value in a month with no working days
+        d = db.query(RegisterStudentData).filter_by(school_id=school_id, student_id=wrong_id).first()
+        d.present = [3, None, 27] + [None] * 9
+        db.commit()
+    body = {"stage": "Preparatory", "attendance": {"low": 80, "high": 90}, "marks": {"low": 30, "high": 40},
+            "apply": True, "replace": True}
+    client.post(f"{API}/school/register/data/dummy-fill", headers=h, json=body)
+    with SessionLocal() as db:
+        d = db.query(RegisterStudentData).filter_by(school_id=school_id, student_id=wrong_id).first()
+        present, marks = list(d.present), dict(d.marks)
+    assert round(days[0] * 0.8) - 1 <= present[0] <= days[0] * 0.9 and present[2] is None
+    assert 30 <= marks["1"] <= 40

@@ -3,6 +3,7 @@ import { AlertCircle, Download, RefreshCw, Upload } from "lucide-react";
 import { apiFetch, call } from "./api";
 import { downloadSheet } from "./downloadSheet";
 import type { Api } from "./api";
+import { DummyFill } from "./DummyFill";
 
 // School Register (docs/school_register_plan.md): the school fetches every student from PARAKH with its own login
 // (read only); teachers then get their students from here. Shows each stage's students, their PARAKH identity and
@@ -107,6 +108,7 @@ export function RegisterPage({ api }: { api: Api }) {
       {reg && reg.students.length > 0 && <SchoolDashboard api={api} />}
       {reg && reg.students.length > 0 && <SchoolSettings api={api} />}
       {reg && reg.students.length > 0 && <SchoolData api={api} onSaved={() => { void load(); }} />}
+      {reg && reg.students.length > 0 && <DummyFill api={api} />}
 
       {reg && (
         <div className="ui-panel">

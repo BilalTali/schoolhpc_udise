@@ -17,13 +17,14 @@ export function DummyFill({ api }: { api: Api }) {
   const [days, setDays] = useState({ low: "75", high: "95" });
   const [useMarks, setUseMarks] = useState(true);
   const [marks, setMarks] = useState({ low: "25", high: "45" });
+  const [replace, setReplace] = useState(false);
   const [preview, setPreview] = useState<Result | null>(null);
   const [done, setDone] = useState<Result | null>(null);
   const [busy, setBusy] = useState<"" | "check" | "fill">("");
   const [error, setError] = useState<string | null>(null);
 
   const body = (apply: boolean) => ({
-    stage: stage || null, apply,
+    stage: stage || null, apply, replace,
     attendance: useDays ? { low: Number(days.low), high: Number(days.high) } : null,
     marks: useMarks ? { low: Number(marks.low), high: Number(marks.high) } : null,
   });
@@ -32,7 +33,7 @@ export function DummyFill({ api }: { api: Api }) {
   const run = async (apply: boolean) => {
     setError(null);
     if (apply && !window.confirm(`Fill ${preview?.months ?? 0} months of attendance and ${preview?.marks ?? 0} marks with dummy values `
-      + `for ${preview?.students ?? 0} students? Only empty cells are filled.`)) return;
+      + `for ${preview?.students ?? 0} students? ` + (replace ? "What is there now is REPLACED." : "Only empty cells are filled."))) return;
     setBusy(apply ? "fill" : "check");
     try {
       const r = await call<Result>(api, "POST", "/school/register/data/dummy-fill", body(apply));
@@ -61,7 +62,7 @@ export function DummyFill({ api }: { api: Api }) {
     <div className="ui-panel dummy-fill">
       <div className="panel-header"><div className="panel-title"><Shuffle size={20} aria-hidden="true" /><span>Dummy attendance and marks</span></div></div>
       <p className="form-hint">Fills the School Register's <b>empty</b> days present and marks obtained at random inside the range you
-        set - every student gets their own value. What you uploaded or typed is never changed. Use it only when the real
+        set - every student gets their own value. What you uploaded or typed is not changed unless you tick "Replace". Use it only when the real
         data is not available; the teachers' cards take these values like any other School Register data.</p>
 
       <div className="dummy-grid">
@@ -81,6 +82,11 @@ export function DummyFill({ api }: { api: Api }) {
         </div>
       </div>
 
+      <label className="aad-consent">
+        <input type="checkbox" checked={replace} onChange={(e) => { setReplace(e.target.checked); reset(); }} /> Replace what is
+        already there (every cell gets a new value; a month without working days is emptied) - e.g. after a wrong upload
+      </label>
+
       <div className="sdms-actions">
         <button type="button" className="btn btn-outline" disabled={!!busy || nothing} onClick={() => run(false)}>
           <RefreshCw size={15} className={busy === "check" ? "spin" : ""} aria-hidden="true" /> Check what would be filled
@@ -95,7 +101,7 @@ export function DummyFill({ api }: { api: Api }) {
         {(preview || done)?.notes.map((n) => <div key={n} className="alert-box alert-warning"><AlertCircle size={18} aria-hidden="true" /><div>{n}</div></div>)}
         {preview && (preview.students
           ? <>
-              <p><b>{preview.students}</b> students have empty cells: <b>{preview.months}</b> months of attendance and <b>{preview.marks}</b> marks
+              <p><b>{preview.students}</b> students {replace ? "get new values" : "have empty cells"}: <b>{preview.months}</b> months of attendance and <b>{preview.marks}</b> marks
                 would be filled. Nothing is saved yet - press <b>Fill now</b>.</p>
               <table className="sdms-table sdms-fit"><thead><tr><th>Stage</th><th>Students</th><th>Months</th><th>Marks</th></tr></thead>
                 <tbody>{stageRows(preview)}</tbody></table>

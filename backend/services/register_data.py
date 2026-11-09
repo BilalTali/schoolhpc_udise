@@ -757,10 +757,11 @@ def levels_from_marks(school_id: str, stage: str, session: str, parakh_ids: List
 # ---------------------------------------------------------------------------
 
 def dummy_fill(school_id: str, attendance: Optional[Tuple[float, float]], marks: Optional[Tuple[int, int]],
-               stage: Optional[str] = None, apply: bool = False, by: str = "") -> Dict[str, Any]:
+               stage: Optional[str] = None, apply: bool = False, by: str = "", replace: bool = False) -> Dict[str, Any]:
     """attendance: (low %, high %) of each month's working days; marks: (low, high) marks obtained, never above the
     subject's max marks. Every student gets their own random value inside the range. Only EMPTY cells are filled:
-    what was uploaded or entered stays. A month without working days stays empty. apply=False: counts only."""
+    what was uploaded or entered stays - unless replace, which fills every cell again (and empties a month without
+    working days, where days present cannot be). A month without working days stays empty. apply=False: counts only."""
     import math
     import random
     from backend.services import audit
@@ -803,14 +804,18 @@ def dummy_fill(school_id: str, attendance: Optional[Tuple[float, float]], marks:
                 months = filled = 0
                 if attendance is not None:
                     for i, wd in enumerate(days):
-                        if wd and present[i] in (None, ""):
+                        if replace and not wd and present[i] not in (None, ""):
+                            present[i] = None                 # no working days that month: no days present
+                            months += 1
+                            continue
+                        if wd and (replace or present[i] in (None, "")):
                             low, high = math.ceil(wd * attendance[0] / 100), math.floor(wd * attendance[1] / 100)
                             present[i] = rng.randint(min(low, high), max(low, high))
                             months += 1
                 if marks is not None:
                     for n in subs:
                         top = maxes.get(n) or DEFAULT_MAX_MARKS
-                        if got.get(n) in (None, ""):
+                        if replace or got.get(n) in (None, ""):
                             a, b = min(marks[0], top), min(marks[1], top)
                             got[n] = rng.randint(a, b)
                             filled += 1
@@ -837,7 +842,7 @@ def dummy_fill(school_id: str, attendance: Optional[Tuple[float, float]], marks:
             db.commit()
     if apply:
         audit.record(by or f"school_admin:{school_id}", "register_dummy_fill", "register", school_id, None,
-                     {"stage": stage or "all", "attendance": attendance, "marks": marks,
+                     {"stage": stage or "all", "attendance": attendance, "marks": marks, "replace": replace,
                       "students": out["students"], "months": out["months"], "marks_filled": out["marks"]},
                      school_id=school_id)
     out["applied"] = apply
