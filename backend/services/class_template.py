@@ -27,7 +27,7 @@ GRID_PHRASES = ("No activity chosen", "Levels not chosen", "This student has act
                 "cannot be added", "is not in your Activity Library")
 
 _jobs: Dict[tuple, Dict[str, Any]] = {}
-_lock = threading.Lock()
+_lock = threading.RLock()
 
 
 def _where(part, f) -> str:

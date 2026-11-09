@@ -18,6 +18,42 @@ def formula(ws, row: int, column: int, text: str):
     return cell
 
 
+def grid(ws, first_row: int, last_row: int, first_col: int = 1, last_col: int = 0, color: str = "64748B") -> None:
+    """A thin border round every cell of a table: a filled cell hides Excel's own gridlines, so without it the
+    rows of a coloured (fill-in) column run together."""
+    from openpyxl.styles import Border, Side
+    side = Side(style="thin", color=color)
+    box = Border(left=side, right=side, top=side, bottom=side)
+    for row in ws.iter_rows(min_row=first_row, max_row=last_row, min_col=first_col, max_col=last_col or ws.max_column):
+        for cell in row:
+            cell.border = box
+
+
+SKIP_SHEETS = ("instruction", "read me", "readme", "how to", "lists", "_meta", "help")
+
+
+def grid_sheets(wb) -> None:
+    """Borders on every table the app writes, just before saving: from the first coloured row (the headings) to
+    the last row, every column in use. Empty rows (between two tables) stay without lines; instruction, list and
+    hidden sheets are left as they are, and so is a sheet that draws its own borders."""
+    for ws in wb.worksheets:
+        if ws.sheet_state != "visible" or any(k in ws.title.lower() for k in SKIP_SHEETS) or ws.max_row < 2:
+            continue
+        cells = [c for row in ws.iter_rows() for c in row]
+        if any(getattr(getattr(c.border, side, None), "style", None)
+               for c in cells for side in ("left", "right", "top", "bottom")):
+            continue                                       # its own borders (the class template)
+        filled = [c.row for c in cells if c.fill is not None and c.fill.fill_type == "solid"]
+        if not filled:
+            continue
+        top, last_col = min(filled), ws.max_column
+        for r in range(top, ws.max_row + 1):
+            row = [ws.cell(row=r, column=c) for c in range(1, last_col + 1)]
+            if all(x.value in (None, "") and x.fill.fill_type != "solid" for x in row):
+                continue                                   # a blank separator row stays blank
+            grid(ws, r, r, 1, last_col)
+
+
 def keep_text(wb) -> int:
     """Every formula cell the app did not mean becomes a text cell. Returns how many were turned back."""
     intended = _intended(wb)

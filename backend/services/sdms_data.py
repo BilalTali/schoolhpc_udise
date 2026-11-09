@@ -10,7 +10,7 @@ import threading
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from backend.hpc.xl import keep_text
+from backend.hpc.xl import grid_sheets, keep_text
 from backend.services import secrets_box, udise_sessions
 from backend.services.hpc_sessions import session_dir
 from backend.udise import client
@@ -18,7 +18,7 @@ from backend.udise import sdms_form
 from backend.udise.sdms import Sdms, SessionEnded, session_label
 
 JOBS: Dict[str, Dict[str, Any]] = {}             # school id -> the fetch in progress or last finished
-_lock = threading.Lock()
+_lock = threading.RLock()
 
 
 def _now() -> str:
@@ -263,6 +263,7 @@ def excel(school_id: str, accepted_student_ids: set = None) -> Optional[bytes]:
     wb.move_sheet("Lists", offset=len(wb.sheetnames))      # the hidden drop-down choices go last
     out = io.BytesIO()
     keep_text(wb)                                  # names from UDISE+/PARAKH stay text, never formulas
+    grid_sheets(wb)                        # clear cell borders (a fill hides the gridlines)
     wb.save(out)
     return out.getvalue()
 
@@ -338,6 +339,7 @@ def completion_excel(school_id: str) -> Optional[bytes]:
         ws.column_dimensions[get_column_letter(i)].width = {3: 30, 4: 26, 7: 45}.get(i, 16)
     out = io.BytesIO()
     keep_text(wb)                                  # names from UDISE+/PARAKH stay text, never formulas
+    grid_sheets(wb)                        # clear cell borders (a fill hides the gridlines)
     wb.save(out)
     return out.getvalue()
 
@@ -416,5 +418,6 @@ def admission_template(school_id: str) -> Optional[bytes]:
     ws.freeze_panes = "D4"
     out = io.BytesIO()
     keep_text(wb)                                  # names from UDISE+/PARAKH stay text, never formulas
+    grid_sheets(wb)                        # clear cell borders (a fill hides the gridlines)
     wb.save(out)
     return out.getvalue()

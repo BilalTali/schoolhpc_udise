@@ -20,7 +20,7 @@ from backend.udise import client, sdms_form, sdms_write
 from backend.udise.sdms import Sdms, SessionEnded, encrypt
 
 JOBS: Dict[str, Dict[str, Any]] = {}
-_lock = threading.Lock()
+_lock = threading.RLock()
 ADD_CALL = "api/new-admission/AY"            # KG classes and Class I (SDMS uses another call from Class II)
 
 # the sheet's columns (without " *") -> (part, key, kind) ; part "add" = the Add Student form itself

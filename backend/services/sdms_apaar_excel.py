@@ -11,13 +11,13 @@ import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from backend.hpc.xl import keep_text
+from backend.hpc.xl import grid_sheets, keep_text
 from backend.services import sdms_aadhaar
 from backend.services.sdms_data import load as load_students
 from backend.services.sdms_sync import _read, _write
 
 JOBS: Dict[str, Dict[str, Any]] = {}
-_lock = threading.Lock()
+_lock = threading.RLock()
 PLAN = "sdms_apaar_plan.json"
 CONSENT_COLUMNS = ["Consent given by", "Consenter's name", "ID proof type", "ID proof number",
                    "Place of physical consent", "Date of physical consent (DD/MM/YYYY)", "Consent signed (Yes/No)"]
@@ -90,6 +90,7 @@ def status_excel(school_id: str) -> Optional[bytes]:
             _next_step(r)] for r in pending], "B45309")
     out = io.BytesIO()
     keep_text(wb)                                  # names from UDISE+/PARAKH stay text, never formulas
+    grid_sheets(wb)                        # clear cell borders (a fill hides the gridlines)
     wb.save(out)
     return out.getvalue()
 
@@ -138,6 +139,7 @@ def consent_template(school_id: str) -> Optional[bytes]:
         ws.column_dimensions[get_column_letter(i)].width = w
     out = io.BytesIO()
     keep_text(wb)                                  # names from UDISE+/PARAKH stay text, never formulas
+    grid_sheets(wb)                        # clear cell borders (a fill hides the gridlines)
     wb.save(out)
     return out.getvalue()
 

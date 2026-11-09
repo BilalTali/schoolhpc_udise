@@ -263,3 +263,15 @@ def test_levels_from_the_schools_summative_marks(world):
     assert levels[sid]["PSLS2"] == "Proficient" and levels[sid]["PSLS7"] == "Proficient"   # no marks: the average, 60%
     assert "500099" not in levels                                                    # no marks: random in the mix
     assert [register_data.level_for(p) for p in (75, 74.9, 50, 49.9)] == ["Advanced", "Proficient", "Proficient", "Beginner"]
+
+
+def test_every_cell_of_the_school_data_sheet_has_a_border(world):
+    """The cream fill of the columns to fill in hides Excel's gridlines: each cell carries its own border."""
+    client, h, *_ = world
+    _settings(client, h)
+    ws = _book(client, h)["Preparatory"]
+    sides = ("left", "right", "top", "bottom")
+    bare = [c.coordinate for row in ws.iter_rows(min_row=1, max_row=ws.max_row, max_col=ws.max_column) for c in row
+            if type(c).__name__ != "MergedCell" and not all(getattr(c.border, s).style == "thin" for s in sides)]
+    assert ws.max_row == 102 and bare == []
+    assert ws["L3"].fill.fgColor.rgb.endswith("FFFBEB")          # a fill-in cell keeps its colour, now with a border

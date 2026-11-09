@@ -276,7 +276,7 @@ def workbook(school_id: str) -> Tuple[bytes, str]:
     from openpyxl.styles import Alignment, Font, PatternFill, Protection
     from openpyxl.utils import get_column_letter, quote_sheetname
     from openpyxl.worksheet.datavalidation import DataValidation
-    from backend.hpc.xl import formula, keep_text
+    from backend.hpc.xl import formula, grid, keep_text
     session = session_of(school_id)
     with SessionLocal() as db:
         students = db.query(RegisterStudent).filter(RegisterStudent.school_id == school_id,
@@ -381,6 +381,7 @@ def workbook(school_id: str) -> Tuple[bytes, str]:
                                 error=f"A whole number from 0 to {d if d is not None else 31}")
             dv.add(f"{col}3:{col}{last}")
             ws.add_data_validation(dv)
+        grid(ws, 1, last, 1, len(cols))                  # headings and every student cell, fill-in columns too
         ws.column_dimensions["A"].hidden = True
         for c, (_, title) in enumerate(cols, start=1):
             ws.column_dimensions[get_column_letter(c)].width = 30 if title.startswith(("Student name", "Father", "Mother", "Guardian")) \

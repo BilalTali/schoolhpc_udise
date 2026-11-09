@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from backend.hpc.xl import keep_text
+from backend.hpc.xl import grid_sheets, keep_text
 from backend.database import SessionLocal
 from backend.hpc import sync, workbook
 from backend.hpc.portal import Portal, stage_code
@@ -356,6 +356,7 @@ def result_workbook(path: Path, records, saved: bool) -> bytes:
         other.sheet_view.tabSelected = False
     out = io.BytesIO()
     keep_text(wb)                                  # names from UDISE+/PARAKH stay text, never formulas
+    grid_sheets(wb)                        # clear cell borders (a fill hides the gridlines)
     wb.save(out)
     return out.getvalue()
 
@@ -365,7 +366,7 @@ SECOND_ROUND_WAIT = 30.0          # seconds before the students PARAKH did not a
 
 # What each running job is doing right now (in memory; the database keeps the results).
 _live: Dict[str, Dict[str, Any]] = {}
-_live_lock = threading.Lock()
+_live_lock = threading.RLock()
 LIVE_EVENTS = 60
 
 

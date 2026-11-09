@@ -46,7 +46,7 @@ class Service:
         self.token = dict(token)
         self.region_id = token.get("userRegionId")          # the school's id on this service
         self.http = client.new_http()
-        self._next, self._lock = 0.0, threading.Lock()
+        self._next, self._lock = 0.0, threading.RLock()
 
     def _pace(self) -> None:
         with self._lock:

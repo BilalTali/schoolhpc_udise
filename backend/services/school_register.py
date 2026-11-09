@@ -24,7 +24,7 @@ from backend.models.register import RegisterStudent, RegisterTeacherClass
 
 STAGES = ["Foundational", "Preparatory", "Middle"]
 JOBS: Dict[str, Dict[str, Any]] = {}
-_lock = threading.Lock()
+_lock = threading.RLock()
 
 
 def _now() -> str:

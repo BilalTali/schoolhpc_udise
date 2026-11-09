@@ -16,7 +16,7 @@ PER_NAME = 5
 PER_ADDRESS = 50
 MAX_WAIT = 15 * 60
 
-_lock = threading.Lock()
+_lock = threading.RLock()
 _failures: Dict[str, List[float]] = {}          # "name:<id>" / "addr:<ip>" -> times of failed attempts
 _clock = time.time
 

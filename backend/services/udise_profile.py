@@ -19,7 +19,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any, Dict, List, Optional, Tuple
 
 from backend.config import DATA_DIR
-from backend.hpc.xl import keep_text
+from backend.hpc.xl import grid_sheets, keep_text
 from backend.services import secrets_box, udise_sessions
 from backend.services.hpc_sessions import session_dir
 from backend.services.safe_paths import inside
@@ -416,6 +416,7 @@ def excel(school_id: str) -> Tuple[bytes, str]:
     meta_ws.sheet_state = "hidden"
     out = io.BytesIO()
     keep_text(wb)
+    grid_sheets(wb)                        # clear cell borders (a fill hides the gridlines)
     wb.save(out)
     safe_year = re.sub(r"[^0-9-]", "", year) or "current"
     return out.getvalue(), f"UDISE_School_Profile_{code}_{safe_year}.xlsx"

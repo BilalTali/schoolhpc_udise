@@ -196,8 +196,8 @@ def end_session(teacher: Teacher = Depends(require_teacher)):
 # "Fetch from PARAKH" reads every student's whole card (about 5 minutes for 60 students at the request
 # limit), so it runs in the background and the web app shows its progress.
 _fetch_jobs: Dict[str, Dict[str, Any]] = {}
-_fetch_lock = threading.Lock()
-_submit_lock = threading.Lock()           # one upload per teacher: checked and started under this lock (H-3)
+_fetch_lock = threading.RLock()
+_submit_lock = threading.RLock()           # one upload per teacher: checked and started under this lock (H-3)
 
 
 def _fetch_view(job: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -260,14 +260,62 @@ def sync_roster(stage: Optional[str] = Query(None), teacher: Teacher = Depends(r
     client = _portal(teacher)
     with _fetch_lock:
         running = _fetch_jobs.get(teacher.id)
-        if running and running["status"] == "RUNNING":
-            return _fetch_view(running)
-        job = {"status": "RUNNING", "stages": stages, "stage_now": None, "rosters": {}, "done": 0, "total": 0,
-               "summary": "", "notes": [], "error": None, "started_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
-               "finished_at": None, "t0": time.time()}
-        _fetch_jobs[teacher.id] = job
-    threading.Thread(target=_run_fetch, args=(job, teacher, client, stages), daemon=True, name="fetch-roster").start()
+        already = running is not None and running["status"] == "RUNNING"
+        if already:                        # pressed again (new classes on PARAKH?): fetch again when this one ends
+            running["again"] = True
+        else:
+            job = _new_fetch_job(stages)
+            _fetch_jobs[teacher.id] = job
+    # the view takes _fetch_lock itself: it is built only after the lock is released (a plain Lock taken twice by
+    # one thread waits for ever - every progress poll then held a database connection until the pool ran out)
+    if already:
+        return _fetch_view(running)
+    threading.Thread(target=_fetch_loop, args=(job, teacher, client, stages), daemon=True, name="fetch-roster").start()
     return _fetch_view(job)
+
+
+def _new_fetch_job(stages: List[str]) -> Dict[str, Any]:
+    return {"status": "RUNNING", "stages": stages, "stage_now": None, "rosters": {}, "done": 0, "total": 0,
+            "summary": "", "notes": [], "error": None, "again": False,
+            "started_at": datetime.utcnow().isoformat(timespec="seconds") + "Z", "finished_at": None, "t0": time.time()}
+
+
+def _fetch_loop(job: Dict[str, Any], teacher: Teacher, client, stages: List[str]) -> None:
+    """Runs the fetch; when Fetch was pressed again meanwhile, fetches once more with the teacher's stages and
+    PARAKH sign-in as they are now (a class assigned during the first fetch is read by the second)."""
+    from backend.database import SessionLocal
+
+    def stop(note: str = "") -> None:                  # no further fetch: the page stops following
+        with _fetch_lock:
+            job["again"] = False
+            if note:
+                job["notes"].append(note)
+
+    while True:
+        try:
+            _run_fetch(job, teacher, client, stages)
+        except Exception as exc:                       # _run_fetch reports its own errors; this is a last guard
+            with _fetch_lock:
+                job["status"], job["error"] = "FAILED", str(exc)
+        with _fetch_lock:
+            if not job.get("again") or _fetch_jobs.get(teacher.id) is not job:
+                job["again"] = False
+                return
+        try:
+            with SessionLocal() as db:
+                fresh = db.get(Teacher, teacher.id)
+                if fresh is None or not fresh.is_active:
+                    return stop()
+                stages, client = teacher_stages(fresh) or stages, _portal(fresh)
+                db.expunge(fresh)
+            teacher = fresh
+        except Exception as exc:                       # e.g. the PARAKH sign-in ended meanwhile
+            return stop(f"The second fetch did not start: {getattr(exc, 'detail', exc)}. Press Fetch again.")
+        nxt = _new_fetch_job(stages)
+        with _fetch_lock:
+            _fetch_jobs[teacher.id] = nxt
+            job["again"] = False
+        job = nxt
 
 
 @router.get("/roster/sync")

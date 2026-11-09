@@ -56,7 +56,7 @@ def _keep_trail(school_id: str, steps: List[Dict[str, Any]], services: Dict[str,
                                                   "sign_in": steps, "services": services or {}}, indent=1), encoding="utf-8")
 
 
-_TOKEN_LOCK = threading.Lock()
+_TOKEN_LOCK = threading.RLock()
 
 
 def load_saved(school_id: str) -> Dict[str, Any]:

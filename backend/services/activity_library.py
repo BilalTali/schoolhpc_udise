@@ -973,7 +973,7 @@ def _normalise(rec: Dict[str, Any], subject_codes: Dict[int, str]) -> Dict[str, 
     }
 
 
-_start_lock = threading.Lock()          # the "already running?" check and the new job happen together (L-1)
+_start_lock = threading.RLock()          # the "already running?" check and the new job happen together (L-1)
 
 
 def start_sync(db: Session, actor: Actor, stages: List[str], started_by: Optional[str] = None) -> Tuple[ActivitySyncJob, bool]:

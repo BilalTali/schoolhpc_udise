@@ -44,8 +44,9 @@ def _sheet(wb, title: str, heads: List[str], rows: List[List[Any]], widths: Opti
 
 
 def _save(wb) -> bytes:
-    from backend.hpc.xl import keep_text
+    from backend.hpc.xl import grid_sheets, keep_text
     keep_text(wb)                                     # names stay text, never formulas
+    grid_sheets(wb)                        # clear cell borders (a fill hides the gridlines)
     out = io.BytesIO()
     wb.save(out)
     return out.getvalue()

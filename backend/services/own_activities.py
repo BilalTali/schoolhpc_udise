@@ -17,7 +17,7 @@ from backend.config import DATA_DIR
 from backend.services.safe_paths import inside
 
 OWN_DIR = DATA_DIR / "own_activities"
-_lock = threading.Lock()
+_lock = threading.RLock()
 
 
 def _path(owner: str):

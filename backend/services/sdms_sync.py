@@ -23,7 +23,7 @@ from backend.udise import client, sdms_form, sdms_write
 from backend.udise.sdms import Sdms, SessionEnded
 
 JOBS: Dict[str, Dict[str, Any]] = {}
-_lock = threading.Lock()
+_lock = threading.RLock()
 def _now() -> str:
     return datetime.utcnow().isoformat(timespec="seconds") + "Z"
 

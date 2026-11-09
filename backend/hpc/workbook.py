@@ -139,6 +139,7 @@ def build(sections: List[Section], path: Path) -> Path:
 
     wb.move_sheet("Lists", offset=len(wb.sheetnames))
     xl.keep_text(wb)                       # names and answers starting with = stay text (H-5)
+    xl.grid_sheets(wb)                        # clear cell borders (a fill hides the gridlines)
     path.parent.mkdir(parents=True, exist_ok=True)
     wb.save(path)
     return path
@@ -298,6 +299,7 @@ def set_activity_summaries(path: Path, summaries: Dict[str, Dict[str, str]]) -> 
             if sid in by_student:
                 ws.cell(row=r, column=3, value=by_student[sid])
     xl.keep_text(wb)
+    xl.grid_sheets(wb)                        # clear cell borders (a fill hides the gridlines)
     wb.save(path)
 
 

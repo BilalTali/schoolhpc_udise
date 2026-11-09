@@ -24,7 +24,7 @@ from backend.udise import client, sdms_write
 from backend.udise.sdms import Sdms, SessionEnded, encrypt
 
 JOBS: Dict[str, Dict[str, Any]] = {}
-_lock = threading.Lock()
+_lock = threading.RLock()
 RELATIONS = {1: "Father", 2: "Mother", 3: "Legal Guardian"}
 APAAR_FIELDS = ("apaarId", "apaarIdStatus", "apaarRemarksMessage", "isApaarGenAllowed", "apaarIdGenDate", "apaarIdReqDate",
                 "mbuStatusDesc")

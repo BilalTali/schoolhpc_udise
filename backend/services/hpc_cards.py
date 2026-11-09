@@ -28,7 +28,7 @@ from backend.services.safe_paths import inside
 LIST_KINDS = ("multi", "flags")
 _LOOKUP_TTL = 12 * 60 * 60                 # PARAKH's dropdown lists rarely change
 _lookup_cache: Dict[Tuple[str, str], Tuple[float, Lookups]] = {}
-_lock = threading.Lock()
+_lock = threading.RLock()
 _dob_seen: Dict[tuple, str] = {}           # (owner, session, stage, student) -> date of birth read from PARAKH
 
 

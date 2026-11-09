@@ -34,7 +34,7 @@ class Sdms:
         for name, value in (saved.get("auth_cookies") or {}).items():
             self.http.cookies.set(name, value, domain="auth.udiseplus.gov.in")
         self._next = 0.0
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
 
     def _pace(self) -> None:
         with self._lock:

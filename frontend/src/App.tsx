@@ -244,8 +244,8 @@ export default function App() {
   // Register form
   const [regUdise, setRegUdise] = useState("");
   const [regSchoolName, setRegSchoolName] = useState("");
-  const [regState, setRegState] = useState("Maharashtra");
-  const [regDistrict, setRegDistrict] = useState("Mumbai");
+  const [regState, setRegState] = useState("Jammu and Kashmir");
+  const [regDistrict, setRegDistrict] = useState("Budgam");
   const [regBlock, setRegBlock] = useState("");
   const [regAdminName, setRegAdminName] = useState("");
   const [regAdminEmail, setRegAdminEmail] = useState("");
@@ -983,7 +983,7 @@ export default function App() {
           loadTeacherRoster(stage);
           listed = true;
         }
-        if (job.status === "RUNNING") { follow(stage, listed); return; }
+        if (job.status === "RUNNING" || job.again) { follow(stage, listed); return; }   // again: the next fetch starts now
         loadTeacherRoster(stage);
         setStatusMsg(job.status === "COMPLETED"
           ? job.notes?.length
@@ -1009,6 +1009,7 @@ export default function App() {
         return;
       }
       setFetchJob(data);
+      if (data.again) setStatusMsg({ type: "info", text: "A fetch is already running. When it ends, the app fetches once more, so classes assigned in the meantime are included." });
       followFetch(stageToUse);
     } catch (e: any) {
       setStatusMsg({ type: "error", text: e.message });
@@ -1629,15 +1630,15 @@ export default function App() {
                     </div>
                     <div className="form-group">
                       <label className="form-label">State *</label>
-                      <input type="text" className="form-input" placeholder="e.g. Maharashtra" value={regState} onChange={(e) => setRegState(e.target.value)} required />
+                      <input type="text" className="form-input" placeholder="e.g. Jammu and Kashmir" value={regState} onChange={(e) => setRegState(e.target.value)} required />
                     </div>
                     <div className="form-group">
                       <label className="form-label">District *</label>
-                      <input type="text" className="form-input" placeholder="e.g. Mumbai" value={regDistrict} onChange={(e) => setRegDistrict(e.target.value)} required />
+                      <input type="text" className="form-input" placeholder="e.g. Budgam" value={regDistrict} onChange={(e) => setRegDistrict(e.target.value)} required />
                     </div>
                     <div className="form-group">
                       <label className="form-label">Block / Tehsil</label>
-                      <input type="text" className="form-input" placeholder="e.g. Mumbai West" value={regBlock} onChange={(e) => setRegBlock(e.target.value)} />
+                      <input type="text" className="form-input" placeholder="e.g. Khag" value={regBlock} onChange={(e) => setRegBlock(e.target.value)} />
                     </div>
                     <div className="form-group">
                       <label className="form-label">Principal / Admin Name *</label>
@@ -3172,6 +3173,7 @@ export default function App() {
 
 interface FetchJob {
   status: "RUNNING" | "COMPLETED" | "FAILED";
+  again?: boolean;                 // Fetch was pressed while this one ran: the server fetches once more after it
   stages: string[];
   stage_now: string | null;
   rosters: Record<string, number>;

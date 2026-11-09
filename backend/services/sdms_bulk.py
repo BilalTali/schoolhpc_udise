@@ -20,7 +20,7 @@ import time
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 
-from backend.hpc.xl import keep_text
+from backend.hpc.xl import grid_sheets, keep_text
 from backend.services import sdms_aadhaar, udise_sessions
 from backend.services.sdms_data import load as load_students
 from backend.services.sdms_sync import _read, _write
@@ -28,7 +28,7 @@ from backend.udise import client
 from backend.udise.sdms import Sdms, SessionEnded
 
 JOBS: Dict[str, Dict[str, Any]] = {}            # "<school>:<kind>" -> the run in progress or last finished
-_lock = threading.Lock()
+_lock = threading.RLock()
 NAME = re.compile(r"^[a-zA-Z.']+( [a-zA-Z.']+)*$")
 EARLY_CLASSES = {-3: "Nursery/KG/PP3", -2: "LKG/KG1/PP2", -1: "UKG/KG2/PP1", 1: "I"}   # class shift only among these
 CLASS_NAMES = {**EARLY_CLASSES, **{n: r for n, r in zip(range(2, 13), ["II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X", "XI", "XII"])}}
@@ -190,6 +190,7 @@ def template(school_id: str, kind: str) -> Optional[bytes]:
     ws.row_dimensions[2].height = 40
     out = io.BytesIO()
     keep_text(wb)                                  # names from UDISE+/PARAKH stay text, never formulas
+    grid_sheets(wb)                        # clear cell borders (a fill hides the gridlines)
     wb.save(out)
     return out.getvalue()
 

@@ -182,7 +182,7 @@ class Portal:
     """Authenticated API calls for one teacher/school session."""
 
     _pacers: Dict[str, list] = {}               # login -> [lock, next allowed time]: shared by all its connections
-    _pacers_lock = threading.Lock()
+    _pacers_lock = threading.RLock()
 
     def __init__(self, session: Session, on_refresh: Callable[[Session], None] = lambda s: None):
         """on_refresh is called with the new Session whenever the token is renewed (so it can be saved)."""
@@ -190,10 +190,10 @@ class Portal:
         self.on_refresh = on_refresh
         self.http = _http()
         self.http.headers["Authorization"] = f"Bearer {session.access_token}"
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         login = str((session.staff or {}).get("staff_id") or (session.staff or {}).get("user_id") or "") or f"conn-{id(self)}"
         with Portal._pacers_lock:
-            self._pacer = Portal._pacers.setdefault(login, [threading.Lock(), 0.0, 0.0])   # lock, next slot, last screen request
+            self._pacer = Portal._pacers.setdefault(login, [threading.RLock(), 0.0, 0.0])   # lock, next slot, last screen request
         self.background = False                  # background reads wait while a screen is loading
         self.not_yours: Dict[str, List[Dict[str, Any]]] = {}   # stage -> roster records this login cannot open
         self.min_interval = 1.0 / max(PORTAL_MAX_PER_SECOND, 0.1)

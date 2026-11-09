@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from backend.config import DATA_DIR
-from backend.hpc.xl import keep_text
+from backend.hpc.xl import grid_sheets, keep_text
 from backend.services import secrets_box, udise_sessions
 from backend.services.hpc_sessions import session_dir
 from backend.services.safe_paths import inside
@@ -474,6 +474,7 @@ def excel(school_id: str) -> Optional[Tuple[bytes, str]]:
     lists_ws.sheet_state = meta_ws.sheet_state = "hidden"
     out = io.BytesIO()
     keep_text(wb)
+    grid_sheets(wb)                        # clear cell borders (a fill hides the gridlines)
     wb.save(out)
     return out.getvalue(), f"UDISE_Teachers_{school.get('udiseCode') or data['school_id']}.xlsx"
 
