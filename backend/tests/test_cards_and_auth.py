@@ -361,3 +361,4 @@ def test_mix_all_fills_name_and_age_from_records_and_never_the_hand(teacher_clie
             for k in ["a2_name", "a2_age"]}
     assert rows["a2_name"]["value"] == "Test Student"                       # the class list's name
     assert rows["a2_age"]["value"].isdigit() and 5 <= int(rows["a2_age"]["value"]) <= 20      # from the date of birth
+

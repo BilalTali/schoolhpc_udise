@@ -198,8 +198,8 @@ def test_mix_hands_out_only_safe_options_for_several_option_questions():
     fields = {f.key: f for f in next(p for p in get_stage("MIDDLE").PARTS if p.code == "B").fields(None)}
     strengths, pick = multi_mix("b_strengths", fields["b_strengths"].options)
     assert pick == 2 and "Any Other" not in strengths and "Collaboration" in strengths
-    # barriers are never handed out at random (B7): the teacher ticks the ones that apply
-    assert multi_mix("b_barriers", fields["b_barriers"].options) == ([], 0)
+    # barriers (B7): one each, never a serious one - the teacher ticks those for the students they apply to
+    assert "Domestic Issues" not in multi_mix("b_barriers", fields["b_barriers"].options)[0]
     grid, pick = multi_mix("b_grid_awareness", fields["b_grid_awareness"].options)
     assert pick == 2 and grid == list(fields["b_grid_awareness"].options)
     assert multi_mix("a3_resources", ["Books", "TV", "Radio"]) == ([], 0)      # facts are never mixed
@@ -209,3 +209,48 @@ def test_mix_hands_out_only_safe_options_for_several_option_questions():
     mid_a4 = {f.key: f for f in next(p for p in get_stage("MIDDLE").PARTS if p.code == "A4").fields(None)}
     support, pick = multi_mix("a4_support", mid_a4["a4_support"].options)
     assert pick == 2 and "Maths" in support and not {"Any other", "Managing difficult emotions"} & set(support)
+
+
+def test_mix_fills_foundational_needed_and_resources_but_never_none_or_cwd():
+    from backend.hpc.stages import get_stage
+    from backend.hpc.suggestions import multi_mix
+    fields = {f.key: f for f in next(p for p in get_stage("FOUNDATIONAL").PARTS if p.code == "B").fields(None)}
+    for key in ("b_sa_needed", "b_pa_needed"):
+        pool, pick = multi_mix(key, fields[key].options)
+        assert pick == 2 and set(pool) == {"Classmates", "Teachers", "Books", "Computer"}      # never "None"
+    pool, pick = multi_mix("b_resources", fields["b_resources"].options)
+    assert pick == 2 and "Books/Magazines" in pool and "Resources for CWD" not in pool
+
+
+def test_mixed_needed_and_resources_save_into_the_card_and_read_back():
+    import random
+    from backend.hpc.stages import get_stage
+    from backend.hpc.stages.foundational import blank_activity
+    from backend.hpc.suggestions import multi_mix
+    fields = {f.key: f for f in next(p for p in get_stage("FOUNDATIONAL").PARTS if p.code == "B").fields(None)}
+    fd = [{"dt": blank_activity()}]
+    for key in ("b_sa_needed", "b_pa_needed", "b_resources"):
+        pool, pick = multi_mix(key, fields[key].options)
+        value = [o for o in fields[key].options if o in random.sample(pool, pick)]
+        assert fields[key].write(fd, ", ".join(value)) is None          # drafts keep a list; saving joins it
+        assert fields[key].read(fd) == ", ".join(value)
+
+
+def test_global_mix_leaves_no_part_b_or_c_class_wide_question_unmixed():
+    """Every class-wide question of Parts B and C, in every stage, is mixed or filled from the records."""
+    from backend.hpc.stages import get_stage
+    from backend.hpc.suggestions import FILL_ONLY, mixable, multi_mix, record_kind, suggestions_for
+    from backend.services.hpc_cards import LIST_KINDS, is_common
+    left = []
+    for st in ("FOUNDATIONAL", "PREPARATORY", "MIDDLE"):
+        for p in get_stage(st).PARTS:
+            if not p.code.startswith(("B", "C")):
+                continue
+            for f in p.fields(None):
+                if not is_common(p.code, f) or record_kind(f.label, f.key):
+                    continue
+                pool = (multi_mix(f.key, f.options)[0] if f.kind in LIST_KINDS
+                        else suggestions_for(f.key, f.max_len, f.label) if not f.options else list(f.options))
+                if f.label in FILL_ONLY or not mixable(f.key, f.label) or len(pool) < 2:
+                    left.append(f"{st} {f.key}")
+    assert left == []

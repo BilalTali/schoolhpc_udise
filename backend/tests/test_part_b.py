@@ -112,10 +112,13 @@ def test_b7_help_for_a_beginner_is_guided_practice_in_the_subjects_own_words():
     assert notes.help_progress(_dt("SM", "", "advance", "advance")) == ""
 
 
-def test_b7_barriers_are_never_mixed_and_praise_in_a_barrier_is_flagged():
+def test_b7_barriers_mix_only_none_or_a_mild_habit_and_praise_in_a_barrier_is_flagged():
     options = next(p for p in MIDDLE.PARTS if p.code == "B").fields(None)
     barriers = next(f for f in options if f.key == "b_barriers")
-    assert multi_mix("b_barriers", barriers.options) == ([], 0)
+    pool, pick = multi_mix("b_barriers", barriers.options)
+    assert pick == 1 and "None" in pool and "Lack of Attention" in pool
+    assert not {"Peer Pressure", "Domestic Issues", "Inappropriate behavior in classroom", "Severe illness or injury",
+                "Any Other"} & set(pool)
     acts = [{"nm": "Sewing", "dt": {"any_other": ["", "", "helpful"]}}]
     assert checks.part_b_warnings(acts) == ["'Sewing': the barrier 'Any Other' says 'helpful' - that is not a barrier"]
 

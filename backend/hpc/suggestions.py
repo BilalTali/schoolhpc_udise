@@ -163,8 +163,9 @@ SUGGESTIONS: Dict[str, List[str]] = {
 NO_MIX = {"a1_mother_tongue", "a2_about_1", "a2_avatar"}     # A14: an avatar is the child's own choice
 
 # Several-option questions "Mix" may fill: key -> (the options it may hand out, how many each student gets).
-# Part B's assessment lists and the "child needs support with" areas. Never the barriers to success (B7): a barrier
-# handed out at random labels a child without reason - the teacher ticks the ones that apply. Never "Any Other" (it needs its own text), and
+# Part B's assessment lists and the "child needs support with" areas. Barriers to success (B7, required): one each,
+# only "None" or a mild study habit - never Peer Pressure, Domestic Issues, behaviour or illness (those label a child;
+# the teacher ticks them for the students they apply to). Never "Any Other" (it needs its own text), and
 # never an option that says something personal or serious about a student (domestic issues, illness, behaviour,
 # peer pressure, managing difficult emotions, "None") - the teacher ticks those for the students they apply to.
 # Lists of facts (resources at home ...) are not mixed at all.
@@ -177,6 +178,14 @@ MULTI_MIX = {
     "b_strengths": (["Follow Instructions", "Collaboration", "Independent Work", "Responsible", "Communication",
                      "Creative", "Solution-Focused Thinking", "Concentration", "Empathy",
                      "Organization & Prioritization"], 2),
+    # Foundational Part B: what the activity needed (self and peer) and the learning resources it used - about the
+    # activity, not the child. Never "None" (it clears the others) nor "Resources for CWD" (says the child has a
+    # disability): the teacher ticks those.
+    "b_sa_needed": (["Classmates", "Teachers", "Books", "Computer"], 2),
+    "b_pa_needed": (["Classmates", "Teachers", "Books", "Computer"], 2),
+    "b_resources": (["Books/Magazines", "Newspaper", "Toys/Games/Sports", "Phone/Computer", "Internet", "Radio",
+                     "Broadcast", "TV"], 2),
+    "b_barriers": (["None", "Lack of Attention", "Lack of Motivation", "Undefined Goals", "Lack of Preparation"], 1),
     "b_grid_awareness": (None, 2),               # None: every option of the question
     "b_grid_sensitivity": (None, 2),
     "b_grid_creativity": (None, 2),
