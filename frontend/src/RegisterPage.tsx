@@ -309,6 +309,7 @@ export function SchoolData({ api, onSaved }: { api: Api; onSaved: () => void }) 
   };
   const when = (iso?: string | null) => (iso ? new Date(iso).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "");
   const download = async () => setError(await downloadSheet(api, "/school/register/data.xlsx", "School_Data.xlsx"));
+  const downloadMarks = async () => setError(await downloadSheet(api, "/school/register/marks.xlsx", "School_Marks.xlsx"));
   // students admitted on UDISE+ since its last read have no parents' names yet: read UDISE+ again, then download
   const freshDownload = async () => {
     setBusy("udise");
@@ -326,10 +327,15 @@ export function SchoolData({ api, onSaved }: { api: Api; onSaved: () => void }) 
   return (
     <div className="ui-panel">
       <h3 className="lib-section-title">School Data: attendance, parents, marks</h3>
-      <p className="lib-muted">Download the workbook (every student from the register, parents' names from UDISE+ where found),
-        fill days present per month, whose name the HPC card shows and marks obtained, and upload it here. It is checked
-        first; nothing is saved until you press Save. Monthly totals only.</p>
+      <p className="lib-muted"><b>Marks only:</b> download the marks workbook (just the students and their summative
+        subjects), fill the marks obtained and upload it here - attendance and parents' names stay as they are in the app
+        (attendance: "Dummy attendance and marks" below, or the full workbook). <b>Everything:</b> the School Data workbook
+        has parents, days present per month and marks. Either file is checked first; nothing is saved until you press Save.</p>
       <div className="sdms-actions">
+        <button type="button" className="btn btn-primary" disabled={!!busy} onClick={downloadMarks}
+                title="Students and their summative subjects only">
+          <Download size={15} aria-hidden="true" /> Download marks workbook (summative only)
+        </button>
         <button type="button" className="btn btn-outline" disabled={!!busy} onClick={download}
                 title="Parents' names from the UDISE+ data the app already has">
           <Download size={15} aria-hidden="true" /> Download School Data workbook

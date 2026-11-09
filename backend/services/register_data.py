@@ -30,6 +30,7 @@ from backend.models.register import (RegisterImport, RegisterSetting, RegisterSe
                                      RegisterStudentData)
 
 TEMPLATE = "school-data-v2"            # v2: no mother's name column (one name column for Mother / Guardian)
+MARKS_TEMPLATE = "school-marks-v1"     # summative marks only: attendance and parents are managed in the app
 STAGES = ["Foundational", "Preparatory", "Middle"]
 RELATIONS = ["Father", "Mother", "Guardian"]
 NAME_MAX = 50                                         # PARAKH's limit for the parent/guardian name on the card
@@ -270,21 +271,22 @@ def udise_parents(school_id: str, students: List[RegisterStudent]) -> Dict[str, 
 # The workbook
 # ---------------------------------------------------------------------------
 
-def _columns(stage: str, settings: Dict[str, Any]) -> List[Tuple[str, str]]:
-    """(group, title) for every column of a stage sheet, in order."""
+def _columns(stage: str, settings: Dict[str, Any], marks_only: bool = False) -> List[Tuple[str, str]]:
+    """(group, title) for every column of a stage sheet, in order. marks_only: the student and the marks."""
     days = settings["values"]["working_days"]
     cols = [("Student (from PARAKH - do not change)", t) for t in IDENTITY]
-    cols += [("Parents", t) for t in PARENTS]
-    cols += [("Days present (working days in brackets)", f"{m} present ({'?' if d is None else d})") for m, d in zip(MONTHS, days)]
-    cols += [("Attendance (worked out)", t) for t in ("Days present", "Working days", "Days absent", "Attendance %")]
+    if not marks_only:
+        cols += [("Parents", t) for t in PARENTS]
+        cols += [("Days present (working days in brackets)", f"{m} present ({'?' if d is None else d})") for m, d in zip(MONTHS, days)]
+        cols += [("Attendance (worked out)", t) for t in ("Days present", "Working days", "Days absent", "Attendance %")]
     cols += [("Summative marks obtained (max in brackets)",
               f"{name} ({'?' if settings['values']['max_marks'].get(n) is None else settings['values']['max_marks'][n]})")
              for n, name in subjects(stage)]
     return cols
 
 
-def workbook(school_id: str) -> Tuple[bytes, str]:
-    """(xlsx bytes, file name)."""
+def workbook(school_id: str, marks_only: bool = False) -> Tuple[bytes, str]:
+    """(xlsx bytes, file name). marks_only: just the summative marks obtained (stages with summative subjects)."""
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Font, PatternFill, Protection
     from openpyxl.utils import get_column_letter, quote_sheetname
@@ -297,12 +299,20 @@ def workbook(school_id: str) -> Tuple[bytes, str]:
         if not students:
             raise Problem("The register is empty: fetch the students from PARAKH first.")
         stored = {d.student_id: d for d in db.query(RegisterStudentData).filter_by(school_id=school_id, session=session)}
-        parents = udise_parents(school_id, students)
-        parents_when = (parents_source(school_id)["fetched_at"] or "")[:16].replace("T", " ")
+        parents = {} if marks_only else udise_parents(school_id, students)
+        parents_when = "" if marks_only else (parents_source(school_id)["fetched_at"] or "")[:16].replace("T", " ")
+    template_name = MARKS_TEMPLATE if marks_only else TEMPLATE
     wb = Workbook()
     info = wb.active
     info.title = "Instructions"
-    lines = [f"School Data, academic year {session[:2]}-{session[2:]} (template {TEMPLATE})", "",
+    lines = [f"Summative marks, academic year {session[:2]}-{session[2:]} (template {MARKS_TEMPLATE})", "",
+             "1. One sheet per stage with summative subjects, one row per student as PARAKH lists them. Do not change "
+             "the grey columns: the PARAKH ID and name identify the student.",
+             "2. Marks obtained: at most the subject's max marks (in the heading, set on the School Register page). "
+             "Leave a cell empty when not yet known: an empty cell keeps the marks already saved in the app.",
+             "3. Upload the file on the School Register page: it is checked first and nothing is saved until you "
+             "press Save. Only marks change - attendance and parents' names stay as they are in the app."] if marks_only else \
+            [f"School Data, academic year {session[:2]}-{session[2:]} (template {TEMPLATE})", "",
              "1. One sheet per stage, one row per student as PARAKH lists them. Do not change the grey columns: "
              "the PARAKH ID and name identify the student.",
              f"2. Parents: the father's name (filled from UDISE+ as read on {parents_when or 'never'}, where "
@@ -333,10 +343,13 @@ def workbook(school_id: str) -> Tuple[bytes, str]:
     by_stage: Dict[str, List[RegisterStudent]] = {}
     for s in students:
         by_stage.setdefault(s.stage, []).append(s)
-    for stage in [s for s in STAGES if s in by_stage]:
+    stages = [s for s in STAGES if s in by_stage and (subjects(s) or not marks_only)]
+    if not stages:
+        raise Problem("No stage of this school has summative marks (Foundational has none).")
+    for stage in stages:
         settings = get_settings(school_id, stage, session)
         snapshot[stage] = settings["values"]
-        cols = _columns(stage, settings)
+        cols = _columns(stage, settings, marks_only)
         ws = wb.create_sheet(stage)
         group_start = 1
         for c, (group, title) in enumerate(cols, start=1):
@@ -351,6 +364,10 @@ def workbook(school_id: str) -> Tuple[bytes, str]:
             cell.font, cell.fill = Font(bold=True), grey
             cell.alignment = Alignment(wrap_text=True, vertical="top")
         rows = sorted(by_stage[stage], key=lambda s: (s.grade_id or 0, str(s.section or ""), s.student_name))
+        if marks_only:
+            _marks_rows(ws, rows, stored, stage)
+            _finish_sheet(ws, cols, len(rows) + 2)
+            continue
         first_month = len(IDENTITY) + len(PARENTS) + 1
         total_col = first_month + 12
         days = settings["values"]["working_days"]
@@ -394,17 +411,8 @@ def workbook(school_id: str) -> Tuple[bytes, str]:
                                 error=f"A whole number from 0 to {d if d is not None else 31}")
             dv.add(f"{col}3:{col}{last}")
             ws.add_data_validation(dv)
-        grid(ws, 1, last, 1, len(cols))                  # headings and every student cell, fill-in columns too
-        ws.column_dimensions["A"].hidden = True
-        for c, (_, title) in enumerate(cols, start=1):
-            ws.column_dimensions[get_column_letter(c)].width = 30 if title.startswith(("Student name", "Father", "Mother", "Guardian")) \
-                else 12 if " present (" in title else 16
-        ws.row_dimensions[2].height = 45
-        ws.freeze_panes = "D3"
-        ws.auto_filter.ref = f"A2:{get_column_letter(len(cols))}{last}"
-        ws.protection.sheet = True
-        ws.protection.formatColumns = ws.protection.autoFilter = ws.protection.sort = False
-    for i, (k, v) in enumerate((("template", TEMPLATE), ("school_id", school_id), ("session", session),
+        _finish_sheet(ws, cols, last)
+    for i, (k, v) in enumerate((("template", template_name), ("school_id", school_id), ("session", session),
                                 ("generated_at", datetime.utcnow().isoformat(timespec="seconds") + "Z"),
                                 ("settings", json.dumps(snapshot))), start=1):
         meta.cell(row=i, column=1, value=k)
@@ -412,7 +420,38 @@ def workbook(school_id: str) -> Tuple[bytes, str]:
     keep_text(wb)
     out = io.BytesIO()
     wb.save(out)
-    return out.getvalue(), f"School_Data_{session}.xlsx"
+    return out.getvalue(), f"School_Marks_{session}.xlsx" if marks_only else f"School_Data_{session}.xlsx"
+
+
+def _marks_rows(ws, rows, stored, stage: str) -> None:
+    """The marks-only sheet's rows: the student (grey, locked) and each subject's marks obtained (to fill)."""
+    from openpyxl.styles import PatternFill, Protection
+    entry = PatternFill("solid", fgColor="FFFBEB")
+    for r, s in enumerate(rows, start=3):
+        d = stored.get(s.id)
+        values = [s.id, s.parakh_student_id, s.student_name, s.grade, s.section, s.apaar_id, s.dob, s.admission_number]
+        for c, v in enumerate(values, start=1):
+            ws.cell(row=r, column=c, value=v)
+        marks = (d.marks if d else None) or {}
+        for k, (n, _) in enumerate(subjects(stage)):
+            cell = ws.cell(row=r, column=len(IDENTITY) + 1 + k, value=marks.get(n))
+            cell.protection, cell.fill = Protection(locked=False), entry
+
+
+def _finish_sheet(ws, cols, last: int) -> None:
+    """Borders, widths, the hidden register ID, frozen headings, filters and sheet protection."""
+    from openpyxl.utils import get_column_letter
+    from backend.hpc.xl import grid
+    grid(ws, 1, last, 1, len(cols))                  # headings and every student cell, fill-in columns too
+    ws.column_dimensions["A"].hidden = True
+    for c, (_, title) in enumerate(cols, start=1):
+        ws.column_dimensions[get_column_letter(c)].width = 30 if title.startswith(("Student name", "Father", "Mother", "Guardian")) \
+            else 12 if " present (" in title else 16
+    ws.row_dimensions[2].height = 45
+    ws.freeze_panes = "D3"
+    ws.auto_filter.ref = f"A2:{get_column_letter(len(cols))}{last}"
+    ws.protection.sheet = True
+    ws.protection.formatColumns = ws.protection.autoFilter = ws.protection.sort = False
 
 
 # ---------------------------------------------------------------------------
@@ -454,8 +493,9 @@ def check(school_id: str, content: bytes, file_name: str, by: str) -> Dict[str, 
     if "_meta" not in wb.sheetnames:
         raise Problem("This is not the School Data workbook: download it from the School Register page and fill that.")
     meta = {str(r[0].value): r[1].value for r in wb["_meta"].iter_rows(max_col=2) if r[0].value}
-    if meta.get("template") != TEMPLATE:
+    if meta.get("template") not in (TEMPLATE, MARKS_TEMPLATE):
         raise Problem(f"This workbook is an older or other template ({meta.get('template')}): download a new one.")
+    marks_only = meta.get("template") == MARKS_TEMPLATE      # only the marks change; attendance and parents stay
     if meta.get("school_id") != school_id:
         raise Problem("This workbook belongs to another school.")
     session = session_of(school_id)
@@ -478,7 +518,7 @@ def check(school_id: str, content: bytes, file_name: str, by: str) -> Dict[str, 
             raise Problem(f"Sheet '{stage}': its columns were changed - download a new workbook.")
         # Every column is read by its place: a deleted or moved column would shift the rest (marks read as days
         # present). The headings must match the template's (the numbers in brackets may differ: settings change).
-        expected = [_bare(t) for _, t in _columns(stage, {"values": settings})]
+        expected = [_bare(t) for _, t in _columns(stage, {"values": settings}, marks_only)]
         got = [_bare(h) for h in heads[:len(expected)]] + [""] * max(0, len(expected) - len(heads))
         if got != expected:
             gone = [t for t in expected if t not in got]
@@ -487,7 +527,7 @@ def check(school_id: str, content: bytes, file_name: str, by: str) -> Dict[str, 
                           + ". Every column must stay where the app put it: download a new workbook and fill that.")
         subs = subjects(stage)
         first_month = len(IDENTITY) + len(PARENTS)
-        marks_at = first_month + 12 + 4
+        marks_at = len(IDENTITY) if marks_only else first_month + 12 + 4
         for r, row in enumerate(ws.iter_rows(min_row=3, values_only=True), start=3):
             row = list(row) + [None] * (marks_at + len(subs))
             reg_id, pid, name = _text(row[0]), _text(row[1]), _text(row[2])
@@ -518,6 +558,17 @@ def check(school_id: str, content: bytes, file_name: str, by: str) -> Dict[str, 
                 continue
             seen[student.id] = r
             problems: List[str] = []
+            if marks_only:
+                marks = _read_marks(row, marks_at, subs, settings, problems)
+                old = stored.get(student.id)
+                before = {n: (old.marks or {}).get(n) for n, _ in subs} if old else {n: None for n, _ in subs}
+                kept = {**((old.marks or {}) if old else {}), **{n: m for n, m in marks.items() if m is not None}}
+                changes = ["marks"] if any(marks[n] is not None and marks[n] != before[n] for n in marks) else []
+                outcome = "problem" if problems else ("ready" if changes else "unchanged")
+                counts[outcome] += 1
+                rows_out.append({**where, "outcome": outcome, "student_id": student.id, "problems": problems,
+                                 "changes": changes, "values": {"marks": kept} if outcome == "ready" else None})
+                continue
             father = _name(row[8], "Father's name", problems)
             relation = _text(row[9]).title() or None
             if relation and relation not in RELATIONS:
@@ -543,23 +594,7 @@ def check(school_id: str, content: bytes, file_name: str, by: str) -> Dict[str, 
                 elif n is not None and not 0 <= n <= days:
                     problems.append(f"{MONTH_NAMES[month]}: {n} days present, but {days} working days")
                 present.append(n)
-            marks: Dict[str, Optional[float]] = {}
-            for k, (n, sub) in enumerate(subs):
-                v = row[marks_at + k]
-                if v is None or _text(v) == "":
-                    marks[n] = None
-                    continue
-                try:
-                    m = float(_text(v))
-                except ValueError:
-                    problems.append(f"{sub}: marks must be a number")
-                    continue
-                mx = settings["max_marks"].get(n)
-                if mx is None:
-                    problems.append(f"{sub}: the school has not set the max marks yet")
-                elif not 0 <= m <= mx:
-                    problems.append(f"{sub}: {m:g} marks, but the max is {mx}")
-                marks[n] = int(m) if m.is_integer() else m
+            marks = _read_marks(row, marks_at, subs, settings, problems)
             new = {"father_name": father, "guardian_relation": relation,
                    "guardian_name": other if relation == "Guardian" else None, "present": present, "marks": marks}
             if relation == "Mother":                       # the mother's name only when the card shows it
@@ -576,8 +611,8 @@ def check(school_id: str, content: bytes, file_name: str, by: str) -> Dict[str, 
             rows_out.append({**where, "outcome": outcome, "student_id": student.id, "problems": problems,
                              "changes": changes, "values": new if outcome == "ready" else None})
     missing = {st: sum(1 for s in register.values() if s.stage == st and s.missing_since is None
-                       and s.id not in listed.get(st, set())) for st in STAGES}
-    summary = {**counts, "left_out": {k: v for k, v in missing.items() if v},
+                       and s.id not in listed.get(st, set())) for st in STAGES if subjects(st) or not marks_only}
+    summary = {**counts, "left_out": {k: v for k, v in missing.items() if v}, "kind": "marks" if marks_only else "full",
                "already_applied_at": applied.applied_at.isoformat(timespec="seconds") + "Z" if applied and applied.applied_at else None}
     with SessionLocal() as db:
         db.query(RegisterImport).filter_by(school_id=school_id, status="CHECKED").update({"status": "SUPERSEDED"})
@@ -586,6 +621,28 @@ def check(school_id: str, content: bytes, file_name: str, by: str) -> Dict[str, 
         db.add(imp)
         db.commit()
         return _public(imp)
+
+
+def _read_marks(row, marks_at: int, subs, settings: Dict[str, Any], problems: List[str]) -> Dict[str, Any]:
+    """Each subject's marks obtained from a row (None: empty), checked against the subject's max marks."""
+    marks: Dict[str, Optional[float]] = {}
+    for k, (n, sub) in enumerate(subs):
+        v = row[marks_at + k]
+        if v is None or _text(v) == "":
+            marks[n] = None
+            continue
+        try:
+            m = float(_text(v))
+        except ValueError:
+            problems.append(f"{sub}: marks must be a number")
+            continue
+        mx = settings["max_marks"].get(n)
+        if mx is None:
+            problems.append(f"{sub}: the school has not set the max marks yet")
+        elif not 0 <= m <= mx:
+            problems.append(f"{sub}: {m:g} marks, but the max is {mx}")
+        marks[n] = int(m) if m.is_integer() else m
+    return marks
 
 
 def _public(imp: RegisterImport) -> Dict[str, Any]:

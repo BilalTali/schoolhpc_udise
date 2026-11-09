@@ -606,6 +606,19 @@ def register_data_workbook(admin: School = Depends(require_school_admin)):
                              media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
+@router.get("/register/marks.xlsx")
+def register_marks_workbook(admin: School = Depends(require_school_admin)):
+    """Summative marks only: the workbook to fill when marks are entered in Excel (attendance is kept in the app)."""
+    from backend.services import register_data
+    try:
+        content, name = register_data.workbook(admin.id, marks_only=True)
+    except register_data.Problem as exc:
+        raise _register_problem(exc)
+    audit.record(f"school_admin:{admin.id}", "register_marks_download", "register", admin.id, None, {})
+    return StreamingResponse(io.BytesIO(content), headers={"Content-Disposition": f'attachment; filename="{name}"'},
+                             media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
 @router.post("/register/data/check")
 def register_data_check(file: UploadFile = File(...), admin: School = Depends(require_school_admin)):
     """Checks a filled School Data workbook against the register (nothing is saved yet)."""

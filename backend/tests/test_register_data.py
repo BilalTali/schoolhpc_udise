@@ -388,3 +388,49 @@ def test_dummy_fill_replace_overwrites_a_wrong_upload_and_empties_months_without
         present, marks = list(d.present), dict(d.marks)
     assert round(days[0] * 0.8) - 1 <= present[0] <= days[0] * 0.9 and present[2] is None
     assert 30 <= marks["1"] <= 40
+
+
+def _marks_book(client, h):
+    r = client.get(f"{API}/school/register/marks.xlsx", headers=h)
+    assert r.status_code == 200, r.text
+    return load_workbook(io.BytesIO(r.content))
+
+
+def test_marks_workbook_has_only_the_student_and_the_summative_marks(world):
+    client, h, _, _ = world
+    _settings(client, h)
+    wb = _marks_book(client, h)
+    ws = wb["Preparatory"]
+    heads = [c.value for c in ws[2]]
+    assert heads[:3] == ["Register ID", "PARAKH ID", "Student name (PARAKH)"]
+    assert not any("present" in str(x) or "Father" in str(x) for x in heads)        # no attendance, no parents
+    assert any(str(x).startswith("Language 1") for x in heads) and len(heads) == 8 + 6
+    assert "Foundational" not in wb.sheetnames                                      # no summative marks there
+
+
+def test_marks_upload_changes_only_marks_and_keeps_attendance_and_parents(world):
+    client, h, _, school_id = world
+    _settings(client, h)
+    full = _book(client, h)                                       # attendance and a parent from the full workbook
+    ws = full["Preparatory"]
+    sid = ws.cell(row=3, column=1).value
+    ws.cell(row=3, column=9, value="ABDUL RASHID")
+    ws.cell(row=3, column=12, value=18)
+    ws.cell(row=3, column=28, value=60)                           # R1 marks 60
+    ws.cell(row=3, column=29, value=55)                           # R2 marks 55
+    check = _upload(client, h, full).json()
+    client.post(f"{API}/school/register/data/apply", headers=h, json={"import_id": check["id"], "confirm": True})
+
+    wb = _marks_book(client, h)
+    ms = wb["Preparatory"]
+    assert ms.cell(row=3, column=1).value == sid and ms.cell(row=3, column=9).value == 60   # today's marks shown
+    ms.cell(row=3, column=9, value=72)                            # R1 changed
+    ms.cell(row=3, column=10, value=None)                         # R2 left empty: kept
+    ms.cell(row=4, column=11, value=101)                          # above the max (100): a problem
+    res = _upload(client, h, wb, name="School_Marks.xlsx").json()
+    assert res["summary"]["kind"] == "marks" and res["summary"]["problem"] == 1 and res["summary"]["ready"] == 1
+    client.post(f"{API}/school/register/data/apply", headers=h, json={"import_id": res["id"], "confirm": True})
+    with SessionLocal() as db:
+        d = db.query(RegisterStudentData).filter_by(school_id=school_id, student_id=sid).first()
+        assert d.marks["1"] == 72 and d.marks["2"] == 55                              # R2 kept
+        assert d.present[0] == 18 and d.father_name == "ABDUL RASHID"                 # untouched
