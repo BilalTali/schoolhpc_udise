@@ -229,7 +229,6 @@ def _run_fetch(job: Dict[str, Any], teacher: Teacher, client, stages: List[str])
     def roster_read(name, students):
         _roster_file(teacher, name).write_text(json.dumps(students, ensure_ascii=False, indent=1), encoding="utf-8")
         hidden = getattr(client, "not_yours_classes", {}).get(name) or []
-        done_already = getattr(client, "completed_skipped", {}).get(name) or 0
         others = getattr(client, "other_classes_skipped", {}).get(name) or 0
         with _fetch_lock:
             if hidden:
@@ -237,9 +236,7 @@ def _run_fetch(job: Dict[str, Any], teacher: Teacher, client, stages: List[str])
             if others:
                 job["notes"].append(f"{name}: {others} student{'s' if others != 1 else ''} of classes not assigned to you "
                                     "in the School Register left out.")
-            if done_already:
-                job["notes"].append(f"{name}: {done_already} student{'s are' if done_already != 1 else ' is'} already "
-                                    "COMPLETED on PARAKH - nothing to do, so left out. The rest are here.")
+
             job["total"] += len(students)
             job["rosters"][name] = len(students)
             job["stage_now"] = name
@@ -262,6 +259,11 @@ def _run_fetch(job: Dict[str, Any], teacher: Teacher, client, stages: List[str])
         _, by_stage = sync.export_workbook(client, stages, _workbook_path(teacher), on_students=keep,
                                            on_roster=roster_read, on_each=one_done, skip_completed=True,
                                            classes=classes or None)
+        for name, n in (getattr(client, "completed_skipped", {}) or {}).items():
+            if n:
+                with _fetch_lock:
+                    job["notes"].append(f"{name}: {n} student{'s are' if n != 1 else ' is'} already COMPLETED on PARAKH - "
+                                        "nothing to do, so left out. The rest are here.")
         for name, students in by_stage.items():          # now with gender and admission numbers
             _roster_file(teacher, name).write_text(json.dumps(students, ensure_ascii=False, indent=1), encoding="utf-8")
         with _fetch_lock:

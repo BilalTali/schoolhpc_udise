@@ -262,6 +262,13 @@ def export_workbook(portal: Portal, stages: List[str], path,
         portal.not_yours_classes = {**getattr(portal, "not_yours_classes", {}), stage: not_yours(portal, stage, lookups)}
         on_roster(stage, students)
         data = fetch_students(portal, stage, [s["student_id"] for s in students], on_each=lambda stage=stage: on_each(stage))
+        if skip_completed:                    # the card itself: PARAKH's list says IN_PROGRESS for a while after a save
+            finished = {d.student_id for d in data if d.current_part == "mc"}
+            if finished:
+                portal.completed_skipped = {**getattr(portal, "completed_skipped", {}),
+                                            stage: getattr(portal, "completed_skipped", {}).get(stage, 0) + len(finished)}
+                students = [s for s in students if str(s["student_id"]) not in finished]
+                data = [d for d in data if d.student_id not in finished]
         on_students(stage, data)
         for s, d in zip(students, data):
             add_details(s, d.record)

@@ -469,6 +469,7 @@ def run_job(job_id: str, client: Portal, path: str, teacher_id: Optional[str] = 
             if teacher_id and result.status == "COMPLETED":
                 from backend.services import activity_grid
                 saved_by_stage.setdefault(result.stage, []).append(result.student_id)
+                mark_finished(teacher_id, result.stage, result.student_id)   # off the teacher's screens at once
                 activity_grid.forget(teacher_id, result.stage, result.student_id)
                 activity_grid.clear_draft_values(teacher_id, client.ay, result.stage, result.student_id)
 
@@ -524,6 +525,28 @@ def run_job(job_id: str, client: Portal, path: str, teacher_id: Optional[str] = 
         job.active_teacher_id = None                  # the teacher may start the next upload (H-3)
         db.commit()
         db.close()
+
+
+_roster_lock = threading.Lock()
+
+
+def mark_finished(teacher_id: str, stage: str, student_id: str) -> None:
+    """A student whose card PARAKH confirmed finished: COMPLETED on the teacher's class list, so no screen offers
+    them again (PARAKH's own class list keeps saying IN_PROGRESS for a while after a save)."""
+    from backend.services import hpc_sessions
+    from backend.services.safe_paths import inside
+    try:
+        path = inside(hpc_sessions.session_dir("teacher", teacher_id), f"roster_{str(stage).lower()}.json")
+        with _roster_lock:
+            if not path.exists():
+                return
+            students = json.loads(path.read_text(encoding="utf-8"))
+            for s in students:
+                if str(s.get("student_id")) == str(student_id):
+                    s["status"] = "COMPLETED"
+            path.write_text(json.dumps(students, ensure_ascii=False, indent=1), encoding="utf-8")
+    except Exception:                                     # the next fetch leaves the student out anyway
+        pass
 
 
 def _rewarm(client: Portal, owner: str, saved_by_stage: Dict[str, List[str]]) -> None:
