@@ -126,7 +126,7 @@ def test_the_fetch_runs_in_the_background_shows_progress_and_keeps_the_cards(mon
     monkeypatch.setattr(t, "_roster_file", lambda teacher, name: tmp_path / f"r_{name}.json")
     seen = {}
 
-    def export(client, stages, path, on_students, on_roster, on_each):
+    def export(client, stages, path, on_students, on_roster, on_each, **options):
         on_roster("Preparatory", [{"student_id": "9"}, {"student_id": "10"}])
         seen["early"] = json.loads((tmp_path / "r_Preparatory.json").read_text())    # the list is there at once
         on_each("Preparatory")

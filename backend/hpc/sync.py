@@ -227,6 +227,7 @@ def roster(portal: Portal, stage: str, lookups: Lookups, records: Optional[List[
             "grade": next((g["grade_caption"] for g in lookups.grades if g["id"] == r.get("grade_id")), ""),
             "grade_id": r.get("grade_id"),
             "section": lookups.section_name(r.get("section_id")),
+            "section_id": r.get("section_id"),
             "status": r.get("hpc_status") or "PENDING",
         })
     return out
@@ -235,17 +236,29 @@ def roster(portal: Portal, stage: str, lookups: Lookups, records: Optional[List[
 def export_workbook(portal: Portal, stages: List[str], path,
                     on_students: Callable[[str, List["StudentData"]], None] = lambda stage, data: None,
                     on_roster: Callable[[str, List[Dict[str, Any]]], None] = lambda stage, students: None,
-                    on_each: Callable[[str], None] = lambda stage: None):
+                    on_each: Callable[[str], None] = lambda stage: None, skip_completed: bool = False,
+                    classes: Optional[set] = None):
     """
     Fetches every student's current HPC data for the given stages and writes one workbook.
     Returns (path, {stage: students}). on_roster gets each stage's class list as soon as it is read,
     on_each is called after every student's card, on_students gets each stage's cards (to keep them).
+    skip_completed: students PARAKH shows COMPLETED are left out (nothing left to do on their cards; how many:
+    portal.completed_skipped). classes: only students of these (grade id, section id) pairs - the teacher's classes
+    in the School Register (how many others: portal.other_classes_skipped).
     """
     from backend.hpc import workbook
     sections, by_stage = [], {}
     for stage in stages:
         lookups = Lookups(portal, stage_code(stage))
         students = roster(portal, stage, lookups)
+        if classes:
+            mine = [s for s in students if (s.get("grade_id"), s.get("section_id")) in classes]
+            portal.other_classes_skipped = {**getattr(portal, "other_classes_skipped", {}), stage: len(students) - len(mine)}
+            students = mine
+        if skip_completed:
+            remaining = [s for s in students if str(s.get("status") or "").upper() != "COMPLETED"]
+            portal.completed_skipped = {**getattr(portal, "completed_skipped", {}), stage: len(students) - len(remaining)}
+            students = remaining
         portal.not_yours_classes = {**getattr(portal, "not_yours_classes", {}), stage: not_yours(portal, stage, lookups)}
         on_roster(stage, students)
         data = fetch_students(portal, stage, [s["student_id"] for s in students], on_each=lambda stage=stage: on_each(stage))

@@ -65,6 +65,13 @@ def _roster_file(teacher: Teacher, stage: str):
     return inside(hpc_sessions.session_dir(KIND, teacher.id), f"roster_{stage.lower()}.json")
 
 
+def open_students(path) -> List[dict]:
+    """A stored class list without the students PARAKH shows COMPLETED: nothing is left to do on their cards, so no
+    screen, check, mix or upload works on them (lists fetched before this rule still hold them)."""
+    students = json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
+    return [s for s in students if str(s.get("status") or "").upper() != "COMPLETED"]
+
+
 def _workbook_path(teacher: Teacher):
     return hpc_sessions.session_dir(KIND, teacher.id) / "workbook.xlsx"
 
@@ -139,7 +146,7 @@ def _warm_up(teacher: Teacher, result) -> None:
         return
     for name in teacher_stages(teacher):
         path = _roster_file(teacher, name)
-        students = json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
+        students = open_students(path)
         cols = [p.col for p in get_stage(name).PARTS if p.code in ("A1", "A3", "A4", "B", "C")]
         if students:
             card_store.warm(client, f"teacher_{teacher.id}", client.ay, name, [s["student_id"] for s in students], cols)
@@ -222,9 +229,17 @@ def _run_fetch(job: Dict[str, Any], teacher: Teacher, client, stages: List[str])
     def roster_read(name, students):
         _roster_file(teacher, name).write_text(json.dumps(students, ensure_ascii=False, indent=1), encoding="utf-8")
         hidden = getattr(client, "not_yours_classes", {}).get(name) or []
+        done_already = getattr(client, "completed_skipped", {}).get(name) or 0
+        others = getattr(client, "other_classes_skipped", {}).get(name) or 0
         with _fetch_lock:
             if hidden:
                 job["notes"].append(_not_yours_note(name, hidden))
+            if others:
+                job["notes"].append(f"{name}: {others} student{'s' if others != 1 else ''} of classes not assigned to you "
+                                    "in the School Register left out.")
+            if done_already:
+                job["notes"].append(f"{name}: {done_already} student{'s are' if done_already != 1 else ' is'} already "
+                                    "COMPLETED on PARAKH - nothing to do, so left out. The rest are here.")
             job["total"] += len(students)
             job["rosters"][name] = len(students)
             job["stage_now"] = name
@@ -233,10 +248,20 @@ def _run_fetch(job: Dict[str, Any], teacher: Teacher, client, stages: List[str])
         with _fetch_lock:
             job["done"] += 1
 
+    from backend.services import school_register
+    try:
+        classes = school_register.teacher_classes(teacher)      # the grades/sections the School Register gives them
+    except Exception:
+        classes = set()
+    if not classes:
+        with _fetch_lock:
+            job["notes"].append("Your classes are not in the School Register yet, so every student PARAKH lists for you "
+                                "is fetched. Ask the school to fetch from PARAKH on the School Register page.")
     keep = lambda name, data: card_store.put_many(f"teacher_{teacher.id}", client.ay, name, data)   # screens open at once
     try:
         _, by_stage = sync.export_workbook(client, stages, _workbook_path(teacher), on_students=keep,
-                                           on_roster=roster_read, on_each=one_done)
+                                           on_roster=roster_read, on_each=one_done, skip_completed=True,
+                                           classes=classes or None)
         for name, students in by_stage.items():          # now with gender and admission numbers
             _roster_file(teacher, name).write_text(json.dumps(students, ensure_ascii=False, indent=1), encoding="utf-8")
         with _fetch_lock:
@@ -354,7 +379,7 @@ def register_settings(stage: str = Query(...), teacher: Teacher = Depends(requir
 def cached_roster(stage: Optional[str] = Query(None), teacher: Teacher = Depends(require_teacher)):
     stage = _stage(teacher, stage)
     path = _roster_file(teacher, stage)
-    students = json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
+    students = open_students(path)
     return {"success": True, "total_students": len(students), "stage": stage, "students": students}
 
 
@@ -369,7 +394,7 @@ def download_workbook(stage: Optional[str] = Query(None), teacher: Teacher = Dep
         from backend.services import activity_grid
         session = str(sess.staff.get("school_cur_ay_code") or "")
         summaries = activity_grid.workbook_summaries(teacher, session, workbook.detect_stages(path), lambda st: (
-            json.loads(_roster_file(teacher, st).read_text(encoding="utf-8")) if _roster_file(teacher, st).exists() else []))
+            open_students(_roster_file(teacher, st))))
         workbook.set_activity_summaries(path, summaries)
     return FileResponse(path, filename="HPC_Class_Workbook.xlsx",
                         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")

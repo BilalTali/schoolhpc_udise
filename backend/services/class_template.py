@@ -160,7 +160,7 @@ def job_view(job: Optional[Dict[str, Any]], with_names: bool = True) -> Optional
     left = (elapsed / job["done"] * (job["total"] - job["done"])) if job["done"] and job["status"] == "RUNNING" else 0
     students = [{"student_id": r["student_id"], **({"student_name": r["student_name"]} if with_names else {}),
                  "grade": r["grade"], "section": r["section"], "ready": r["ready"],
-                 "part_b_problems": r["part_b_problems"], "other_problems": r["other_problems"][:10], "fix": r["fix"]}
+                 "part_b_problems": r["part_b_problems"], "other_problems": r["other_problems"][:40], "fix": r["fix"]}
                 for r in results]
     return {"id": job["id"], "stage": job["stage"], "status": job["status"], "done": job["done"], "total": job["total"],
             "seconds_left": int(left), "started_at": job["started_at"], "finished_at": job["finished_at"],

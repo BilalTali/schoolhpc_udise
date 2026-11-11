@@ -4,6 +4,7 @@ import { ApiError, apiFetch, call } from "../api";
 import type { Api } from "../api";
 import { useConfirm } from "./useConfirm";
 import { PrecheckView } from "./Precheck";
+import { FixMissing } from "./FixMissing";
 import type { PrecheckResult } from "./Precheck";
 
 // "Download template (Part B complete students only)": checks the class (from the cards the app keeps), then
@@ -304,9 +305,10 @@ export function TemplatePanel({ api, stage, total, onFix, onOpenSettings }: {
                   <li key={b.problem}>{b.problem.replace(/: required$/, "")} - <b>{b.students}</b> student{b.students === 1 ? "" : "s"}</li>))}
                 </ul>
                 Parents' names, attendance and summative marks come from the school's <b>School Register</b> (School Data
-                workbook, or "Dummy attendance &amp; marks" on the school's HPC page) - ask your school to enter them.
+                workbook, or "Dummy attendance &amp; marks" on the school's HPC page) - or fill them just below.
               </div>
             </div>)}
+          {!!job.blocking?.length && <FixMissing api={api} stage={stage} students={job.students} onDone={startCheck} />}
         </>)}
         {error && <div className="alert-box alert-error lib-inline-alert" role="alert"><AlertCircle size={18} aria-hidden="true" /><div>{error}</div></div>}
       </div>

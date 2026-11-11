@@ -405,7 +405,8 @@ def class_list(client: Portal, teacher_id: str, stage: str, lookups: Lookups) ->
         stored = json.loads(path.read_text(encoding="utf-8"))
     except (FileNotFoundError, ValueError):
         stored = []
-    return [{"status": "", **s} for s in stored] or sync.roster(client, stage, lookups)
+    done = lambda s: str(s.get("status") or "").upper() == "COMPLETED"     # nothing left to do on those cards
+    return [{"status": "", **s} for s in stored if not done(s)] or [s for s in sync.roster(client, stage, lookups) if not done(s)]
 
 
 def in_class(client: Portal, teacher_id: str, stage: str, lookups: Lookups) -> set:

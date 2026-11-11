@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 from backend.hpc import workbook
 from backend.hpc.portal import PortalError
 from backend.models.entities import Teacher
-from backend.routers.teachers import _portal, _roster_file, _stage, _upload_path
+from backend.routers.teachers import _portal, _roster_file, _stage, _upload_path, open_students
 from backend.services import activity_grid
 from backend.services.auth_service import require_teacher
 
@@ -50,7 +50,7 @@ class ImportRequest(BaseModel):
 
 def _students(teacher: Teacher, stage: str) -> List[dict]:
     path = _roster_file(teacher, stage)
-    students = json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
+    students = open_students(path)
     if not students:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"No {stage} students yet. Use 'Fetch from PARAKH' on the roster first.")
     return students

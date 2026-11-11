@@ -634,3 +634,68 @@ def test_the_check_says_when_the_school_register_changed_after_it(world):
         with SessionLocal() as db:
             db.query(RegisterSetting).filter_by(school_id=teacher.school_id).delete()
             db.commit()
+
+
+def _register(teacher, father_3002="SCHOOL ENTERED"):
+    from backend.models.register import RegisterSetting, RegisterStudent, RegisterStudentData
+    with SessionLocal() as db:
+        db.query(RegisterStudentData).filter_by(school_id=teacher.school_id).delete()
+        db.query(RegisterStudent).filter_by(school_id=teacher.school_id).delete()
+        db.query(RegisterSetting).filter_by(school_id=teacher.school_id).delete()
+        db.add(RegisterSetting(school_id=teacher.school_id, stage="Preparatory", session="2627", version=1,
+                               values={"working_days": [None] * 5 + [20] + [None] * 6}))
+        ids = {}
+        for pid in ("3001", "3002", "3003", "3004"):
+            r = RegisterStudent(school_id=teacher.school_id, stage="Preparatory", parakh_student_id=pid, student_name=f"PUPIL {pid}")
+            db.add(r)
+            db.flush()
+            ids[pid] = r.id
+        db.add(RegisterStudentData(school_id=teacher.school_id, student_id=ids["3002"], session="2627",
+                                   father_name=father_3002, marks={"1": 44}))
+        db.commit()
+    return ids
+
+
+def _clear_register(teacher):
+    from backend.models.register import RegisterSetting, RegisterStudent, RegisterStudentData
+    with SessionLocal() as db:
+        db.query(RegisterStudentData).filter_by(school_id=teacher.school_id).delete()
+        db.query(RegisterStudent).filter_by(school_id=teacher.school_id).delete()
+        db.query(RegisterSetting).filter_by(school_id=teacher.school_id).delete()
+        db.commit()
+
+
+def test_the_teacher_fills_whats_missing_into_the_school_register_only_where_empty(world):
+    from backend.models.register import RegisterStudentData
+    client, portal, lookups, teacher, _ = world
+    ids = _register(teacher)
+    url = f"{API}/teacher/template/Preparatory/fill-missing"
+    try:
+        r = client.post(url, json={"names": {"3001": {"relation": "Mother", "name": "Haleema Begum"},
+                                             "3002": {"relation": "Father", "name": "Teacher Typed"}},
+                                   "attendance": {"low": 80, "high": 90}, "marks": {"low": 30, "high": 40}})
+        assert r.status_code == 200, r.text
+        assert r.json()["names"] == 1                                              # 3002 had the school's name
+        with SessionLocal() as db:
+            d1 = db.query(RegisterStudentData).filter_by(student_id=ids["3001"]).first()
+            d2 = db.query(RegisterStudentData).filter_by(student_id=ids["3002"]).first()
+            assert (d1.guardian_relation, d1.mother_name) == ("Mother", "Haleema Begum")
+            assert 16 <= d1.present[5] <= 18 and all(30 <= m <= 40 for m in d1.marks.values())
+            assert d2.father_name == "SCHOOL ENTERED" and d2.marks["1"] == 44            # the school's entries stay
+        bad = client.post(url, json={"names": {"9999": {"relation": "Father", "name": "Anyone"}}})
+        assert bad.status_code == 422 and "not in your class" in bad.text
+        assert client.post(url, json={"names": {"3003": {"relation": "Father", "name": "R2D2 99"}}}).json()["problems"]
+    finally:
+        _clear_register(teacher)
+
+
+def test_completed_students_are_left_out_of_every_teacher_screen(world):
+    client, portal, lookups, teacher, tmp_path = world
+    roster = json.loads((tmp_path / "roster_preparatory.json").read_text())
+    roster[0]["status"] = "COMPLETED"
+    (tmp_path / "roster_preparatory.json").write_text(json.dumps(roster))
+    shown = client.get(f"{API}/teacher/roster", params={"stage": "Preparatory"}).json()
+    assert shown["total_students"] == 3 and "3001" not in {s["student_id"] for s in shown["students"]}
+    run_check(client)
+    job = client.get(f"{API}/teacher/template/Preparatory/check").json()["job"]
+    assert job["total"] == 3 and "3001" not in {s["student_id"] for s in job["students"]}

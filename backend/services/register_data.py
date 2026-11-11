@@ -87,6 +87,55 @@ def get_settings(school_id: str, stage: str, session: str) -> Dict[str, Any]:
                 "subjects": [{"n": n, "name": s} for n, s in subjects(stage)]}
 
 
+def fill_missing(school_id: str, stage: str, parakh_ids: List[str], names: Dict[str, Dict[str, str]],
+                 attendance: Optional[Tuple[float, float]], marks: Optional[Tuple[int, int]], by: str) -> Dict[str, Any]:
+    """A teacher fills what the class check found missing for their own students, into the School Register and only
+    where it is EMPTY (the school's own entries are never changed): parents' names as typed ({PARAKH id:
+    {"relation": Father/Mother/Guardian, "name"}}), and missing days present / marks at random inside a range (as the
+    school's dummy fill). Returns what was filled."""
+    from backend.services import audit
+    session = session_of(school_id)
+    wanted = {str(p) for p in parakh_ids}
+    problems: List[str] = []
+    saved_names = 0
+    with SessionLocal() as db:
+        regs = {str(r.parakh_student_id): r for r in db.query(RegisterStudent).filter_by(school_id=school_id, stage=stage)
+                if str(r.parakh_student_id) in wanted}
+        for pid, given in (names or {}).items():
+            pid = str(pid)
+            reg = regs.get(pid)
+            if reg is None:
+                problems.append(f"{pid}: not in the School Register - ask the school to fetch its students from PARAKH")
+                continue
+            relation = str(given.get("relation") or "Father").strip().title()
+            name = _name(given.get("name"), f"{reg.student_name}", problems)
+            if relation not in RELATIONS:
+                problems.append(f"{reg.student_name}: choose Father, Mother or Guardian")
+                continue
+            if not name:
+                continue
+            d = db.query(RegisterStudentData).filter_by(student_id=reg.id, session=session).first()
+            if d is None:
+                d = RegisterStudentData(school_id=school_id, student_id=reg.id, session=session, sources={})
+                db.add(d)
+            shown = {"Father": d.father_name, "Mother": d.mother_name, "Guardian": d.guardian_name}
+            if shown.get(d.guardian_relation or "Father"):
+                continue                                   # the card already has a name: the school's entry stays
+            column = {"Father": "father_name", "Mother": "mother_name", "Guardian": "guardian_name"}[relation]
+            setattr(d, column, name)
+            d.guardian_relation = relation
+            d.sources = {**(d.sources or {}), column: by, "guardian_relation": by}
+            saved_names += 1
+        db.commit()
+    numbers = None
+    if (attendance is not None or marks is not None) and regs:
+        numbers = dummy_fill(school_id, attendance, marks, stage, apply=True, by=by, only=set(regs))
+    audit.record(by, "register_fill_missing", "register", school_id, None,
+                 {"stage": stage, "names": saved_names, "attendance": attendance, "marks": marks}, school_id=school_id)
+    return {"names": saved_names, "months": numbers["months"] if numbers else 0, "marks": numbers["marks"] if numbers else 0,
+            "problems": problems}
+
+
 def last_change(school_id: str) -> Optional[datetime]:
     """When the School Register's values (settings, attendance, parents, marks) last changed (UTC), or None."""
     from sqlalchemy import func
@@ -823,7 +872,8 @@ def levels_from_marks(school_id: str, stage: str, session: str, parakh_ids: List
 # ---------------------------------------------------------------------------
 
 def dummy_fill(school_id: str, attendance: Optional[Tuple[float, float]], marks: Optional[Tuple[int, int]],
-               stage: Optional[str] = None, apply: bool = False, by: str = "", replace: bool = False) -> Dict[str, Any]:
+               stage: Optional[str] = None, apply: bool = False, by: str = "", replace: bool = False,
+               only: Optional[set] = None) -> Dict[str, Any]:
     """attendance: (low %, high %) of each month's working days; marks: (low, high) marks obtained, never above the
     subject's max marks. Every student gets their own random value inside the range. Only EMPTY cells are filled:
     what was uploaded or entered stays - unless replace, which fills every cell again (and empties a month without
@@ -849,7 +899,7 @@ def dummy_fill(school_id: str, attendance: Optional[Tuple[float, float]], marks:
         q = db.query(RegisterStudent).filter(RegisterStudent.school_id == school_id, RegisterStudent.missing_since.is_(None))
         if stage:
             q = q.filter(RegisterStudent.stage == stage)
-        students = q.all()
+        students = [x for x in q.all() if only is None or str(x.parakh_student_id) in only]   # only: PARAKH ids
         if not students:
             raise Problem("The register is empty: fetch the students from PARAKH first.")
         stored = {d.student_id: d for d in db.query(RegisterStudentData).filter_by(school_id=school_id, session=session)}
