@@ -6,6 +6,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from backend.database import get_db
 from backend.models.entities import PlatformAdmin, School, Teacher
@@ -141,10 +142,10 @@ def login(payload: LoginRequest, request: Request, response: Response, db: Sessi
             udise_code=school.udise_code,
         )
 
-    # Case 2: Try Teacher match (by username)
-    teacher = db.query(Teacher).filter(
-        Teacher.username == clean_id_lower
-    ).first()
+    # Case 2: Try Teacher match (by username): exactly as typed, else ignoring case (older accounts were saved in
+    # lowercase; a teacher may type their ID in capitals)
+    teacher = db.query(Teacher).filter(Teacher.username == identifier).first() or \
+        db.query(Teacher).filter(func.lower(Teacher.username) == clean_id_lower).first()
 
     if teacher and verify_password(payload.password, teacher.hashed_password):
         if not teacher.is_active:

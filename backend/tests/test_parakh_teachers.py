@@ -2,6 +2,7 @@
 classes come from PARAKH. PARAKH is MOCKED here (the shapes are PARAKH's live reply of 2026-11-01)."""
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import func
 
 from backend.database import SessionLocal
 from backend.main import app
@@ -49,7 +50,8 @@ def school(monkeypatch):
     assert client.post(f"{API}/auth/school/register", json=body).status_code in (201, 409)
     headers, _ = session_headers(udise)
     with SessionLocal() as db:                         # a clean start: no accounts from an earlier run
-        db.query(Teacher).filter(Teacher.username.in_(["t7afcd2", "t28771d", "t9c10ab", "old_bilal"])).delete()
+        db.query(Teacher).filter(func.lower(Teacher.username).in_(["t7afcd2", "t28771d", "t9c10ab", "old_bilal"])).delete(
+            synchronize_session=False)
         db.commit()
     return client, headers
 
@@ -71,7 +73,7 @@ def test_import_creates_accounts_whose_login_id_is_the_parakh_id(school):
         {"parakh_id": "T9C10AB"}, {"parakh_id": "TNOTHERE", "password": "teacher-pass-1"}]}).json()["results"]
     assert [r["status"] for r in res] == ["created", "error", "error", "error"]
     with SessionLocal() as db:
-        t = db.query(Teacher).filter_by(username="t7afcd2").one()
+        t = db.query(Teacher).filter_by(username="T7AFCD2").one()          # the PARAKH ID as PARAKH writes it
         assert (t.teacher_name, t.hpc_login_id, t.employee_code) == ("BILAL AHMAD TALI", "T7AFCD2", "TP48851020")
         assert (t.assigned_stage, t.assigned_grade, t.assigned_section) == ("Preparatory, Middle", "Grade 5, Grade 6", "A")
         assert t.hpc_password_encrypted is None                          # their PARAKH password is never set here

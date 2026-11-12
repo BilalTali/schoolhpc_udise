@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from backend.database import get_db
@@ -65,6 +66,7 @@ def list_school_teachers(
             "parakh_connected": p_status.get("logged_in", False),
             "parakh_user": p_status.get("user"),
             "has_hpc_credentials": bool(t.hpc_login_id and t.hpc_password_encrypted),
+            "hpc_login_id": t.hpc_login_id,
         }
         results.append(TeacherResponse(**t_dict))
     return results
@@ -81,7 +83,7 @@ def create_teacher(
     Supports single or multi-stage (e.g. ['Preparatory', 'Middle']), grades, and sections.
     The password is only hashed; it is never stored readable or sent back.
     """
-    existing = db.query(Teacher).filter(Teacher.username == payload.username).first()
+    existing = db.query(Teacher).filter(func.lower(Teacher.username) == payload.username.strip().lower()).first()
     if existing:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -110,7 +112,7 @@ def create_teacher(
         school_id=admin.id,
         teacher_name=payload.teacher_name.strip(),
         employee_code=payload.employee_code.strip() if payload.employee_code else None,
-        username=payload.username.strip().lower(),
+        username=payload.username.strip(),                 # exactly as typed: capitals stay
         mobile_number=payload.mobile_number.strip() if payload.mobile_number else None,
         hashed_password=hash_password(payload.password),
         assigned_stage=stage_str,
@@ -159,9 +161,9 @@ def update_teacher(
     if not teacher:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Teacher not found.")
 
-    if payload.username and payload.username.strip().lower() != teacher.username:
-        clean_u = payload.username.strip().lower()
-        exists = db.query(Teacher).filter(Teacher.username == clean_u, Teacher.id != teacher.id).first()
+    if payload.username and payload.username.strip() != teacher.username:
+        clean_u = payload.username.strip()                 # exactly as typed: capitals stay
+        exists = db.query(Teacher).filter(func.lower(Teacher.username) == clean_u.lower(), Teacher.id != teacher.id).first()
         if exists:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"Username '{clean_u}' already taken.")
         teacher.username = clean_u

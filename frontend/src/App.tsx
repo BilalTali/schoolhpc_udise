@@ -62,6 +62,7 @@ const LevelsGrid = lazy(() => import("./activities/LevelsGrid").then((m) => ({ d
 import { CaptchaStep } from "./CaptchaStep";
 import { ParakhTeachers } from "./ParakhTeachers";
 import { DummyFill } from "./DummyFill";
+import { TeacherTab } from "./TeacherTabActions";
 import { AccessGate } from "./AccessGate";
 import { downloadSheet } from "./downloadSheet";
 import { SchoolHome, UdiseCard } from "./SchoolHome";
@@ -134,6 +135,7 @@ interface TeacherItem {
   id: string;
   teacher_name: string;
   username: string;
+  hpc_login_id?: string | null;     // the teacher's own PARAKH login ID (never the password)
   employee_code?: string;
   mobile_number?: string;
   assigned_stage: string;
@@ -696,7 +698,7 @@ export default function App() {
     try {
       const body: any = {
         teacher_name: editTeacherName.trim(),
-        username: editTeacherUsername.trim().toLowerCase(),
+        username: editTeacherUsername.trim(),
         assigned_stage: editTeacherStages.join(", "),
         assigned_stages: editTeacherStages,
         assigned_grade: editTeacherGrades.join(", "),
@@ -2085,6 +2087,8 @@ export default function App() {
                                 </button>
                               </div>
                             )}
+                            <TeacherTab api={cardsApi} teacherId={t.id} name={t.teacher_name} parakhLoginId={t.hpc_login_id}
+                                        hasParakhLogin={t.has_hpc_credentials} onSaved={fetchSchoolData} />
                           </td>
                         </tr>
                       ))}
@@ -2295,7 +2299,7 @@ export default function App() {
                       </div>
                       <div className="form-group" style={{ marginBottom: "1rem" }}>
                         <label className="form-label">Unique Login Username *</label>
-                        <input type="text" className="form-input" placeholder="e.g. sunita_rao" value={newTeacherUsername} onChange={(e) => setNewTeacherUsername(e.target.value.toLowerCase().replace(/\s/g, "_"))} required />
+                        <input type="text" className="form-input" placeholder="e.g. sunita_rao" value={newTeacherUsername} onChange={(e) => setNewTeacherUsername(e.target.value.replace(/\s/g, ""))} required />
                       </div>
                       <div className="form-group" style={{ marginBottom: "1.2rem" }}>
                         <label className="form-label">Initial Password *</label>

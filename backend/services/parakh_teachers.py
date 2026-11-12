@@ -11,6 +11,8 @@ import_teachers  creates the missing accounts / updates the existing ones from P
 """
 from typing import Any, Dict, List, Optional, Tuple
 
+from sqlalchemy import func
+
 from backend.hpc.portal import Portal, PortalError, stage_code
 from backend.models.entities import Teacher
 from backend.services.auth_service import hash_password
@@ -51,7 +53,7 @@ def parakh_id(t: Dict[str, Any]) -> str:
 def _account(db, school_id: str, pid: str) -> Optional[Teacher]:
     low = pid.lower()
     for t in db.query(Teacher).filter(Teacher.school_id == school_id):
-        if (t.hpc_login_id or "").strip().lower() == low or t.username == low:
+        if (t.hpc_login_id or "").strip().lower() == low or (t.username or "").lower() == low:
             return t
     return None
 
@@ -80,7 +82,7 @@ def list_teachers(db, school_id: str, client: Portal) -> List[Dict[str, Any]]:
         acc = _account(db, school_id, t["parakh_id"])
         out.append({**t, "account": None if acc is None else {
             "id": acc.id, "username": acc.username, "is_active": acc.is_active,
-            "login_matches": acc.username == t["parakh_id"].lower(),
+            "login_matches": (acc.username or "").lower() == t["parakh_id"].lower(),
             "has_parakh_login": bool(acc.hpc_login_id and acc.hpc_password_encrypted),
             "parakh_login_id": acc.hpc_login_id}})
     return out
@@ -111,9 +113,10 @@ def import_teachers(db, school_id: str, client: Portal, wanted: List[Dict[str, A
             results.append({"parakh_id": pid, "status": "error", "message": "The password needs at least 8 characters."})
             continue
         stages, grades, sections = _assignment(t["classes"])
-        login = t["parakh_id"].lower()
+        login = t["parakh_id"]                             # the PARAKH ID as PARAKH writes it (capitals stay)
         acc = _account(db, school_id, t["parakh_id"])
-        taken = db.query(Teacher).filter(Teacher.username == login, *( [Teacher.id != acc.id] if acc else [])).first()
+        taken = db.query(Teacher).filter(func.lower(Teacher.username) == login.lower(),
+                                         *( [Teacher.id != acc.id] if acc else [])).first()
         if taken:
             results.append({"parakh_id": pid, "status": "error",
                             "message": f"The login ID {t['parakh_id']} is already used by another account."})

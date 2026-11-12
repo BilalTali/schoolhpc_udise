@@ -66,7 +66,7 @@ class TeacherCreateRequest(BaseModel):
     @field_validator("username")
     @classmethod
     def validate_username(cls, v: str) -> str:
-        clean = v.strip().lower().replace(" ", "_")
+        clean = v.strip().replace(" ", "_")                # capitals stay as typed
         if len(clean) < 3:
             raise ValueError("Username must be at least 3 characters long.")
         return clean
@@ -105,6 +105,7 @@ class TeacherResponse(BaseModel):
     parakh_user: Optional[str] = None
     # Whether HPC credentials have been saved
     has_hpc_credentials: bool = False
+    hpc_login_id: Optional[str] = None                       # the teacher's own PARAKH login ID (never the password)
 
     model_config = ConfigDict(from_attributes=True)
 
