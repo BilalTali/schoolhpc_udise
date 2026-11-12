@@ -15,6 +15,7 @@ import {
   Shuffle,
   ArrowLeft,
   RefreshCw,
+  Plus,
   UserX,
   FileCheck2,
   Sparkles,
@@ -1986,7 +1987,10 @@ export default function App() {
                   <button onClick={fetchSchoolData} className="btn btn-outline" style={{ padding: "0.5rem 0.85rem" }}>
                     <RefreshCw size={15} /> Refresh
                   </button>
-
+                  <button onClick={() => setShowAddTeacherModal(true)} className="btn btn-primary" style={{ padding: "0.5rem 0.85rem" }}
+                          title="A teacher PARAKH does not list for the school (e.g. no school PARAKH login): name, login, stages and classes">
+                    <Plus size={15} aria-hidden="true" /> Add teacher
+                  </button>
                 </div>
               </div>
 
@@ -1994,7 +1998,8 @@ export default function App() {
                 <div style={{ textAlign: "center", padding: "2.5rem 1rem", color: "var(--text-muted)" }}>
                   <GraduationCap size={40} style={{ margin: "0 auto 0.75rem", opacity: 0.4 }} />
                   <p style={{ fontWeight: 600 }}>No teacher logins yet.</p>
-                  <p style={{ fontSize: "0.85rem" }}>Create them from PARAKH's list above: each teacher's login ID is their PARAKH ID.</p>
+                  <p style={{ fontSize: "0.85rem" }}>Create them from PARAKH's list above (each teacher's login ID is their PARAKH ID),
+                    or with <b>Add teacher</b> when the school has no PARAKH school login.</p>
                 </div>
               ) : (
                 <div className="data-table-wrapper">
