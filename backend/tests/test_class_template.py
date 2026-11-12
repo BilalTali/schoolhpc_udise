@@ -699,3 +699,37 @@ def test_completed_students_are_left_out_of_every_teacher_screen(world):
     run_check(client)
     job = client.get(f"{API}/teacher/template/Preparatory/check").json()["job"]
     assert job["total"] == 3 and "3001" not in {s["student_id"] for s in job["students"]}
+
+
+def test_without_the_school_register_fixes_go_to_the_teachers_side(world):
+    """No school PARAKH login: the School Register does not have the teacher's students. 'Fix what is missing' then
+    saves into the teacher's answers for each student - only where empty - and the check uses them."""
+    client, portal, lookups, teacher, _ = world
+    _clear_register(teacher)
+    client.put(f"{API}/teacher/settings/Preparatory", json={"values": {**SETTINGS, "working_days": [20] * 12}})
+    hpc_cards.save_draft(teacher.id, portal.ay, "Preparatory", "3002", {"d_1_obtained": 11})      # typed: stays
+    r = client.post(f"{API}/teacher/template/Preparatory/fill-missing",
+                    json={"names": {"3001": {"relation": "Father", "name": "Ghulam Nabi"}},
+                          "marks": {"low": 30, "high": 40}, "attendance": {"low": 80, "high": 90}})
+    assert r.status_code == 200, r.text
+    assert r.json()["names"] == 1 and r.json()["marks"] > 0 and r.json()["months"] > 0
+    d1 = hpc_cards.load_draft(teacher.id, portal.ay, "Preparatory", "3001")["values"]
+    assert (d1["a1_guardian_relation"], d1["a1_guardian_name"]) == ("Father", "Ghulam Nabi")
+    assert all(30 <= d1[f"d_{n}_obtained"] <= 40 for n in range(1, 7)) and 16 <= d1["a1_present_1"] <= 18
+    assert hpc_cards.load_draft(teacher.id, portal.ay, "Preparatory", "3002")["values"]["d_1_obtained"] == 11
+
+
+def test_without_the_school_register_the_father_comes_from_udise(world, monkeypatch):
+    from backend.services import register_data
+    client, portal, lookups, teacher, _ = world
+    _clear_register(teacher)
+    monkeypatch.setattr(register_data, "udise_parents",
+                        lambda school_id, people: {p.id: {"father": "ABDUL AHAD", "mother": "X"} for p in people if p.id == "3001"})
+    hpc_cards.save_draft(teacher.id, portal.ay, "Preparatory", "3002", {"a1_guardian_name": "Typed Name"})
+    client.get(f"{API}/teacher/template/Preparatory/precheck")                  # before every check
+    d1 = hpc_cards.load_draft(teacher.id, portal.ay, "Preparatory", "3001")["values"]
+    assert (d1["a1_guardian_relation"], d1["a1_guardian_name"]) == ("Father", "ABDUL AHAD")    # always the father
+    assert hpc_cards.load_draft(teacher.id, portal.ay, "Preparatory", "3002")["values"]["a1_guardian_name"] == "Typed Name"
+    body = client.get(f"{API}/teacher/template/Preparatory/precheck").json()
+    listed = {s["student_id"] for i in body["items"] if "Guardian Name" in i["question"] for s in i["students"]}
+    assert "3001" not in listed and "3002" not in listed

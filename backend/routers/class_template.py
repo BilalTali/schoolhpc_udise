@@ -72,6 +72,7 @@ def start_check(stage: str, teacher: Teacher = Depends(require_teacher)):
     except PortalError as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc))
     resolve = hpc_cards._resolver(teacher.id, stage, lookups)
+    _udise_fathers(client, teacher, stage, students)
     job = class_template.start_check(client, teacher, stage, students, resolve, lookups)
     return class_template.job_view(job)
 
@@ -84,6 +85,7 @@ def precheck(stage: str, teacher: Teacher = Depends(require_teacher)):
     client = _portal(teacher)
     try:
         lookups = hpc_cards.lookups_for(f"teacher_{teacher.id}", client, stage)
+        _udise_fathers(client, teacher, stage, students)
         return class_template.precheck(client, teacher, stage, students, hpc_cards._resolver(teacher.id, stage, lookups))
     except PortalError as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc))
@@ -185,11 +187,32 @@ def fill_missing(stage: str, payload: FillMissingRequest, teacher: Teacher = Dep
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "These students are not in your class: " + ", ".join(unknown[:5]))
     if not payload.names and payload.attendance is None and payload.marks is None:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Type a name, or choose a range for days present or marks.")
+    from backend.services import teacher_side
+    names = {k: v.model_dump() for k, v in payload.names.items() if v.name.strip()}
+    attendance = (payload.attendance.low, payload.attendance.high) if payload.attendance else None
+    marks = (int(payload.marks.low), int(payload.marks.high)) if payload.marks else None
+    school = teacher_side.in_register(teacher.school_id, stage, ids)       # the school's side: its register
+    own = [i for i in ids if i not in school]                                # not in the register: the teacher's side
+    out = {"names": 0, "months": 0, "marks": 0, "problems": []}
     try:
-        return register_data.fill_missing(
-            teacher.school_id, stage.capitalize(), ids,
-            {k: v.model_dump() for k, v in payload.names.items() if v.name.strip()},
-            (payload.attendance.low, payload.attendance.high) if payload.attendance else None,
-            (int(payload.marks.low), int(payload.marks.high)) if payload.marks else None, f"teacher:{teacher.id}")
+        if school:
+            r = register_data.fill_missing(teacher.school_id, stage.capitalize(), sorted(school),
+                                           {k: v for k, v in names.items() if k in school}, attendance, marks,
+                                           f"teacher:{teacher.id}")
+            out = {k: out[k] + r[k] for k in out}
+        if own:
+            r = teacher_side.fill_missing(_portal(teacher), teacher, stage, own,
+                                          {k: v for k, v in names.items() if k in own}, attendance, marks)
+            out = {k: out[k] + r[k] for k in out}
     except register_data.Problem as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc))
+    return out
+
+
+def _udise_fathers(client, teacher: Teacher, stage: str, students) -> None:
+    """Students the School Register does not have: their father's name from the school's UDISE+ data, where empty."""
+    from backend.services import teacher_side
+    try:
+        teacher_side.udise_fathers(client, teacher, stage, students)
+    except Exception:                                  # never stops the check: missing names are listed as usual
+        pass

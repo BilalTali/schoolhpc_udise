@@ -252,8 +252,10 @@ def _run_fetch(job: Dict[str, Any], teacher: Teacher, client, stages: List[str])
         classes = set()
     if not classes:
         with _fetch_lock:
-            job["notes"].append("Your classes are not in the School Register yet, so every student PARAKH lists for you "
-                                "is fetched. Ask the school to fetch from PARAKH on the School Register page.")
+            job["notes"].append("Your classes are not in the School Register (the school has no PARAKH school login, or "
+                                "has not fetched yet), so every student PARAKH lists for your own login is fetched. "
+                                "Fathers' names come from the school's UDISE+ data; anything else missing can be "
+                                "filled under the class check.")
     keep = lambda name, data: card_store.put_many(f"teacher_{teacher.id}", client.ay, name, data)   # screens open at once
     try:
         _, by_stage = sync.export_workbook(client, stages, _workbook_path(teacher), on_students=keep,
@@ -266,6 +268,16 @@ def _run_fetch(job: Dict[str, Any], teacher: Teacher, client, stages: List[str])
                                         "nothing to do, so left out. The rest are here.")
         for name, students in by_stage.items():          # now with gender and admission numbers
             _roster_file(teacher, name).write_text(json.dumps(students, ensure_ascii=False, indent=1), encoding="utf-8")
+        from backend.services import teacher_side
+        for name, students in by_stage.items():          # not in the School Register: fathers from UDISE+
+            try:
+                n = teacher_side.udise_fathers(client, teacher, name, students)
+            except Exception:
+                n = 0
+            if n:
+                with _fetch_lock:
+                    job["notes"].append(f"{name}: the father's name of {n} student{'s' if n != 1 else ''} filled from "
+                                        "the school's UDISE+ data.")
         with _fetch_lock:
             job["status"] = "COMPLETED"
             job["summary"] = ", ".join(f"{name}: {len(st)}" for name, st in by_stage.items())
