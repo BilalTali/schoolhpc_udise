@@ -7,9 +7,9 @@ import type { Api } from "./api";
 // (that tab has the teacher's session; this one stays the school), and save the teacher's own PARAKH login so the
 // teacher tab connects with just the captcha.
 
-export function TeacherTab({ api, teacherId, name, parakhLoginId, hasParakhLogin, onSaved }: {
+export function TeacherTab({ api, teacherId, name, parakhLoginId, hasParakhLogin, onSaved, active = true }: {
   api: Api; teacherId: string; name: string; parakhLoginId?: string | null; hasParakhLogin?: boolean;
-  onSaved?: () => void;
+  onSaved?: () => void; active?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [id, setId] = useState(parakhLoginId || "");
@@ -45,6 +45,24 @@ export function TeacherTab({ api, teacherId, name, parakhLoginId, hasParakhLogin
       setNote((e as Error).message);
     }
   };
+
+  const switchOn = async () => {
+    setNote(null);
+    try {
+      await call(api, "PUT", `/school/teachers/${teacherId}`, { is_active: true });
+      onSaved?.();
+    } catch (e) {
+      setNote((e as Error).message);
+    }
+  };
+
+  if (!active) return (                      // a switched-off account cannot be opened: say so, offer to switch it on
+    <div className="teacher-tab-actions">
+      <span className="form-hint">Switched off - it cannot sign in or be opened.</span>
+      <button type="button" className="btn btn-outline btn-sm" onClick={switchOn}>Switch on</button>
+      {note && <div className="form-hint">{note}</div>}
+    </div>
+  );
 
   return (
     <div className="teacher-tab-actions">

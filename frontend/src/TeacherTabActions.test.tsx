@@ -31,3 +31,20 @@ describe("Open as teacher - any teacher account", () => {
                                body: { hpc_login_id: "T7AFCD2", hpc_password: "Secret#1" } });
   });
 });
+
+describe("A switched-off teacher", () => {
+  it("says so instead of offering a tab that would fail, and can be switched on", async () => {
+    const calls: { method: string; path: string; body?: unknown }[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ method: init?.method || "GET", path: new URL(String(input)).pathname.replace("/api/v1", ""),
+                   body: init?.body ? JSON.parse(String(init.body)) : undefined });
+      return new Response(JSON.stringify({}), { status: 200 });
+    });
+    const onSaved = vi.fn();
+    render(<TeacherTab api={api} teacherId="t5" name="Off" active={false} onSaved={onSaved} />);
+    expect(screen.queryByRole("button", { name: /Open as teacher/ })).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Switch on" }));
+    await waitFor(() => expect(onSaved).toHaveBeenCalled());
+    expect(calls[0]).toEqual({ method: "PUT", path: "/school/teachers/t5", body: { is_active: true } });
+  });
+});

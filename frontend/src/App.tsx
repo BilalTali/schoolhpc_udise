@@ -2088,7 +2088,8 @@ export default function App() {
                               </div>
                             )}
                             <TeacherTab api={cardsApi} teacherId={t.id} name={t.teacher_name} parakhLoginId={t.hpc_login_id}
-                                        hasParakhLogin={t.has_hpc_credentials} onSaved={fetchSchoolData} />
+                                        hasParakhLogin={t.has_hpc_credentials} onSaved={fetchSchoolData}
+                                        active={t.is_active} />
                           </td>
                         </tr>
                       ))}
