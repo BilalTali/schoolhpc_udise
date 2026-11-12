@@ -31,6 +31,7 @@ export function FixMissing({ api, stage, students, onDone }: {
   const [marks, setMarks] = useState({ low: "25", high: "45" });
   const [useDays, setUseDays] = useState(true);
   const [days, setDays] = useState({ low: "75", high: "95" });
+  const [bulk, setBulk] = useState({ relation: "Father", name: "" });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<Result | null>(null);
@@ -40,6 +41,13 @@ export function FixMissing({ api, stage, students, onDone }: {
   const setRow = (id: string, v: Partial<{ relation: string; name: string }>) =>
     setNames((p) => ({ ...p, [id]: { ...row(id), ...v } }));
   const typed = Object.entries(names).filter(([, v]) => v.name.trim());
+  const fillAll = () => setNames((p) => {                        // only the boxes still empty
+    const next = { ...p };
+    for (const s of nameless) {
+      if (!(next[s.student_id]?.name || "").trim()) next[s.student_id] = { relation: bulk.relation, name: bulk.name.trim() };
+    }
+    return next;
+  });
 
   const save = async () => {
     setBusy(true);
@@ -79,6 +87,16 @@ export function FixMissing({ api, stage, students, onDone }: {
 
       {nameless.length > 0 && (<>
         <b>Name on the HPC card ({nameless.length} student{nameless.length === 1 ? "" : "s"})</b>
+        <div className="fix-line" role="group" aria-label="Fill every empty name at once">
+          <span>Fill all empty with</span>
+          <select className="reg-box" value={bulk.relation} aria-label="Whose name, for all"
+                  onChange={(e) => setBulk({ ...bulk, relation: e.target.value })}>
+            {["Father", "Mother", "Guardian"].map((r) => <option key={r}>{r}</option>)}</select>
+          <input className="form-input fix-bulk-name" maxLength={50} value={bulk.name} placeholder="One name for all"
+                 aria-label="Name, for all" onChange={(e) => setBulk({ ...bulk, name: e.target.value })} />
+          <button type="button" className="btn btn-outline btn-sm" disabled={!bulk.name.trim()} onClick={fillAll}>
+            Apply to all empty</button>
+        </div>
         <div className="sdms-scroll"><table className="sdms-table sdms-fit">
           <thead><tr><th>Student</th><th>Whose name</th><th>Name</th></tr></thead>
           <tbody>{nameless.map((s) => (

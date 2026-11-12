@@ -36,3 +36,27 @@ describe("Fix what is missing", () => {
     expect(screen.getByText(/Saved 1 name, 1 marks and 2 months/)).toBeTruthy();
   });
 });
+
+describe("Fix what is missing - one name for all", () => {
+  it("fills only the empty name boxes, then sends them", async () => {
+    const sent: any[] = [];
+    vi.stubGlobal("fetch", async (_: RequestInfo | URL, init?: RequestInit) => {
+      sent.push(JSON.parse(String(init?.body)));
+      return new Response(JSON.stringify({ names: 2, months: 0, marks: 0, problems: [] }), { status: 200 });
+    });
+    render(<FixMissing api={api} stage="Preparatory" onDone={() => {}}
+                       students={[pupil("1", [NAME]), pupil("2", [NAME]), pupil("3", [NAME])]} />);
+    await userEvent.type(screen.getByLabelText("Name for PUPIL 2"), "Own Name");
+    await userEvent.selectOptions(screen.getByLabelText("Whose name, for all"), "Guardian");
+    await userEvent.type(screen.getByLabelText("Name, for all"), "Bashir Ahmad");
+    await userEvent.click(screen.getByRole("button", { name: "Apply to all empty" }));
+    expect((screen.getByLabelText("Name for PUPIL 1") as HTMLInputElement).value).toBe("Bashir Ahmad");
+    expect((screen.getByLabelText("Name for PUPIL 2") as HTMLInputElement).value).toBe("Own Name");   // kept
+    await userEvent.click(screen.getByRole("checkbox", { name: /Missing days present/ }));
+    await userEvent.click(screen.getByRole("button", { name: /Save into the School Register/ }));
+    await waitFor(() => expect(sent.length).toBe(1));
+    expect(sent[0].names).toEqual({ "1": { relation: "Guardian", name: "Bashir Ahmad" },
+                                    "2": { relation: "Father", name: "Own Name" },
+                                    "3": { relation: "Guardian", name: "Bashir Ahmad" } });
+  });
+});

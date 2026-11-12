@@ -733,3 +733,4 @@ img, svg, video, canvas { max-width: 100%; }
 .fix-missing { margin-top: 0.75rem; }
 .fix-missing .fix-line { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1rem; margin: 0.6rem 0; }
 .fix-missing td input.form-input { min-width: 12rem; }
+.fix-missing .fix-bulk-name { max-width: 16rem; }
