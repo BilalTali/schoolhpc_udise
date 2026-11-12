@@ -99,9 +99,12 @@ def _run(school_id: str, client: Portal, stages: List[str]) -> None:
                 JOBS[school_id]["stages"][stage] = counts[stage]
         _set(school_id, step="Reading PARAKH's teachers and their classes")
         teachers = fetch_teacher_classes(school_id, client)
+        _set(school_id, step="Filling parents' names from UDISE+")
+        from backend.services import register_data
+        parents = register_data.fill_from_udise_quietly(school_id)
         _set(school_id, status="COMPLETED", step="Done", finished_at=_now(), teachers=teachers)
         audit.record(f"school_admin:{school_id}", "register_fetch", "register", school_id, None,
-                     {"stages": counts, "teachers": teachers})
+                     {"stages": counts, "teachers": teachers, "parents_from_udise": parents})
     except Exception as exc:                          # the session ended, PARAKH down ...
         _set(school_id, status="FAILED", error=str(exc), finished_at=_now())
 

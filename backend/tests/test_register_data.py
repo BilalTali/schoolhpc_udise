@@ -188,6 +188,33 @@ def test_fetch_parents_from_udise_reaches_students_admitted_since_the_full_fetch
     assert ws.cell(row=row, column=9).value == "NEW FATHER"                         # (no mother's name column)
 
 
+def test_udise_parents_are_saved_into_the_register_by_themselves_only_where_empty(world, monkeypatch):
+    """MOCKED UDISE+ (a full SDMS fetch): fetching the students fills every parent's name UDISE+ has, without a
+    download or upload; a name the school entered stays."""
+    client, h, _, school_id = world
+    from backend.models.register import RegisterStudent
+    with SessionLocal() as db:
+        regs = db.query(RegisterStudent).filter_by(school_id=school_id).order_by(RegisterStudent.student_name).all()
+        first, second = regs[0], regs[1]
+        db.add(RegisterStudentData(school_id=school_id, student_id=second.id, session="2627", sources={},
+                                   father_name="TYPED FATHER"))
+        db.commit()
+        people = [(r.student_name, r.apaar_id) for r in (first, second)]
+    full = {"fetched_at": "2026-11-01T00:00:00Z", "students": [
+        {"general": {"studentId": i, "studentName": n, "apaarId": d, "fatherName": f"UDISE FATHER {'AB'[i]}",
+                     "motherName": "UDISE MOTHER"}} for i, (n, d) in enumerate(people)]}
+    monkeypatch.setattr("backend.services.sdms_data.load", lambda sid: full)
+    assert register_data.fill_from_udise(school_id) >= 1
+    with SessionLocal() as db:
+        a = db.query(RegisterStudentData).filter_by(student_id=first.id, session="2627").one()
+        b = db.query(RegisterStudentData).filter_by(student_id=second.id, session="2627").one()
+        assert (a.father_name, a.mother_name, a.sources["father_name"]) == ("UDISE FATHER A", "UDISE MOTHER", "udise")
+        assert b.father_name == "TYPED FATHER" and b.mother_name == "UDISE MOTHER"
+    assert register_data.for_cards(school_id, "Preparatory", "2627", first.parakh_student_id)["a1_guardian_name"] \
+        == "UDISE FATHER A"
+    assert register_data.fill_from_udise(school_id) == 0                         # a second run changes nothing
+
+
 def test_fetch_parents_says_when_udise_is_not_connected(world, monkeypatch):
     client, h, *_ = world
     from backend.services import udise_sessions

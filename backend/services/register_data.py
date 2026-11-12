@@ -136,6 +136,55 @@ def fill_missing(school_id: str, stage: str, parakh_ids: List[str], names: Dict[
             "problems": problems}
 
 
+def fill_from_udise(school_id: str) -> int:
+    """Every parent's name UDISE+ has (the fetched SDMS data) saved into the School Register, ONLY where that name is
+    still empty - an uploaded or typed name is never changed. Runs by itself after the students are fetched from
+    PARAKH and after UDISE+ is read. Returns how many students got a name."""
+    if not school_id:
+        return 0
+    try:
+        session = session_of(school_id)
+    except Exception:
+        return 0
+    filled = 0
+    with SessionLocal() as db:
+        students = db.query(RegisterStudent).filter(RegisterStudent.school_id == school_id,
+                                                   RegisterStudent.missing_since.is_(None)).all()
+        if not students:
+            return 0
+        found = udise_parents(school_id, students)
+        if not found:
+            return 0
+        data = {d.student_id: d for d in db.query(RegisterStudentData).filter_by(school_id=school_id, session=session)}
+        for sid, names in found.items():
+            d = data.get(sid)
+            changed = False
+            for column, key in (("father_name", "father"), ("mother_name", "mother")):
+                name = " ".join(str(names.get(key) or "").split())
+                if not name or len(name) > NAME_MAX or not NAME_RULE.match(name):
+                    continue
+                if d is None:
+                    d = RegisterStudentData(school_id=school_id, student_id=sid, session=session, sources={})
+                    db.add(d)
+                    data[sid] = d
+                if getattr(d, column):
+                    continue
+                setattr(d, column, name)
+                d.sources = {**(d.sources or {}), column: "udise"}
+                changed = True
+            filled += changed
+        db.commit()
+    return filled
+
+
+def fill_from_udise_quietly(school_id: str) -> int:
+    """fill_from_udise for the automatic runs: a problem there never stops the fetch that called it."""
+    try:
+        return fill_from_udise(school_id)
+    except Exception:
+        return 0
+
+
 def last_change(school_id: str) -> Optional[datetime]:
     """When the School Register's values (settings, attendance, parents, marks) last changed (UTC), or None."""
     from sqlalchemy import func
@@ -249,7 +298,8 @@ def fetch_parents(school_id: str) -> Dict[str, Any]:
     tmp = path.with_suffix(".tmp")
     tmp.write_text(secrets_box.encrypt(json.dumps(body, ensure_ascii=False)), encoding="utf-8")
     tmp.replace(path)
-    return {"fetched_at": body["fetched_at"], "students": len(body["students"])}
+    filled = fill_from_udise_quietly(school_id)
+    return {"fetched_at": body["fetched_at"], "students": len(body["students"]), "filled": filled}
 
 
 def _fresh_parents(school_id: str) -> Optional[Dict[str, Any]]:

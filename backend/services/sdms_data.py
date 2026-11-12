@@ -107,6 +107,8 @@ def _run(school_id: str, saved_session: Dict[str, Any]) -> None:
                                                       "classFromDesc", "classToDesc", "sessionStartDate", "sessionEndDate")},
                 "classes": classes, "students": students, "problems": problems, "masters": masters}
         _save(school_id, data)
+        from backend.services import register_data
+        register_data.fill_from_udise_quietly(school_id)    # parents' names into the School Register, where empty
         from backend.services import audit
         audit.record(f"school_admin:{school_id}", "sdms_fetch", "udise", school_id, None,
                      {"students": len(students), "classes": len(classes), "problems": problems, "session": data["session"]})
