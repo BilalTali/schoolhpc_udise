@@ -11,6 +11,20 @@ _connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite"
 # a busy school (the default 5 + 10 runs out with a few uploads and a full page of teachers)
 _pool = {} if DATABASE_URL.startswith("sqlite") else {"pool_size": 20, "max_overflow": 40, "pool_timeout": 20}
 engine = create_engine(DATABASE_URL, pool_pre_ping=True, pool_recycle=3600, connect_args=_connect_args, **_pool)
+if DATABASE_URL.startswith("mysql"):
+    from sqlalchemy import event
+
+    @event.listens_for(engine, "connect")
+    def _long_idle(dbapi_conn, _record):
+        """XAMPP's MySQL drops a connection after 60 s idle ("MySQL server has gone away"); a save that waits on
+        PARAKH longer than that lost its connection. Each connection of the app asks for the usual 8 hours."""
+        cur = dbapi_conn.cursor()
+        try:
+            cur.execute("SET SESSION wait_timeout = 28800")
+        finally:
+            cur.close()
+
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 

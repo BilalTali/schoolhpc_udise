@@ -900,13 +900,22 @@ def card_values(stage: str, record: Dict[str, Any], student_id: str) -> Dict[str
     from backend.models.entities import School
     udise = str((record.get("sch_info") or {}).get("school_udise") or "").strip()
     session = str((record.get("stu_info") or {}).get("school_cur_ay_code") or record.get("school_cur_ay_code") or "").strip()
-    if not udise or not session:
+    if not session:
         return {}
+    stage_name = stage_code(stage).capitalize()
     with SessionLocal() as db:
-        school = db.query(School).filter_by(udise_code=udise).first()
-    if school is None:
+        # the school whose register has this PARAKH student: PARAKH may list the card under another UDISE code than
+        # the one the school registered with here (a merged or re-coded school), so the code only breaks a tie
+        held = [sid for (sid,) in db.query(RegisterStudent.school_id).filter_by(
+            stage=stage_name, parakh_student_id=str(student_id)).distinct()]
+        if len(held) == 1:
+            school_id = held[0]
+        else:
+            school = db.query(School).filter_by(udise_code=udise).first() if udise else None
+            school_id = school.id if school and (not held or school.id in held) else None
+    if school_id is None:
         return {}
-    return for_cards(school.id, stage_code(stage).capitalize(), session, student_id)
+    return for_cards(school_id, stage_name, session, student_id)
 
 
 from backend.hpc.stages import common as _common   # noqa: E402  (registered when this module is imported)

@@ -251,6 +251,23 @@ def test_parents_names_already_on_parakh_cards_come_in_with_the_fetch(world, mon
         assert (cards["a1_guardian_relation"], cards["a1_guardian_name"]) == want, pid
 
 
+def test_a_save_finds_the_register_when_parakh_lists_the_card_under_another_udise_code(world):
+    """PARAKH's card carries a UDISE code other than the one the school registered with here (seen live: a
+    re-coded school). The save still gets the register's parent and marks - found by the PARAKH student."""
+    client, h, _, school_id = world
+    from backend.models.register import RegisterStudent
+    with SessionLocal() as db:
+        reg = db.query(RegisterStudent).filter_by(school_id=school_id).first()
+        db.add(RegisterStudentData(school_id=school_id, student_id=reg.id, session="2627", father_name="REGISTER FATHER",
+                                   marks={"1": 30}, sources={}))
+        db.commit()
+        pid = reg.parakh_student_id
+    record = {"sch_info": {"school_udise": "09999999999"}, "stu_info": {"school_cur_ay_code": "2627"}}
+    got = register_data.card_values("Preparatory", record, pid)
+    assert got["a1_guardian_name"] == "REGISTER FATHER" and got["d_1_obtained"] == 30
+    assert register_data.card_values("Preparatory", record, "123456789") == {}       # not in any register
+
+
 def test_fetch_parents_says_when_udise_is_not_connected(world, monkeypatch):
     client, h, *_ = world
     from backend.services import udise_sessions
