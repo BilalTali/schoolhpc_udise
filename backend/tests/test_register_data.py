@@ -215,6 +215,42 @@ def test_udise_parents_are_saved_into_the_register_by_themselves_only_where_empt
     assert register_data.fill_from_udise(school_id) == 0                         # a second run changes nothing
 
 
+def test_parents_names_already_on_parakh_cards_come_in_with_the_fetch(world, monkeypatch):
+    """MOCKED PARAKH: two students' A1 was saved on PARAKH (the card moved past A1); the fetch reads that page for
+    them only and keeps the card's name in the register - over a UDISE+ name, never over one the school typed."""
+    client, h, _, school_id = world
+    import json
+    from backend.models.register import RegisterStudent
+    rows = FakeSchoolParakh.make_students()
+    a, b = (str(rows[i]["id"]) for i in range(2))
+    with SessionLocal() as db:
+        reg = {r.parakh_student_id: r for r in db.query(RegisterStudent).filter_by(school_id=school_id)}
+        db.add(RegisterStudentData(school_id=school_id, student_id=reg[a].id, session="2627",
+                                   father_name="UDISE NAME", sources={"father_name": "udise"}))
+        db.add(RegisterStudentData(school_id=school_id, student_id=reg[b].id, session="2627",
+                                   father_name="TYPED NAME", sources={"father_name": "import:x"}))
+        db.commit()
+
+    class Started(FakeSchoolParakh):
+        def student(self, stage, sid, hpc_col=None):
+            sid = str(sid)
+            if hpc_col == "part_a1":
+                self.calls.append(("part_a1", sid))
+                gen = [""] * 26
+                gen[23], gen[24] = ("MOTHER", "SHAHEENA BEGUM") if sid == a else ("FATHER", "CARD FATHER")
+                return {"formdata": json.dumps({"gen": gen})}
+            out = super().student(stage, sid)
+            if sid in (a, b):
+                out["current_part"] = "A2"
+            return out
+    fake = Started()
+    _fetch(school_id, fake)
+    assert sorted(s for k, s in fake.calls if k == "part_a1") == sorted([a, b])     # only the started cards
+    for pid, want in ((a, ("Mother", "SHAHEENA BEGUM")), (b, ("Father", "TYPED NAME"))):
+        cards = register_data.for_cards(school_id, "Preparatory", "2627", pid)
+        assert (cards["a1_guardian_relation"], cards["a1_guardian_name"]) == want, pid
+
+
 def test_fetch_parents_says_when_udise_is_not_connected(world, monkeypatch):
     client, h, *_ = world
     from backend.services import udise_sessions

@@ -177,6 +177,47 @@ def fill_from_udise(school_id: str) -> int:
     return filled
 
 
+def fill_from_parakh(school_id: str, stage: str, names: Dict[str, Tuple[str, str]]) -> int:
+    """Parents' names a teacher already saved on PARAKH's card (Part A1), into the School Register: {PARAKH id:
+    (Father/Mother/Guardian, name)}. They replace an empty box or a name that only came from UDISE+ (the card is
+    what PARAKH shows); a name the school uploaded or typed stays. Returns how many students changed."""
+    if not names:
+        return 0
+    session = session_of(school_id)
+    column_of = {"Father": "father_name", "Mother": "mother_name", "Guardian": "guardian_name"}
+    changed = 0
+    with SessionLocal() as db:
+        regs = {str(r.parakh_student_id): r for r in db.query(RegisterStudent).filter(
+            RegisterStudent.school_id == school_id, RegisterStudent.stage == stage,
+            RegisterStudent.parakh_student_id.in_([str(k) for k in names]))}
+        for pid, (relation, name) in names.items():
+            reg = regs.get(str(pid))
+            name = " ".join(str(name or "").split())
+            if reg is None or relation not in column_of or not name or len(name) > NAME_MAX or not NAME_RULE.match(name):
+                continue
+            d = db.query(RegisterStudentData).filter_by(student_id=reg.id, session=session).first()
+            if d is None:
+                d = RegisterStudentData(school_id=school_id, student_id=reg.id, session=session, sources={})
+                db.add(d)
+            sources = dict(d.sources or {})
+            shown_col = column_of.get(d.guardian_relation or "Father", "father_name")
+            shown = getattr(d, shown_col)
+            if shown and sources.get(shown_col) not in (None, "udise", "parakh"):
+                continue                                   # the school's own entry stays
+            column = column_of[relation]
+            if getattr(d, column) == name and (d.guardian_relation or "Father") == relation:
+                continue
+            if getattr(d, column) and sources.get(column) not in (None, "udise", "parakh"):
+                continue
+            setattr(d, column, name)
+            d.guardian_relation = relation
+            sources.update({column: "parakh", "guardian_relation": "parakh"})
+            d.sources = sources
+            changed += 1
+        db.commit()
+    return changed
+
+
 def fill_from_udise_quietly(school_id: str) -> int:
     """fill_from_udise for the automatic runs: a problem there never stops the fetch that called it."""
     try:

@@ -95,6 +95,11 @@ def _run(school_id: str, client: Portal, stages: List[str]) -> None:
             with ThreadPoolExecutor(max_workers=4) as pool:
                 records = list(pool.map(record, rows))
             counts[stage] = upsert(school_id, stage, rows, records, lookups)
+            names = card_parents(client, stage, rows, records)
+            if names:
+                _set(school_id, step=f"{stage}: parents' names already on {len(names)} PARAKH cards")
+                from backend.services import register_data
+                register_data.fill_from_parakh(school_id, stage, names)
             with _lock:
                 JOBS[school_id]["stages"][stage] = counts[stage]
         _set(school_id, step="Reading PARAKH's teachers and their classes")
@@ -107,6 +112,46 @@ def _run(school_id: str, client: Portal, stages: List[str]) -> None:
                      {"stages": counts, "teachers": teachers, "parents_from_udise": parents})
     except Exception as exc:                          # the session ended, PARAKH down ...
         _set(school_id, status="FAILED", error=str(exc), finished_at=_now())
+
+
+def card_parents(client: Portal, stage: str, rows: List[Dict[str, Any]], records: List[Dict[str, Any]]) -> Dict[str, Tuple[str, str]]:
+    """PARAKH id -> (Father/Mother/Guardian, name) for the students whose Part A1 a teacher already saved on PARAKH
+    (the card has moved past A1): that page is read once per such student. Students not started cost nothing."""
+    started = []
+    for row, record in zip(rows, records):
+        sid = str(row.get("id") or (record or {}).get("hpc_id") or "").strip()
+        part = str((record or {}).get("current_part") or row.get("current_part") or "").strip().lower()
+        if sid and part and part != "a1":
+            started.append(sid)
+    if not started:
+        return {}
+
+    def a1(sid):
+        try:
+            data = client.student(stage, sid, "part_a1")
+        except PortalError:
+            return sid, None
+        return sid, guardian_on_card(data.get("formdata"))
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        found = list(pool.map(a1, started))
+    return {sid: v for sid, v in found if v}
+
+
+def guardian_on_card(formdata: Any) -> Optional[Tuple[str, str]]:
+    """(Father/Mother/Guardian, name) from a Part A1 as PARAKH keeps it, or None when the name is empty."""
+    import json
+    if isinstance(formdata, str):
+        try:
+            formdata = json.loads(formdata) if formdata.strip() else {}
+        except ValueError:
+            return None
+    gen = list((formdata or {}).get("gen") or []) if isinstance(formdata, dict) else []
+    gen += [""] * (26 - len(gen))
+    name = " ".join(str(gen[24] or "").split())
+    if not name:
+        return None
+    relation = str(gen[23] or "").strip().title()
+    return (relation if relation in ("Father", "Mother", "Guardian") else "Father"), name
 
 
 def school_list(client: Portal, stage: str) -> Tuple[List[Dict[str, Any]], str]:
