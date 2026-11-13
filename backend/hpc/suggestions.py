@@ -192,6 +192,17 @@ MULTI_MIX = {
 }
 
 
+# A ticked "any other" option needs its own words, or PARAKH refuses the save: list key -> (the option, its text
+# box, short neutral phrases). Mix writes one only where the option IS ticked and the box is empty (it never ticks
+# the option itself).
+OTHER_TEXT = {
+    "a4_support": ("Any other", "a4_support_other",                                                   # Middle
+                   ["Regular revision", "Reading practice", "Handwriting", "Speaking confidence", "General knowledge"]),
+    "a3_support": ("Other subject area", "a3_support_other",                                          # Preparatory
+                   ["Drawing", "Handwriting", "General awareness", "Speaking English", "Reading aloud"]),
+}
+
+
 # Preparatory's hand drawing (A7): one finger each, 13-24 characters. Facts about the child: offered, never mixed.
 BY_LABEL: Dict[str, List[str]] = {
     "Things about me: I am good at": ["Drawing", "Running", "Reading", "Counting", "Singing", "Cricket"],

@@ -374,3 +374,25 @@ def test_mix_with_replace_never_overwrites_a_mother_tongue_that_is_there(teacher
                 json={"fields": ["a1_mother_tongue"], "replace": True, "apply": True})
     row = client.get(f"{API}/teacher/hpc-cards/Preparatory/bulk", params={"field": "a1_mother_tongue"}).json()["rows"][0]
     assert row["value"] == "Urdu"
+
+
+def test_mix_writes_words_for_a_ticked_other_option_and_never_ticks_it(teacher_client):
+    """A ticked 'Other subject area' (Middle: 'Any other') with an empty box makes PARAKH refuse the save: Mix
+    writes a short phrase there - only where it is ticked and empty; typed words stay."""
+    client, _ = teacher_client
+    from backend.hpc.suggestions import OTHER_TEXT
+    draft = f"{API}/teacher/hpc-cards/Preparatory/1001/draft"
+    mix = f"{API}/teacher/hpc-cards/Preparatory/bulk-mix"
+    assert client.put(draft, json={"values": {"a3_support": ["Numbers and Math", "Other subject area"]}}).status_code == 200
+    done = client.post(mix, json={"fields": ["a3_support"], "apply": True}).json()
+    assert done["cells"] == 1                                    # the box only: the list was already answered
+    card = f"{API}/teacher/hpc-cards/Preparatory/1001"
+
+    def answers():
+        return {f["key"]: f["value"] for p in client.get(card).json()["parts"] for f in p["fields"]}
+    values = answers()
+    assert values["a3_support_other"] in OTHER_TEXT["a3_support"][2]
+    assert values["a3_support"] == ["Numbers and Math", "Other subject area"]
+    client.put(draft, json={"values": {"a3_support_other": "Clay modelling"}})
+    assert client.post(mix, json={"fields": ["a3_support"], "apply": True}).json()["cells"] == 0
+    assert answers()["a3_support_other"] == "Clay modelling"

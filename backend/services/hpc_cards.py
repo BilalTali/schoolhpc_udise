@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from backend.hpc import sync
 from backend.hpc.fields import STUDENT_DEFAULTS, Field
 from backend.hpc import checks, notes
-from backend.hpc.suggestions import FILL_ONLY, has_suggestions, mixable, multi_mix, record_kind, suggestions_for
+from backend.hpc.suggestions import FILL_ONLY, OTHER_TEXT, has_suggestions, mixable, multi_mix, record_kind, suggestions_for
 from backend.hpc.portal import Portal, stage_code
 from backend.hpc.stages import activity_grid, get_stage
 from backend.hpc.stages.common import Lookups
@@ -563,6 +563,8 @@ def bulk_mix(client: Portal, owner: str, teacher_id: str, session: str, stage: s
                     _dob_seen[(owner, session, stage, sid)] = dob
 
     parts_by_col = {part_of[k].col: part_of[k] for k in mixed}
+    other_fields = {f.key: f for k, (_, text_key, _) in OTHER_TEXT.items() if k in mixed
+                    for f in part_of[k].fields(lookups) if f.key == text_key}
     no_levels: Dict[str, List[str]] = {}                  # Part C notes left blank: the subject has no levels yet
     changes: Dict[str, Dict[str, Any]] = {}
     filled = {k: 0 for k in mixed}
@@ -591,6 +593,22 @@ def bulk_mix(client: Portal, owner: str, teacher_id: str, session: str, stage: s
             changes.setdefault(s["student_id"], {})[key] = value
             taken.append(value if isinstance(value, str) else "")
             filled[key] += 1
+        for key, (option, text_key, phrases) in OTHER_TEXT.items():   # a ticked "any other" gets its words
+            text_field = other_fields.get(text_key)
+            if key not in mixed or text_field is None:
+                continue
+            col = part_of[key].col
+            now = {**draft, **changes.get(s["student_id"], {})}
+            ticked = now[key] if key in now else to_api_value(index[key], index[key].read(loaded[col]))
+            if option not in to_api_value(index[key], ticked):
+                continue
+            words = now[text_key] if text_key in now else text_field.read(loaded[col])
+            if not _blank(words):
+                continue
+            limit = text_field.max_len
+            changes.setdefault(s["student_id"], {})[text_key] = rng.choice(
+                [p for p in phrases if not limit or len(p) <= limit] or phrases)
+            filled[text_key] = filled.get(text_key, 0) + 1
     if apply:
         for sid, values in changes.items():
             save_draft(teacher_id, session, stage, sid, values)
