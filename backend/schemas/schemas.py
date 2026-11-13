@@ -46,6 +46,7 @@ class SchoolResponse(BaseModel):
     admin_email: str
     admin_phone: Optional[str]
     created_at: datetime
+    approval: Optional[str] = None          # PENDING: the app admin must approve before the school can sign in
 
     model_config = ConfigDict(from_attributes=True)
 

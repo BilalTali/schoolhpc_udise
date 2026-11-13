@@ -377,6 +377,7 @@ h1, h2, h3, h4 { font-family: var(--font-heading); letter-spacing: -0.02em; }
   display: flex; flex-direction: column; gap: 0.2rem; }
 .pa-tile b { font-size: 1.6rem; }
 .pa-actions { display: flex; flex-wrap: wrap; gap: 0.2rem 0.8rem; }
+.pa-waiting { border: 2px solid var(--warning, #d97706); border-radius: 10px; padding: 0.8rem 1rem; margin-bottom: 1.2rem; background: color-mix(in srgb, var(--warning, #d97706) 7%, transparent); }
 .pa-sub > td { background: var(--brand-50, #fff7f2); }
 
 /* ─── School home: one card per area of work (HPC, UDISE+) ─────────────── */

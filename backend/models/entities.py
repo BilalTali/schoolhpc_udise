@@ -32,6 +32,9 @@ class School(Base):
     hpc_login_id = Column(String(100), nullable=True)
     hpc_password_encrypted = Column(String(255), nullable=True)
     is_active = Column(Boolean, default=True)
+    # PENDING: registered itself, waiting for the app admin; REJECTED: not approved; empty or APPROVED: approved
+    # (every school registered before approvals began)
+    approval = Column(String(20), nullable=True)
     # sign-in tokens carry this number; logging out with the old Bearer token or changing the password moves
     # it on, which ends every token issued before (M-2)
     token_epoch = Column(Integer, nullable=True, default=0)

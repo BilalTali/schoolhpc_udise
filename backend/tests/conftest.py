@@ -13,6 +13,7 @@ import pytest
 # Set before backend.config loads .env (which only fills in what is not set already).
 _SCRATCH = Path(tempfile.mkdtemp(prefix="teacherassist-tests-"))
 os.environ["HPC_DATABASE_URL"] = "sqlite:///" + str(_SCRATCH / "test.db")
+os.environ["HPC_SCHOOL_APPROVAL"] = "false"     # tests sign schools in right after registering
 os.environ["HPC_DATA_DIR"] = str(_SCRATCH / "data")
 os.environ["HPC_BACKUP_DIR"] = str(_SCRATCH / "backups")
 os.environ["HPC_BACKUP_KEY_FILE"] = str(_SCRATCH / "keys" / "backup.key")

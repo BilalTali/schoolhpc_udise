@@ -11,11 +11,12 @@ import type { Subject } from "./types";
 // activities offered to every school, and the audit trail. No students' records and no PARAKH passwords here.
 
 interface Stats {
-  schools: number; schools_active: number; teachers: number; teachers_active: number; uploads: number;
+  schools: number; schools_active: number; schools_pending?: number; teachers: number; teachers_active: number; uploads: number;
   cards_saved: number; cards_failed: number; last_upload_at: string | null; activities_waiting: number; activities_offered: number;
 }
 interface SchoolRow {
   id: string; udise_code: string; school_name: string; district: string; state: string; admin_email: string; is_active: boolean;
+  approval?: "PENDING" | "APPROVED" | "REJECTED"; admin_name?: string; block?: string | null; registered_at?: string | null;
   teachers: number; teachers_active: number; cards_saved: number; cards_failed: number; last_upload_at: string | null;
 }
 interface TeacherRow {
@@ -75,7 +76,7 @@ function Overview({ api, onError }: { api: Api; onError: (t: string) => void }) 
   useEffect(() => { call<Stats>(api, "GET", "/platform/stats").then(setS).catch((e) => onError(e.message)); }, [api]); // eslint-disable-line react-hooks/exhaustive-deps
   if (!s) return <p className="lib-muted">Loading…</p>;
   const tiles: [string, string | number, string][] = [
-    ["Schools", s.schools, `${s.schools_active} switched on`],
+    ["Schools", s.schools, `${s.schools_active} switched on${s.schools_pending ? ` · ${s.schools_pending} waiting for approval` : ""}`],
     ["Teachers", s.teachers, `${s.teachers_active} switched on`],
     ["Cards saved to PARAKH", s.cards_saved, `${s.cards_failed} not saved`],
     ["Uploads", s.uploads, s.last_upload_at ? `last ${formatWhen(s.last_upload_at)}` : "none yet"],
@@ -113,15 +114,49 @@ function Schools({ api, say }: { api: Api; say: (t: string, type?: "success" | "
       if (schoolId) loadTeachers(schoolId);
     } catch (e: any) { say(e.message, "error"); }
   };
+  const decide = async (s: SchoolRow, how: "approve" | "reject") => {
+    if (how === "reject" && !window.confirm(`Reject ${s.school_name} (${s.udise_code})? It cannot sign in. You can still approve it later.`)) return;
+    try {
+      await call(api, "POST", `/platform/schools/${s.id}/${how}`, {});
+      say(how === "approve" ? `${s.school_name} is approved: its admin can sign in now.` : `${s.school_name} is not approved.`);
+      load();
+    } catch (e: any) { say(e.message, "error"); }
+  };
   if (!rows) return <p className="lib-muted">Loading…</p>;
+  const waiting = rows.filter((s) => s.approval === "PENDING");
+  const others = rows.filter((s) => s.approval !== "PENDING");
   return (
     <section className="ui-panel">
+      {waiting.length > 0 && (
+        <div className="pa-waiting" role="region" aria-label="Schools waiting for approval">
+          <h3 className="lib-section-title">Waiting for your approval ({waiting.length})</h3>
+          <p className="lib-muted">These schools registered themselves. They cannot sign in until you approve them. Check the
+            UDISE code and the admin's name before approving.</p>
+          <table className="data-table">
+            <caption className="sr-only">Schools waiting for approval</caption>
+            <thead><tr><th scope="col">School</th><th scope="col">UDISE</th><th scope="col">Admin</th>
+              <th scope="col">Registered</th><th scope="col">Decision</th></tr></thead>
+            <tbody>{waiting.map((s) => (
+              <tr key={s.id}>
+                <th scope="row"><b>{s.school_name}</b><br /><small className="lib-muted">{[s.block, s.district, s.state].filter(Boolean).join(", ")}</small></th>
+                <td>{s.udise_code}</td>
+                <td>{s.admin_name}<br /><small className="lib-muted">{s.admin_email}</small></td>
+                <td>{s.registered_at ? formatWhen(s.registered_at) : "—"}</td>
+                <td className="pa-actions">
+                  <button type="button" className="btn btn-primary btn-sm" onClick={() => decide(s, "approve")}>
+                    <CheckCircle2 size={14} aria-hidden="true" /> Approve</button>
+                  <button type="button" className="btn btn-outline btn-sm" onClick={() => decide(s, "reject")}>Reject</button>
+                </td>
+              </tr>))}
+            </tbody>
+          </table>
+        </div>)}
       <table className="data-table">
         <caption className="sr-only">Every school</caption>
         <thead><tr><th scope="col">School</th><th scope="col">UDISE · admin email</th><th scope="col">Teachers</th>
           <th scope="col">Cards saved</th><th scope="col">Last upload</th><th scope="col">Status</th><th scope="col">Actions</th></tr></thead>
         <tbody>
-          {rows.map((s) => (
+          {others.map((s) => (
             <SchoolLine key={s.id} s={s} open={open === s.id} teachers={teachers[s.id]}
                         onOpen={() => { setOpen(open === s.id ? null : s.id); if (open !== s.id) loadTeachers(s.id); }}
                         onToggle={() => toggle("schools", s.id, !s.is_active, s.school_name)}
@@ -150,7 +185,8 @@ function SchoolLine({ s, open, teachers, onOpen, onToggle, onPassword, onTeacher
         <td>{s.teachers_active} of {s.teachers}</td>
         <td>{s.cards_saved}{s.cards_failed ? <small className="lib-muted"> · {s.cards_failed} not saved</small> : null}</td>
         <td>{s.last_upload_at ? formatWhen(s.last_upload_at) : "—"}</td>
-        <td><span className={`lib-badge ${s.is_active ? "lib-badge-ok" : "lib-badge-warn"}`}>{s.is_active ? "On" : "Off"}</span></td>
+        <td><span className={`lib-badge ${s.is_active ? "lib-badge-ok" : "lib-badge-warn"}`}>
+          {s.approval === "REJECTED" ? "Not approved" : s.is_active ? "On" : "Off"}</span></td>
         <td className="pa-actions">
           <button type="button" className="portal-link-btn" aria-expanded={open} onClick={onOpen}>{open ? "Hide teachers" : "Teachers"}</button>
           <button type="button" className="portal-link-btn" onClick={onPassword}><KeyRound size={13} aria-hidden="true" /> New password</button>

@@ -13,6 +13,7 @@ from backend.models.entities import PlatformAdmin, School, Teacher
 from backend.schemas.schemas import (
     SchoolRegisterRequest, SchoolResponse, LoginRequest, TokenResponse
 )
+from backend.config import SCHOOL_APPROVAL
 from backend.services import login_limits
 from backend.services.auth_service import (
     bearer_enabled, create_access_token, end_session, get_current_user, hash_password, issue_session, rotate_session,
@@ -57,7 +58,8 @@ def register_school(payload: SchoolRegisterRequest, db: Session = Depends(get_db
         admin_email=payload.admin_email.strip().lower(),
         admin_phone=payload.admin_phone.strip() if payload.admin_phone else None,
         hashed_password=hash_password(payload.password),
-        is_active=True
+        is_active=not SCHOOL_APPROVAL,                  # waits for the app admin's approval
+        approval="PENDING" if SCHOOL_APPROVAL else "APPROVED",
     )
     db.add(new_school)
     db.commit()
@@ -120,6 +122,12 @@ def login(payload: LoginRequest, request: Request, response: Response, db: Sessi
     ).first()
 
     if school and verify_password(payload.password, school.hashed_password):
+        if school.approval == "PENDING":
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Your school's registration is waiting for approval by the "
+                                "app admin. You can sign in as soon as it is approved.")
+        if school.approval == "REJECTED":
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Your school's registration was not approved. Contact the "
+                                "app admin.")
         if not school.is_active:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="School account is disabled.")
         login_limits.succeeded(identifier)

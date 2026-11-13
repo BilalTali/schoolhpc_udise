@@ -46,7 +46,9 @@ def stats(admin: PlatformAdmin = Depends(require_app_admin), db: Session = Depen
     """Totals across every school."""
     by_status = dict(db.query(StudentRecord.status, func.count()).group_by(StudentRecord.status).all())
     return {
-        "schools": db.query(School).count(), "schools_active": db.query(School).filter(School.is_active == True).count(),  # noqa: E712
+        "schools": db.query(School).count(),
+        "schools_pending": db.query(School).filter(School.approval == "PENDING").count(),
+        "schools_active": db.query(School).filter(School.is_active == True).count(),  # noqa: E712
         "teachers": db.query(Teacher).count(), "teachers_active": db.query(Teacher).filter(Teacher.is_active == True).count(),  # noqa: E712
         "uploads": db.query(UploadJob).count(),
         "cards_saved": by_status.get("SUCCESS", 0), "cards_failed": by_status.get("FAILED", 0) + by_status.get("INVALID", 0),
@@ -104,6 +106,7 @@ def schools(admin: PlatformAdmin = Depends(require_app_admin), db: Session = Dep
         lasts = [counts[t.id][2] for t in mine if counts[t.id][2]]
         out.append({"id": s.id, "udise_code": s.udise_code, "school_name": s.school_name, "district": s.district,
                     "state": s.state, "admin_email": s.admin_email, "is_active": bool(s.is_active),
+                    "approval": s.approval or "APPROVED", "admin_name": s.admin_name, "block": s.block,
                     "teachers": len(mine), "teachers_active": sum(1 for t in mine if t.is_active),
                     "cards_saved": sum(counts[t.id][0] for t in mine), "cards_failed": sum(counts[t.id][1] for t in mine),
                     "last_upload_at": _iso(max(lasts)) if lasts else None, "registered_at": _iso(s.created_at)})
@@ -121,12 +124,35 @@ def school_teachers(school_id: str, admin: PlatformAdmin = Depends(require_app_a
             for t in mine]
 
 
+@router.post("/schools/{school_id}/approve")
+def approve_school(school_id: str, admin: PlatformAdmin = Depends(require_app_admin), db: Session = Depends(get_db)):
+    """A school that registered itself may sign in from now on."""
+    school = _school_or_404(db, school_id)
+    school.approval, school.is_active = "APPROVED", True
+    db.commit()
+    _record(admin, "approve_school", "school", school.id, school_id=school.id)
+    return {"id": school.id, "approval": school.approval, "is_active": True}
+
+
+@router.post("/schools/{school_id}/reject")
+def reject_school(school_id: str, admin: PlatformAdmin = Depends(require_app_admin), db: Session = Depends(get_db)):
+    """Not approved: it cannot sign in (it can be approved later). Its UDISE code stays taken until it is."""
+    school = _school_or_404(db, school_id)
+    school.approval, school.is_active = "REJECTED", False
+    end_all_sessions(db, school)
+    db.commit()
+    _record(admin, "reject_school", "school", school.id, school_id=school.id)
+    return {"id": school.id, "approval": school.approval, "is_active": False}
+
+
 @router.put("/schools/{school_id}")
 def set_school_active(school_id: str, payload: ActiveRequest, admin: PlatformAdmin = Depends(require_app_admin),
                       db: Session = Depends(get_db)):
     """Switching a school off signs out its admin and every teacher of it."""
     school = _school_or_404(db, school_id)
     school.is_active = payload.is_active
+    if payload.is_active and school.approval in ("PENDING", "REJECTED"):
+        school.approval = "APPROVED"                    # switching a waiting school on approves it
     if not payload.is_active:
         end_all_sessions(db, school)
         for t in db.query(Teacher).filter(Teacher.school_id == school.id).all():

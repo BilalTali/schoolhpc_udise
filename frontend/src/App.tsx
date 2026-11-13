@@ -1316,7 +1316,9 @@ export default function App() {
       });
       const data = await res.json();
       if (res.ok) {
-        setStatusMsg({ type: "success", text: `School '${data.school_name}' registered! Please log in.` });
+        setStatusMsg({ type: "success", text: data.approval === "PENDING"
+          ? `School '${data.school_name}' is registered and waiting for approval by the app admin. You can sign in as soon as it is approved.`
+          : `School '${data.school_name}' registered! Please log in.` });
         setAuthTab("admin_login");
         setAdminIdentifier(regUdise.trim());
       } else {

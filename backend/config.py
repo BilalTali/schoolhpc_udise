@@ -75,6 +75,9 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24              # legacy Bearer token in the 
 BEARER_LAST_DAY = date.fromisoformat(os.getenv("HPC_BEARER_LAST_DAY", "2026-11-01"))
 ACCESS_COOKIE_MINUTES = 15                        # cookie session: short access token...
 REFRESH_DAYS_DEFAULT, REFRESH_DAYS_REMEMBER = 1, 30   # ...renewed by a refresh token
+# A school that registers itself waits until the app admin approves it (it cannot sign in before). Only tests
+# switch this off.
+SCHOOL_APPROVAL = os.getenv("HPC_SCHOOL_APPROVAL", "true").lower() != "false"
 COOKIE_SECURE = os.getenv("HPC_COOKIE_SECURE", "false").lower() == "true"   # set true behind HTTPS
 
 # PARAKH login captcha. By default the teacher types it (the app shows PARAKH's picture).
