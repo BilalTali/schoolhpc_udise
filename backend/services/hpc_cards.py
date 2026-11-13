@@ -515,7 +515,11 @@ def bulk_mix(client: Portal, owner: str, teacher_id: str, session: str, stage: s
             except ValueError:
                 return ""
             today = datetime.now(timezone.utc).date()
-            return str(today.year - born.year - ((today.month, today.day) < (born.month, born.day)))
+            age = today.year - born.year - ((today.month, today.day) < (born.month, born.day))
+            if not 2 <= age <= 20:                       # a wrong date of birth on PARAKH (seen: 1016 for 2016)
+                bad_dob.append(f"{s.get('student_name') or s['student_id']} ({dob[:10]})")
+                return ""
+            return str(age)
         if kind == "friend":
             mine = name.split()[0] if name else ""
             pool = [n for n in classmates.get((s.get("grade"), s.get("section")), []) if n != mine and n not in taken]
@@ -565,6 +569,7 @@ def bulk_mix(client: Portal, owner: str, teacher_id: str, session: str, stage: s
     parts_by_col = {part_of[k].col: part_of[k] for k in mixed}
     other_fields = {f.key: f for k, (_, text_key, _) in OTHER_TEXT.items() if k in mixed
                     for f in part_of[k].fields(lookups) if f.key == text_key}
+    bad_dob: List[str] = []                               # ages left blank: the date of birth cannot be right
     no_levels: Dict[str, List[str]] = {}                  # Part C notes left blank: the subject has no levels yet
     changes: Dict[str, Dict[str, Any]] = {}
     filled = {k: 0 for k in mixed}
@@ -612,6 +617,11 @@ def bulk_mix(client: Portal, owner: str, teacher_id: str, session: str, stage: s
     if apply:
         for sid, values in changes.items():
             save_draft(teacher_id, session, stage, sid, values)
+    if bad_dob:
+        age_key = next(k for k, (f, _, _) in mixed.items() if record_kind(f.label) == "age")
+        skipped.append({"key": age_key, "label": mixed[age_key][0].label,
+                        "reason": f"left blank: the date of birth on PARAKH cannot be right for {', '.join(bad_dob[:5])}"
+                                  f"{' ...' if len(bad_dob) > 5 else ''} - type the age, and correct the date on PARAKH/UDISE+"})
     for key, names in no_levels.items():                  # reported, never filled with a stock sentence
         skipped.append({"key": key, "label": mixed[key][0].label,
                         "reason": f"left blank for {len(names)} student(s) without all three levels for this subject"

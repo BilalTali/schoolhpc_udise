@@ -396,3 +396,19 @@ def test_mix_writes_words_for_a_ticked_other_option_and_never_ticks_it(teacher_c
     client.put(draft, json={"values": {"a3_support_other": "Clay modelling"}})
     assert client.post(mix, json={"fields": ["a3_support"], "apply": True}).json()["cells"] == 0
     assert answers()["a3_support_other"] == "Clay modelling"
+
+
+def test_mix_leaves_the_age_blank_when_the_date_of_birth_cannot_be_right(teacher_client):
+    """Seen live: PARAKH had 1016-01-02 for 2016-01-02 and Mix wrote the age 1010 (PARAKH allows 2 characters)."""
+    import json
+    client, portal = teacher_client
+    card = portal.students[("PREPARATORY", "1001")]
+    card["record"].setdefault("stu_info", {})["dob"] = "1016-01-02"
+    a1 = card["parts"].get("part_a1")
+    a1 = json.loads(a1) if isinstance(a1, str) and a1.strip() else (a1 or {})
+    gen = (list(a1.get("gen") or []) + [""] * 26)[:26]
+    gen[4] = "1016-01-02"
+    card["parts"]["part_a1"] = json.dumps({**a1, "gen": gen})
+    done = client.post(f"{API}/teacher/hpc-cards/Preparatory/bulk-mix", json={"fields": ["a2_age"], "apply": True}).json()
+    assert done["cells"] == 0
+    assert "date of birth on PARAKH cannot be right" in next(s["reason"] for s in done["skipped"] if s["key"] == "a2_age")
