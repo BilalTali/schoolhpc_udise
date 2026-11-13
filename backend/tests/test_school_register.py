@@ -47,7 +47,8 @@ class FakeSchoolParakh:
 
     def student(self, stage, sid, hpc_col=None):
         self.calls.append(("student", sid))
-        return {"hpc_id": str(sid), "stu_info": {"dob": "2016-05-01", "gender": "FEMALE", "school_admission_number": f"A{sid}"}}
+        return {"hpc_id": str(sid), "sch_info": {"school_udise": "01010101010"},
+                "stu_info": {"dob": "2016-05-01", "gender": "FEMALE", "school_admission_number": f"A{sid}"}}
 
     def school_teachers(self):
         # as PARAKH sends them (live, 2026-11-01): staff_fname/lname, ct 1 = class teacher, ct 0 = subject teacher only

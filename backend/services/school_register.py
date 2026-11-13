@@ -19,7 +19,7 @@ from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 from backend.database import SessionLocal
 from backend.hpc.portal import Portal, PortalError, stage_code
 from backend.hpc.stages.common import Lookups
-from backend.models.entities import Teacher
+from backend.models.entities import School, Teacher
 from backend.models.register import RegisterStudent, RegisterTeacherClass
 
 STAGES = ["Foundational", "Preparatory", "Middle"]
@@ -73,6 +73,8 @@ def _run(school_id: str, client: Portal, stages: List[str]) -> None:
     from backend.services import audit
     try:
         counts = {}
+        from collections import Counter
+        seen_udise: Counter = Counter()
         for stage in stages:
             _set(school_id, step=f"{stage}: reading PARAKH's list")
             rows, note = school_list(client, stage)
@@ -95,6 +97,7 @@ def _run(school_id: str, client: Portal, stages: List[str]) -> None:
             with ThreadPoolExecutor(max_workers=4) as pool:
                 records = list(pool.map(record, rows))
             counts[stage] = upsert(school_id, stage, rows, records, lookups)
+            seen_udise.update(str((r or {}).get("sch_info", {}).get("school_udise") or "").strip() for r in records)
             names = card_parents(client, stage, rows, records)
             if names:
                 _set(school_id, step=f"{stage}: parents' names already on {len(names)} PARAKH cards")
@@ -102,6 +105,7 @@ def _run(school_id: str, client: Portal, stages: List[str]) -> None:
                 register_data.fill_from_parakh(school_id, stage, names)
             with _lock:
                 JOBS[school_id]["stages"][stage] = counts[stage]
+        _keep_parakh_udise(school_id, seen_udise)
         _set(school_id, step="Reading PARAKH's teachers and their classes")
         teachers = fetch_teacher_classes(school_id, client)
         _set(school_id, step="Filling parents' names from UDISE+")
@@ -112,6 +116,19 @@ def _run(school_id: str, client: Portal, stages: List[str]) -> None:
                      {"stages": counts, "teachers": teachers, "parents_from_udise": parents})
     except Exception as exc:                          # the session ended, PARAKH down ...
         _set(school_id, status="FAILED", error=str(exc), finished_at=_now())
+
+
+def _keep_parakh_udise(school_id: str, seen) -> None:
+    """Remembers the UDISE code PARAKH files this school's cards under (the most common one on its cards)."""
+    seen.pop("", None)
+    if not seen:
+        return
+    code = seen.most_common(1)[0][0][:11]
+    with SessionLocal() as db:
+        school = db.get(School, school_id)
+        if school is not None and school.parakh_udise != code:
+            school.parakh_udise = code
+            db.commit()
 
 
 def card_parents(client: Portal, stage: str, rows: List[Dict[str, Any]], records: List[Dict[str, Any]]) -> Dict[str, Tuple[str, str]]:

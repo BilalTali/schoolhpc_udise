@@ -35,6 +35,9 @@ class School(Base):
     # PENDING: registered itself, waiting for the app admin; REJECTED: not approved; empty or APPROVED: approved
     # (every school registered before approvals began)
     approval = Column(String(20), nullable=True)
+    # the UDISE code PARAKH files this school's cards under (seen on the cards when the school fetches its students);
+    # it can differ from udise_code (a merged or re-coded school)
+    parakh_udise = Column(String(11), nullable=True)
     # sign-in tokens carry this number; logging out with the old Bearer token or changing the password moves
     # it on, which ends every token issued before (M-2)
     token_epoch = Column(Integer, nullable=True, default=0)

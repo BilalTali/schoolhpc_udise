@@ -903,16 +903,20 @@ def card_values(stage: str, record: Dict[str, Any], student_id: str) -> Dict[str
     if not session:
         return {}
     stage_name = stage_code(stage).capitalize()
+    from sqlalchemy import or_
     with SessionLocal() as db:
-        # the school whose register has this PARAKH student: PARAKH may list the card under another UDISE code than
-        # the one the school registered with here (a merged or re-coded school), so the code only breaks a tie
+        # 1. the school PARAKH files this card under: its own UDISE code, or the code seen on its cards when it
+        #    fetched its students (a merged or re-coded school) - never another school's register
+        by_code = [s.id for s in db.query(School).filter(or_(School.parakh_udise == udise, School.udise_code == udise))] \
+            if udise else []
         held = [sid for (sid,) in db.query(RegisterStudent.school_id).filter_by(
             stage=stage_name, parakh_student_id=str(student_id)).distinct()]
-        if len(held) == 1:
-            school_id = held[0]
+        if by_code:
+            school_id = next((s for s in by_code if s in held), by_code[0])
+        elif len(held) == 1:
+            school_id = held[0]          # 2. no school has that code yet (fetched before codes were kept): the one register
         else:
-            school = db.query(School).filter_by(udise_code=udise).first() if udise else None
-            school_id = school.id if school and (not held or school.id in held) else None
+            school_id = None
     if school_id is None:
         return {}
     return for_cards(school_id, stage_name, session, student_id)

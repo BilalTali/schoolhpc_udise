@@ -268,6 +268,48 @@ def test_a_save_finds_the_register_when_parakh_lists_the_card_under_another_udis
     assert register_data.card_values("Preparatory", record, "123456789") == {}       # not in any register
 
 
+def test_a_save_never_takes_another_schools_register_values(world):
+    """Two schools' registers hold the same PARAKH student (a transfer): the card's UDISE code - the school's own, or
+    the one PARAKH files its cards under (kept at the fetch) - decides; never the other school's values."""
+    client, h, other_h, school_id = world
+    from backend.models.entities import School
+    from backend.models.register import RegisterStudent
+    with SessionLocal() as db:
+        reg = db.query(RegisterStudent).filter_by(school_id=school_id).first()
+        other = db.query(School).filter_by(udise_code="44444444402").one()
+        db.query(RegisterStudent).filter_by(school_id=other.id).delete()
+        twin = RegisterStudent(school_id=other.id, stage=reg.stage, parakh_student_id=reg.parakh_student_id,
+                               student_name=reg.student_name)
+        db.add(twin)
+        db.flush()
+        db.add(RegisterStudentData(school_id=school_id, student_id=reg.id, session="2627", father_name="MINE", sources={}))
+        db.add(RegisterStudentData(school_id=other.id, student_id=twin.id, session="2627", father_name="THEIRS", sources={}))
+        other.parakh_udise = "09999999999"                      # PARAKH files the other school's cards under this code
+        db.commit()
+        pid, mine_udise = reg.parakh_student_id, db.get(School, school_id).udise_code
+    try:
+        def name(udise):
+            record = {"sch_info": {"school_udise": udise}, "stu_info": {"school_cur_ay_code": "2627"}}
+            return register_data.card_values("Preparatory", record, pid).get("a1_guardian_name")
+        assert name(mine_udise) == "MINE"
+        assert name("09999999999") == "THEIRS"
+        assert name("01234567890") is None                      # no school has that code and two registers hold him
+    finally:
+        with SessionLocal() as db:
+            other = db.query(School).filter_by(udise_code="44444444402").one()
+            db.query(RegisterStudentData).filter_by(school_id=other.id).delete()
+            db.query(RegisterStudent).filter_by(school_id=other.id).delete()
+            other.parakh_udise = None
+            db.commit()
+
+
+def test_the_fetch_keeps_the_udise_code_parakh_files_the_schools_cards_under(world):
+    _, _, _, school_id = world
+    from backend.models.entities import School
+    with SessionLocal() as db:
+        assert db.get(School, school_id).parakh_udise == "01010101010"          # from the cards read at the fetch
+
+
 def test_fetch_parents_says_when_udise_is_not_connected(world, monkeypatch):
     client, h, *_ = world
     from backend.services import udise_sessions
