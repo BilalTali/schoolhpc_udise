@@ -117,6 +117,21 @@ def _register_changed_since(teacher: Teacher, job) -> bool:
     return bool(changed and changed > finished)
 
 
+def live_check(teacher: Teacher, stage: str) -> None:
+    """After a restart only the check's results are kept: a save or download needs the cards too, so the class is
+    checked again first (from the cards the app keeps - seconds)."""
+    job = class_template.latest(teacher.id, stage)
+    if not job or not job.get("restored"):
+        return
+    students = _students(teacher, stage)
+    client = _portal(teacher)
+    try:
+        lookups = hpc_cards.lookups_for(f"teacher_{teacher.id}", client, stage)
+    except PortalError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc))
+    class_template.run_now(client, teacher, stage, students, hpc_cards._resolver(teacher.id, stage, lookups), lookups)
+
+
 def _labels(teacher: Teacher, stage: str) -> Dict[str, str]:
     actor = activity_library.Actor("TEACHER", teacher.id, teacher.school_id, teacher.teacher_name)
     from backend.database import SessionLocal
@@ -139,6 +154,8 @@ def download_all(include: Literal["ready", "all"] = "ready", confirmed: bool = F
     if not stages:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "No students yet. Use 'Fetch from PARAKH' on the Students page first.")
     path = hpc_sessions.session_dir("teacher", teacher.id) / f"HPC_All_stages_template{'_all' if include == 'all' else ''}.xlsx"
+    for st in stages:
+        live_check(teacher, st)
     class_template.build_download_many(teacher, stages, include == "all", path, {st: _labels(teacher, st) for st in stages})
     return FileResponse(path, filename=path.name,
                         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
@@ -154,6 +171,7 @@ def download(stage: str, include: Literal["ready", "all"] = "ready", confirmed: 
         raise HTTPException(status.HTTP_409_CONFLICT, "Confirm first: students who are not ready will be in the file.")
     tail = "_chosen" if only is not None else "_all" if include == "all" else ""
     path = hpc_sessions.session_dir("teacher", teacher.id) / f"HPC_{stage}_template{tail}.xlsx"
+    live_check(teacher, stage)
     class_template.build_download(teacher, stage, include == "all", path, _labels(teacher, stage), only)
     return FileResponse(path, filename=path.name,
                         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")

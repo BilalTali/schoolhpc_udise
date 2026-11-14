@@ -733,3 +733,21 @@ def test_without_the_school_register_the_father_comes_from_udise(world, monkeypa
     body = client.get(f"{API}/teacher/template/Preparatory/precheck").json()
     listed = {s["student_id"] for i in body["items"] if "Guardian Name" in i["question"] for s in i["students"]}
     assert "3001" not in listed and "3002" not in listed
+
+
+def test_a_restart_keeps_the_check_and_save_or_download_checks_again_by_itself(world):
+    """The app restarting used to lose every check ("Check the class first" for every teacher). The result is
+    written down: the screen shows it again, and a save or download checks the class again first (kept cards)."""
+    client, portal, lookups, teacher, _ = world
+    client.put(f"{API}/teacher/settings/Preparatory", json={"values": SETTINGS})
+    whole = {k: v for k, v in filled_row("PREPARATORY").items() if not k.startswith(("b_act_", "b_lvl_", "b_replace"))}
+    hpc_cards.save_draft(teacher.id, portal.ay, "Preparatory", "3001", {**whole, **grid(), **ANSWERS})
+    before = run_check(client)
+    class_template._jobs.clear()                                                 # the app restarted
+    shown = client.get(f"{API}/teacher/template/Preparatory/check").json()["job"]
+    assert shown["status"] == "COMPLETED" and shown["ready"] == before["ready"] and shown["id"] == before["id"]
+    assert client.get(f"{API}/teacher/template/Preparatory/download").status_code == 200
+    class_template._jobs.clear()                                                 # and again, then straight to Save
+    sent = client.post(f"{API}/teacher/send/Preparatory")
+    assert sent.status_code == 200, sent.text
+    assert "3001" in {sid for _, sid, _ in portal.saved}

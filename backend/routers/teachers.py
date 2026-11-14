@@ -547,9 +547,10 @@ def send_class(stage: str, background_tasks: BackgroundTasks, teacher: Teacher =
     class check (Download template -> Check) finished: its ready students are put in a file on the server, checked
     against PARAKH exactly like an uploaded file, then saved by the usual upload (progress, verify, retry). The
     School Register's values (attendance, parent on the card, marks) go in with every save."""
-    from backend.routers.class_template import _labels
+    from backend.routers.class_template import _labels, live_check
     from backend.services import class_template
     stage = _stage(teacher, stage)
+    live_check(teacher, stage)                     # after a restart: checked again first, from the kept cards
     job = class_template.latest(teacher.id, stage)
     if not job or job.get("status") != "COMPLETED":
         raise HTTPException(status.HTTP_409_CONFLICT, "Check the class first (Excel & upload -> Check the class), "

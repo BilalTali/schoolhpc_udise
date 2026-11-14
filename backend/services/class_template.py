@@ -192,9 +192,55 @@ def _kept_card(client: Portal, teacher_id: str, session: str, stage: str, studen
     return sync.StudentData(str(student_id), found[card_store.RECORD] or {}, {c: found[c] for c in cols})
 
 
+KEPT = ("id", "stage", "status", "done", "total", "results", "error", "started_at", "finished_at", "session", "settings")
+
+
+def _kept_path(teacher_id: str, stage: str):
+    from backend.services.hpc_sessions import session_dir
+    return session_dir("teacher", teacher_id) / f"class_check_{stage.lower()}.json"
+
+
+def _keep(teacher_id: str, job: Dict[str, Any]) -> None:
+    """A finished check is written down, so a restart of the app does not lose it (the screen shows it again)."""
+    import json
+    try:
+        path = _kept_path(teacher_id, job["stage"])
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps({k: job.get(k) for k in KEPT}, ensure_ascii=False, default=str), encoding="utf-8")
+        tmp.replace(path)
+    except Exception as exc:                                   # keeping it is a convenience; the check stands
+        print(f"[class check] could not keep the result: {exc}")
+
+
 def latest(teacher_id: str, stage: str) -> Optional[Dict[str, Any]]:
+    """The last check of this class: in memory, else the one written down before the app restarted ("restored":
+    its results only - a save or download checks the class again first, from the kept cards, in seconds)."""
     with _lock:
-        return _jobs.get((teacher_id, stage))
+        job = _jobs.get((teacher_id, stage))
+        if job is not None:
+            return job
+        import json
+        try:
+            kept = json.loads(_kept_path(teacher_id, stage).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        if kept.get("status") != "COMPLETED":
+            return None
+        job = {**kept, "restored": True, "data": {}, "t0": time.time(), "lookups": None, "typed": None, "resolve": None}
+        _jobs[(teacher_id, stage)] = job
+        return job
+
+
+def run_now(client: Portal, teacher, stage: str, students: List[Dict[str, Any]], resolve, lookups) -> Dict[str, Any]:
+    """The class check, here and now (not in the background): for a save or download after a restart."""
+    with _lock:
+        job = {"id": uuid.uuid4().hex[:12], "stage": stage, "status": "RUNNING", "done": 0, "total": len(students),
+               "results": [], "data": {}, "error": None, "started_at": _now(), "finished_at": None, "t0": time.time(),
+               "session": client.ay, "settings": None, "lookups": lookups,
+               "typed": activity_grid.typed_keys(resolve), "resolve": resolve}
+        _jobs[(teacher.id, stage)] = job
+    _run(job, client, teacher.id, stage, students, resolve, lookups)
+    return job
 
 
 def start_check(client: Portal, teacher, stage: str, students: List[Dict[str, Any]], resolve, lookups) -> Dict[str, Any]:
@@ -240,6 +286,8 @@ def _run(job, client: Portal, teacher_id: str, stage: str, students, resolve, lo
         job["status"], job["error"] = "FAILED", f"The check stopped: {exc}"
     finally:
         job["finished_at"] = _now()
+        if job["status"] == "COMPLETED":
+            _keep(teacher_id, job)
 
 
 # ---------------------------------------------------------------------------
