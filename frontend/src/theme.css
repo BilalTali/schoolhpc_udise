@@ -730,6 +730,8 @@ img, svg, video, canvas { max-width: 100%; }
 .gate-icon { width: 52px; height: 52px; border-radius: 14px; display: grid; place-items: center; background: var(--brand-50); color: var(--brand-600); }
 .tp-blocking { margin: 0.35rem 0 0.4rem 1.1rem; padding: 0; }
 .tp-blocking li { margin: 0.1rem 0; }
+.tp-why { display: flex; gap: 0.45rem; align-items: flex-start; margin: 0.4rem 0 0.2rem; padding: 0.55rem 0.75rem; border-radius: 8px; border-left: 4px solid var(--warning, #d97706); background: color-mix(in srgb, var(--warning, #d97706) 9%, transparent); line-height: 1.4; }
+.tp-why svg { flex: none; margin-top: 0.12rem; color: var(--warning, #b45309); }
 .cs-school { color: var(--brand-600, #C2410C); font-weight: 600; font-size: 0.72rem; }
 .fix-missing { margin-top: 0.75rem; }
 .fix-missing .fix-line { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1rem; margin: 0.6rem 0; }

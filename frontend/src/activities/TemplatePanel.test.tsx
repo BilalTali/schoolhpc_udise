@@ -56,6 +56,18 @@ const downloads = (fake: ReturnType<typeof fakeTemplate>) => fake.state.calls.fi
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 describe("Template panel", () => {
+  it("Save greyed out because nothing can be saved yet: says why, naming what blocks and how to fill it", async () => {
+    const blocked = { ...job([student("1", true), student("2", true)]), complete: 0,
+                      blocking: [{ problem: "Part A4 - Parent-Teacher Partnership: 'Any other' support is ticked", students: 2 }] };
+    setup({ job: blocked, settings_complete: true });
+    await screen.findByText(/Ready as of/);
+    const save = screen.getByRole("button", { name: /Save ready students to PARAKH \(0\)/ });
+    expect(save).toBeDisabled();
+    const reason = document.getElementById(save.getAttribute("aria-describedby") || "")!;
+    expect(reason).toHaveTextContent("0 can be saved: Part A4 - Parent-Teacher Partnership: 'Any other' support is ticked (2 students)");
+    expect(reason).toHaveTextContent(/Global Mix or "Fix what is missing"/);
+  });
+
   it("mixed class: counts ready students, lists the others with a reason and a Fix button", async () => {
     const { user, onFix, fake } = setup({ job: job([student("1", true), student("2", true), student("3", false)]), settings_complete: true });
     expect(await screen.findByText(/Ready as of/)).toHaveTextContent("2 of 3");

@@ -187,7 +187,9 @@ export function TemplatePanel({ api, stage, total, onFix, onOpenSettings }: {
       const preview = await call<Mix>(api, "POST", `/teacher/activities-grid/${stage}/global-mix`, {});
       setMixPhase(null);                                  // the question below is answered without the panel
       if (!preview.grid.cells && !preview.answers.cells) {
-        setMixMsg("Nothing to mix: every answer that can be mixed is already filled.");
+        setMixMsg(job?.blocking?.length
+          ? "Nothing left for Global Mix to fill. What still blocks the save (below) is not something it fills: use \"Fix what is missing\" or the School Register, then check the class again."
+          : "Nothing to mix: every answer that can be mixed is already filled.");
         return;
       }
       const notes = [preview.grid.skipped.length ? `${preview.grid.skipped.length} student(s) skipped (their activities on PARAKH share subjects)` : "",
@@ -226,6 +228,19 @@ export function TemplatePanel({ api, stage, total, onFix, onOpenSettings }: {
 
   const why = !settingsOk ? "Finish the class settings first." : !job || job.status !== "COMPLETED" ? "Check the class first."
     : job.ready === 0 ? "No student's Part B is complete yet - see the list below." : "";
+  // Why "Save ready students" cannot be pressed, in words - every case, never a silent grey button.
+  const top = job?.blocking?.[0];
+  const saveWhy = busy ? "Please wait: Global Mix or a save is still working."
+    : running ? `Wait: the class is being checked (${job?.done ?? 0} of ${job?.total ?? "?"}).`
+    : job?.status === "FAILED" ? "The last check stopped - press \"Check the class again\"."
+    : !settingsOk || !job || job.status !== "COMPLETED" ? why
+    : job.ready === 0 ? why
+    : !(job.complete ?? job.ready) && top
+      ? `0 can be saved: ${top.problem.replace(/: required$/, "")} (${top.students} student${top.students === 1 ? "" : "s"}). `
+        + "Fill it with Global Mix or \"Fix what is missing\" below, then check the class again."
+    : !(job.complete ?? job.ready) ? "0 can be saved yet - see what is missing below, then check the class again."
+    : status?.register_changed ? "The School Register changed after this check: check the class again first." : "";
+  const saveOff = !!saveWhy;
 
   return (
     <section className="tp" aria-labelledby="tp-title">
@@ -314,7 +329,8 @@ export function TemplatePanel({ api, stage, total, onFix, onOpenSettings }: {
       </div>
 
       <div className="tp-row">
-        <button type="button" className="btn btn-primary" onClick={send} disabled={!!why || busy || (job?.status === "COMPLETED" && !(job.complete ?? job.ready))}
+        <button type="button" className="btn btn-primary" onClick={send} disabled={saveOff}
+                aria-describedby={saveWhy ? "tp-save-why" : undefined}
                 title="No Excel: the students with nothing missing go to PARAKH straight from what is chosen in the app">
           <CheckCircle2 size={15} aria-hidden="true" /> Save ready students to PARAKH ({job?.status === "COMPLETED" ? job.complete ?? job.ready : "?"})
         </button>
@@ -330,7 +346,7 @@ export function TemplatePanel({ api, stage, total, onFix, onOpenSettings }: {
                 disabled={!settingsOk || job?.status !== "COMPLETED" || busy}>
           Download chosen students…
         </button>
-        {why && <span id="tp-why" className="lib-muted">{why}</span>}
+        {why && why !== saveWhy && <span id="tp-why" className="lib-muted">{why}</span>}
         <button type="button" className="btn btn-outline" disabled={busy}
                 onClick={async () => {
                   const res = await apiFetch("/teacher/register/report.xlsx", {}, api.base);
@@ -342,6 +358,10 @@ export function TemplatePanel({ api, stage, total, onFix, onOpenSettings }: {
           <Download size={15} aria-hidden="true" /> My students report (Excel)
         </button>
       </div>
+      {saveWhy && (
+        <p id="tp-save-why" className="tp-why" role="status">
+          <AlertCircle size={16} aria-hidden="true" /> <span><b>Why "Save" cannot be pressed:</b> {saveWhy}</span>
+        </p>)}
       {mixMsg && <p className="tp-summary" role="status"><CheckCircle2 size={16} color="#046A38" aria-hidden="true" /> {mixMsg}</p>}
       {sent && <p className="tp-summary" role="status"><CheckCircle2 size={16} color="#046A38" aria-hidden="true" /> {sent}</p>}
 
