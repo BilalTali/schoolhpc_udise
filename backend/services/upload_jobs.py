@@ -19,7 +19,7 @@ from backend.database import SessionLocal
 from backend.hpc import sync, workbook
 from backend.hpc.portal import Portal, stage_code
 from backend.hpc.stages import get_stage
-from backend.models.entities import UploadJob
+from backend.models.entities import StudentRecord, UploadJob
 
 
 def file_settings(client: Portal, teacher_id: Optional[str], path: Path, choices: bool = True) -> Dict[str, Dict[str, Any]]:
@@ -417,6 +417,12 @@ def _live_event(job_id: str, student_id: str, name: str, text: str, kind: str = 
 def run_job(job_id: str, client: Portal, path: str, teacher_id: Optional[str] = None,
             only: Optional[set] = None) -> None:
     """Saves the workbook's students to PARAKH. only: just these students (retry failed only, M-11)."""
+    from backend.services import register_data
+    with register_data.acting_school(register_data.school_of_teacher(teacher_id)):   # the teacher's own register
+        _run_job(job_id, client, path, teacher_id, only)
+
+
+def _run_job(job_id: str, client: Portal, path: str, teacher_id: Optional[str], only: Optional[set]) -> None:
     db = SessionLocal()
     job = db.get(UploadJob, job_id)
     try:
@@ -563,6 +569,8 @@ def _rewarm(client: Portal, owner: str, saved_by_stage: Dict[str, List[str]]) ->
 
 INTERRUPTED = "The app restarted during this save; it continues by itself in a new upload."
 INTERRUPTED_BY_HAND = "The app restarted during this save. Press 'Retry failed' to continue."
+RESUMED = "The app restarted during this save; it went on in a new upload (see the newer upload)."
+RESUME_WITHIN_H = 6          # older interruptions wait for the teacher (they may have changed things since)
 
 
 def recover_interrupted_jobs() -> List[str]:
@@ -579,6 +587,10 @@ def recover_interrupted_jobs() -> List[str]:
                 if r.status in ("PENDING", "IN_PROGRESS", "VALIDATED"):
                     r.status, r.error_message = "FAILED", INTERRUPTED
         db.commit()
-        return [j.id for j in stuck]
+        # every job with students still marked "continues by itself" - also those a second restart caught before
+        # they were continued (the mark is in the database, not in memory)
+        waiting = {job_id for (job_id,) in db.query(StudentRecord.job_id).filter(
+            StudentRecord.status == "FAILED", StudentRecord.error_message == INTERRUPTED).distinct()}
+        return sorted(waiting)
     finally:
         db.close()

@@ -113,10 +113,15 @@ def _dummy_counts(teacher: Teacher, stage: str, ids) -> Dict[str, int]:
     ids = [str(i) for i in ids]
     if not ids or not teacher.school_id:
         return out
+    from backend.services import register_data
+    try:
+        session = register_data.session_of(teacher.school_id)
+    except Exception:
+        return out
     with SessionLocal() as db:
         rows = (db.query(RegisterStudentData.sources).join(RegisterStudent, RegisterStudent.id == RegisterStudentData.student_id)
                 .filter(RegisterStudent.school_id == teacher.school_id, RegisterStudent.stage == stage.capitalize(),
-                        RegisterStudent.parakh_student_id.in_(ids)).all())
+                        RegisterStudent.parakh_student_id.in_(ids), RegisterStudentData.session == session).all())
     for (sources,) in rows:
         src = sources or {}
         att = str(src.get("present") or "").startswith("dummy:")

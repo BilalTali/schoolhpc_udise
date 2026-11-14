@@ -192,6 +192,7 @@ def _kept_card(client: Portal, teacher_id: str, session: str, stage: str, studen
     return sync.StudentData(str(student_id), found[card_store.RECORD] or {}, {c: found[c] for c in cols})
 
 
+KEPT_DAYS = 30
 KEPT = ("id", "stage", "status", "done", "total", "results", "error", "started_at", "finished_at", "session", "settings")
 
 
@@ -206,7 +207,9 @@ def _keep(teacher_id: str, job: Dict[str, Any]) -> None:
     try:
         path = _kept_path(teacher_id, job["stage"])
         tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps({k: job.get(k) for k in KEPT}, ensure_ascii=False, default=str), encoding="utf-8")
+        from backend.services import secrets_box               # names of children: encrypted, like the other files
+        tmp.write_text(secrets_box.encrypt(json.dumps({k: job.get(k) for k in KEPT}, ensure_ascii=False, default=str)),
+                       encoding="utf-8")
         tmp.replace(path)
     except Exception as exc:                                   # keeping it is a convenience; the check stands
         print(f"[class check] could not keep the result: {exc}")
@@ -220,11 +223,19 @@ def latest(teacher_id: str, stage: str) -> Optional[Dict[str, Any]]:
         if job is not None:
             return job
         import json
+        from backend.services import secrets_box
         try:
-            kept = json.loads(_kept_path(teacher_id, stage).read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+            kept = json.loads(secrets_box.decrypt(_kept_path(teacher_id, stage).read_text(encoding="utf-8")) or "")
+        except Exception:
             return None
         if kept.get("status") != "COMPLETED":
+            return None
+        finished = str(kept.get("finished_at") or "")
+        try:
+            age = datetime.now(timezone.utc) - datetime.fromisoformat(finished.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if age.days > KEPT_DAYS:                               # too old to show as the class's state
             return None
         job = {**kept, "restored": True, "data": {}, "t0": time.time(), "lookups": None, "typed": None, "resolve": None}
         _jobs[(teacher_id, stage)] = job
@@ -232,7 +243,16 @@ def latest(teacher_id: str, stage: str) -> Optional[Dict[str, Any]]:
 
 
 def run_now(client: Portal, teacher, stage: str, students: List[Dict[str, Any]], resolve, lookups) -> Dict[str, Any]:
-    """The class check, here and now (not in the background): for a save or download after a restart."""
+    """The class check, here and now (not in the background): for a save or download after a restart. A check
+    already running for this class is waited for, not started twice."""
+    with _lock:
+        running = _jobs.get((teacher.id, stage))
+    if running and running.get("status") == "RUNNING":
+        for _ in range(1200):                                  # up to 10 minutes
+            if running.get("status") != "RUNNING":
+                return running
+            time.sleep(0.5)
+        return running
     with _lock:
         job = {"id": uuid.uuid4().hex[:12], "stage": stage, "status": "RUNNING", "done": 0, "total": len(students),
                "results": [], "data": {}, "error": None, "started_at": _now(), "finished_at": None, "t0": time.time(),
@@ -261,6 +281,12 @@ def start_check(client: Portal, teacher, stage: str, students: List[Dict[str, An
 
 
 def _run(job, client: Portal, teacher_id: str, stage: str, students, resolve, lookups) -> None:
+    from backend.services import register_data
+    with register_data.acting_school(register_data.school_of_teacher(teacher_id)):   # the teacher's own register
+        _run_inner(job, client, teacher_id, stage, students, resolve, lookups)
+
+
+def _run_inner(job, client: Portal, teacher_id: str, stage: str, students, resolve, lookups) -> None:
     try:
         row = class_settings.load(teacher_id, stage)
         settings = class_settings.for_teacher(teacher_id, stage)
@@ -288,6 +314,11 @@ def _run(job, client: Portal, teacher_id: str, stage: str, students, resolve, lo
         job["finished_at"] = _now()
         if job["status"] == "COMPLETED":
             _keep(teacher_id, job)
+        else:                                                  # a failed check: no older result comes back later
+            try:
+                _kept_path(teacher_id, stage).unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 # ---------------------------------------------------------------------------

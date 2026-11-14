@@ -21,6 +21,8 @@ import io
 import json
 import re
 from datetime import datetime
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Any, Dict, List, Optional, Tuple
 
 from backend.database import SessionLocal
@@ -167,8 +169,8 @@ def fill_from_udise(school_id: str) -> int:
                     d = RegisterStudentData(school_id=school_id, student_id=sid, session=session, sources={})
                     db.add(d)
                     data[sid] = d
-                if getattr(d, column):
-                    continue
+                if getattr(d, column) or (d.sources or {}).get(column) not in (None, "udise"):
+                    continue                               # filled, or emptied on purpose (an upload / typed): stays
                 setattr(d, column, name)
                 d.sources = {**(d.sources or {}), column: "udise"}
                 changed = True
@@ -389,7 +391,11 @@ def udise_parents(school_id: str, students: List[RegisterStudent]) -> Dict[str, 
              lambda r: _letters(r.student_name) + "|" + _dob(r.dob) if r.dob else "")]
     out: Dict[str, Dict[str, str]] = {}
     free = set(range(len(sdms)))
-    for _, of_sdms, of_reg in keys:
+    def agrees(g: Dict, r) -> bool:                       # an admission number alone is not enough: numbering can
+        return (_letters(g.get("studentName")) == _letters(r.student_name)   # differ between PARAKH and UDISE+
+                or (bool(r.dob) and bool(g.get("dob")) and _dob(g.get("dob")) == _dob(r.dob)))
+
+    for kind, of_sdms, of_reg in keys:
         index: Dict[str, List[int]] = {}
         for i in free:
             k = of_sdms(*sdms[i])
@@ -400,7 +406,7 @@ def udise_parents(school_id: str, students: List[RegisterStudent]) -> Dict[str, 
                 continue
             k = of_reg(r)
             hits = [i for i in index.get(k, []) if i in free] if k else []
-            if len(hits) == 1:
+            if len(hits) == 1 and (kind != "adm" or agrees(sdms[hits[0]][0], r)):
                 g = sdms[hits[0]][0]
                 free.discard(hits[0])
                 out[r.id] = {"father": str(g.get("fatherName") or "").strip(), "mother": str(g.get("motherName") or "").strip()}
@@ -864,7 +870,7 @@ def entered(school_id: str, session: str) -> Dict[str, Dict[str, Any]]:
     return out
 
 
-def for_cards(school_id: str, stage: str, session: str, parakh_student_id: str) -> Dict[str, Any]:
+def for_cards(school_id: str, stage: str, session: str, parakh_student_id: str, with_source: bool = False) -> Dict[str, Any]:
     """The card values (workbook keys) the school gives one student: working days and max marks from the settings,
     days present, the parent/guardian shown on the card, marks obtained. {} keys are left out when not entered."""
     settings = get_settings(school_id, stage, session)["values"]
@@ -890,36 +896,65 @@ def for_cards(school_id: str, stage: str, session: str, parakh_student_id: str) 
     name = {"Father": d.father_name, "Mother": d.mother_name, "Guardian": d.guardian_name}.get(relation or "")
     if relation and name:
         out["a1_guardian_relation"], out["a1_guardian_name"] = relation, name
+        if with_source:                                   # where the name came from (sync: a UDISE+ name never
+            column = {"Father": "father_name", "Mother": "mother_name", "Guardian": "guardian_name"}[relation]
+            out[GUARDIAN_SOURCE] = (d.sources or {}).get(column)     # replaces one already on the card)
     return out
 
 
+GUARDIAN_SOURCE = "_guardian_source"
+ACTING_SCHOOL: "ContextVar[Optional[str]]" = ContextVar("acting_school", default=None)
+
+
+@contextmanager
+def acting_school(school_id: Optional[str]):
+    """Everything inside works for this school: a save, a class check or a card read takes the School Register
+    values of the school of the teacher doing it - never another school's (review H3)."""
+    token = ACTING_SCHOOL.set(school_id or None)
+    try:
+        yield
+    finally:
+        ACTING_SCHOOL.reset(token)
+
+
+def school_of_teacher(teacher_id: Optional[str]) -> Optional[str]:
+    if not teacher_id:
+        return None
+    from backend.models.entities import Teacher
+    with SessionLocal() as db:
+        t = db.get(Teacher, teacher_id)
+        return t.school_id if t else None
+
+
 def card_values(stage: str, record: Dict[str, Any], student_id: str) -> Dict[str, Any]:
-    """common.SCHOOL_VALUES: the school's values for a student's card, found from PARAKH's record (its school UDISE
-    code and academic year). {} when the school has none."""
+    """common.SCHOOL_VALUES: the school's values for a student's card. The school is the one of the teacher doing
+    the work (acting_school) - always, when known. Without it (a tool outside a teacher's work): the one school
+    whose UDISE code or kept PARAKH code is the card's; else the one school whose register lists the student; when
+    two could be meant, nothing (a wrong school's values are worse than none)."""
     from backend.hpc.portal import stage_code
     from backend.models.entities import School
-    udise = str((record.get("sch_info") or {}).get("school_udise") or "").strip()
     session = str((record.get("stu_info") or {}).get("school_cur_ay_code") or record.get("school_cur_ay_code") or "").strip()
     if not session:
         return {}
     stage_name = stage_code(stage).capitalize()
+    acting = ACTING_SCHOOL.get()
+    if acting:
+        return for_cards(acting, stage_name, session, student_id, with_source=True)
+    udise = str((record.get("sch_info") or {}).get("school_udise") or "").strip()
     from sqlalchemy import or_
     with SessionLocal() as db:
-        # 1. the school PARAKH files this card under: its own UDISE code, or the code seen on its cards when it
-        #    fetched its students (a merged or re-coded school) - never another school's register
-        by_code = [s.id for s in db.query(School).filter(or_(School.parakh_udise == udise, School.udise_code == udise))] \
+        by_code = sorted({s.id for s in db.query(School).filter(or_(School.parakh_udise == udise, School.udise_code == udise))}) \
             if udise else []
-        held = [sid for (sid,) in db.query(RegisterStudent.school_id).filter_by(
-            stage=stage_name, parakh_student_id=str(student_id)).distinct()]
-        if by_code:
-            school_id = next((s for s in by_code if s in held), by_code[0])
-        elif len(held) == 1:
-            school_id = held[0]          # 2. no school has that code yet (fetched before codes were kept): the one register
-        else:
-            school_id = None
-    if school_id is None:
+        held = sorted({sid for (sid,) in db.query(RegisterStudent.school_id).filter(
+            RegisterStudent.stage == stage_name, RegisterStudent.parakh_student_id == str(student_id),
+            RegisterStudent.missing_since.is_(None))})
+    if len(by_code) == 1:
+        school_id = by_code[0]
+    elif not by_code and len(held) == 1:
+        school_id = held[0]
+    else:
         return {}
-    return for_cards(school_id, stage_name, session, student_id)
+    return for_cards(school_id, stage_name, session, student_id, with_source=True)
 
 
 from backend.hpc.stages import common as _common   # noqa: E402  (registered when this module is imported)

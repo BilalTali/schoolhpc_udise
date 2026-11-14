@@ -294,6 +294,15 @@ def test_a_save_never_takes_another_schools_register_values(world):
         assert name(mine_udise) == "MINE"
         assert name("09999999999") == "THEIRS"
         assert name("01234567890") is None                      # no school has that code and two registers hold him
+        with register_data.acting_school(school_id):            # a teacher of my school saves: always my register,
+            assert name("09999999999") == "MINE"                # whatever code PARAKH shows on the card
+        with SessionLocal() as db:                              # two schools claim one code: neither is guessed
+            db.get(School, school_id).parakh_udise = "09999999999"
+            db.commit()
+        assert name("09999999999") is None
+        with SessionLocal() as db:
+            db.get(School, school_id).parakh_udise = None
+            db.commit()
     finally:
         with SessionLocal() as db:
             other = db.query(School).filter_by(udise_code="44444444402").one()
@@ -308,6 +317,38 @@ def test_the_fetch_keeps_the_udise_code_parakh_files_the_schools_cards_under(wor
     from backend.models.entities import School
     with SessionLocal() as db:
         assert db.get(School, school_id).parakh_udise == "01010101010"          # from the cards read at the fetch
+
+
+def test_udise_never_refills_a_name_the_school_emptied_and_never_beats_the_cards_own_name(world, monkeypatch):
+    """Review H1/H2: a name emptied by an upload stays empty; a name only from UDISE+ is not sent over the name a
+    teacher already put on the PARAKH card."""
+    import json
+    client, h, _, school_id = world
+    from backend.hpc import sync
+    from backend.models.register import RegisterStudent
+    with SessionLocal() as db:
+        regs = db.query(RegisterStudent).filter_by(school_id=school_id).order_by(RegisterStudent.student_name).all()
+        emptied, from_udise = regs[0], regs[1]
+        db.add(RegisterStudentData(school_id=school_id, student_id=emptied.id, session="2627", father_name=None,
+                                   sources={"father_name": "import:abc"}))
+        db.commit()
+        people = [(r.student_name, r.apaar_id, r.parakh_student_id) for r in (emptied, from_udise)]
+    full = {"fetched_at": "2026-11-01T00:00:00Z", "students": [
+        {"general": {"studentId": i, "studentName": n, "apaarId": a, "fatherName": "UDISE FATHER", "motherName": ""}}
+        for i, (n, a, _) in enumerate(people)]}
+    monkeypatch.setattr("backend.services.sdms_data.load", lambda sid: full)
+    register_data.fill_from_udise(school_id)
+    with SessionLocal() as db:
+        assert db.query(RegisterStudentData).filter_by(student_id=emptied.id).one().father_name is None
+        assert db.query(RegisterStudentData).filter_by(student_id=from_udise.id).one().father_name == "UDISE FATHER"
+    gen = [""] * 26
+    gen[23], gen[24] = "GUARDIAN", "Gh. Mohd (Uncle)"                           # typed on PARAKH, not importable
+    record = {"sch_info": {}, "stu_info": {"school_cur_ay_code": "2627"}}
+    on_card = sync.StudentData(people[1][2], record, {"part_a1": json.dumps({"gen": gen})})
+    blank = sync.StudentData(people[1][2], record, {"part_a1": json.dumps({"gen": [""] * 26})})
+    with register_data.acting_school(school_id):
+        assert "a1_guardian_name" not in sync.school_values("Preparatory", on_card)   # the card's own name stays
+        assert sync.school_values("Preparatory", blank)["a1_guardian_name"] == "UDISE FATHER"   # an empty card gets it
 
 
 def test_fetch_parents_says_when_udise_is_not_connected(world, monkeypatch):

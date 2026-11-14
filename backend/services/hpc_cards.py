@@ -11,7 +11,7 @@ import random
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -315,7 +315,9 @@ def card(client: Portal, owner: str, teacher_id: str, session: str, stage: str, 
     data = sync.fetch_student(client, stage, student_id)
     portal_row = sync.to_row(stage, data, lookups)
     draft = load_draft(teacher_id, session, stage, student_id)
-    locked = sync.school_values(stage, data)              # set by the school in the School Register: read only here
+    from backend.services import register_data
+    with register_data.acting_school(register_data.school_of_teacher(teacher_id)):
+        locked = sync.school_values(stage, data)          # set by the school in the School Register: read only here
     row = {**portal_row, **((draft or {}).get("values") or {}), **locked}
     index = _field_index(stage, lookups)
     errors = _part_errors(stage, data, {**portal_row, **_cell_values(stage, index, (draft or {}).get("values") or {})},
@@ -440,6 +442,10 @@ def part_progress(client: Portal, owner: str, teacher_id: str, session: str, sta
             "fields": {f.key: {"filled": filled[f.key], "required": f.required} for f in fields}}
 
 
+# A believable age for the stage (Mix leaves the age blank outside it: the date of birth on PARAKH must be wrong)
+AGE_RANGE = {"Foundational": (2, 10), "Preparatory": (6, 14), "Middle": (9, 18)}
+
+
 def bulk_mix(client: Portal, owner: str, teacher_id: str, session: str, stage: str, keys: List[str], replace: bool,
              apply: bool, level_hints: Optional[Dict[str, Dict[str, str]]] = None) -> Dict[str, Any]:
     """Every listed class-wide question at once: each student gets one of the question's suggestions (text) or
@@ -514,9 +520,10 @@ def bulk_mix(client: Portal, owner: str, teacher_id: str, session: str, stage: s
                 born = datetime.strptime(dob[:10], "%Y-%m-%d").date()
             except ValueError:
                 return ""
-            today = datetime.now(timezone.utc).date()
+            today = (datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)).date()      # India's date
             age = today.year - born.year - ((today.month, today.day) < (born.month, born.day))
-            if not 2 <= age <= 20:                       # a wrong date of birth on PARAKH (seen: 1016 for 2016)
+            low, high = AGE_RANGE.get(stage.capitalize(), (2, 20))
+            if not low <= age <= high:                   # a wrong date of birth on PARAKH (seen: 1016 for 2016)
                 bad_dob.append(f"{s.get('student_name') or s['student_id']} ({dob[:10]})")
                 return ""
             return str(age)
@@ -570,6 +577,7 @@ def bulk_mix(client: Portal, owner: str, teacher_id: str, session: str, stage: s
     other_fields = {f.key: f for k, (_, text_key, _) in OTHER_TEXT.items() if k in mixed
                     for f in part_of[k].fields(lookups) if f.key == text_key}
     bad_dob: List[str] = []                               # ages left blank: the date of birth cannot be right
+    other_written: Dict[str, tuple] = {}                  # "any other" ticked on PARAKH: the words Mix wrote
     no_levels: Dict[str, List[str]] = {}                  # Part C notes left blank: the subject has no levels yet
     changes: Dict[str, Dict[str, Any]] = {}
     filled = {k: 0 for k in mixed}
@@ -611,12 +619,20 @@ def bulk_mix(client: Portal, owner: str, teacher_id: str, session: str, stage: s
             if not _blank(words):
                 continue
             limit = text_field.max_len
-            changes.setdefault(s["student_id"], {})[text_key] = rng.choice(
-                [p for p in phrases if not limit or len(p) <= limit] or phrases)
+            fits = [p for p in phrases if not limit or len(p) <= limit]
+            if not fits:
+                continue
+            changes.setdefault(s["student_id"], {})[text_key] = rng.choice(fits)
             filled[text_key] = filled.get(text_key, 0) + 1
+            other_written.setdefault(text_key, (text_field.label, option, []))[2].append(s.get("student_name") or s["student_id"])
     if apply:
         for sid, values in changes.items():
             save_draft(teacher_id, session, stage, sid, values)
+    for text_key, (label, option, names) in other_written.items():   # said openly: the teacher may change it
+        skipped.append({"key": text_key, "label": label,
+                        "reason": f"left blank on PARAKH although '{option}' is ticked - a short phrase was written for "
+                                  f"{len(names)} student(s) ({', '.join(str(n) for n in names[:5])}{' ...' if len(names) > 5 else ''}); "
+                                  "change it on the card if the parent meant something else"})
     if bad_dob:
         age_key = next(k for k, (f, _, _) in mixed.items() if record_kind(f.label) == "age")
         skipped.append({"key": age_key, "label": mixed[age_key][0].label,
@@ -627,7 +643,8 @@ def bulk_mix(client: Portal, owner: str, teacher_id: str, session: str, stage: s
                         "reason": f"left blank for {len(names)} student(s) without all three levels for this subject"
                                   f" ({', '.join(n for n in names[:5] if n)}{' ...' if len(names) > 5 else ''})"})
     return {"applied": apply, "students": len(changes), "cells": sum(filled.values()),
-            "fields": [{"key": k, "label": mixed[k][0].label, "filled": filled[k]} for k in mixed],
+            "fields": [{"key": k, "label": mixed[k][0].label, "filled": filled[k]} for k in mixed]
+                      + [{"key": k, "label": label, "filled": filled.get(k, 0)} for k, (label, _, _) in other_written.items()],
             "skipped": skipped}
 
 

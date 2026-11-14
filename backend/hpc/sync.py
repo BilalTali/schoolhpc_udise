@@ -82,9 +82,22 @@ def school_values(stage: str, data: "StudentData") -> Dict[str, Any]:
     if common.SCHOOL_VALUES is None:
         return {}
     try:
-        return common.SCHOOL_VALUES(stage, data.record or {}, str(data.student_id)) or {}
+        values = dict(common.SCHOOL_VALUES(stage, data.record or {}, str(data.student_id)) or {})
     except Exception:                                   # the register must never stop a save
         return {}
+    if values.pop("_guardian_source", None) == "udise" and _card_guardian(stage, data):
+        values.pop("a1_guardian_relation", None)        # a name only from UDISE+ never replaces the one a teacher
+        values.pop("a1_guardian_name", None)            # already put on the card (review H2)
+    return values
+
+
+def _card_guardian(stage: str, data: "StudentData") -> str:
+    """The parent/guardian name already on the PARAKH card (Part A1), or ""."""
+    a1 = next((p for p in get_stage(stage).PARTS if p.code == "A1"), None)
+    if a1 is None:
+        return ""
+    gen = (a1.load(data.raw_parts.get(a1.col)) or {}).get("gen") or []
+    return str(gen[24] if len(gen) > 24 and gen[24] else "").strip()
 
 
 def build_payloads(stage: str, data: StudentData, row: Dict[str, Any], lookups: Lookups,

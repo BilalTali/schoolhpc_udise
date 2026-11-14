@@ -37,7 +37,12 @@ interface CheckStatus { job: CheckJob | null; settings_complete: boolean; settin
                        dummy?: { students: number; attendance: number; marks: number } }
 
 const POLL_MS = 1500;
-const time = (iso: string | null) => (iso ? new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "");
+const time = (iso: string | null) => {                // the time; the date too when it is not today (a kept check)
+  if (!iso) return "";
+  const d = new Date(iso);
+  const t = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return d.toDateString() === new Date().toDateString() ? t : `${d.toLocaleDateString([], { day: "numeric", month: "short" })} ${t}`;
+};
 
 export function TemplatePanel({ api, stage, total, onFix, onOpenSettings }: {
   api: Api;
@@ -208,7 +213,7 @@ export function TemplatePanel({ api, stage, total, onFix, onOpenSettings }: {
       setMixPhase("mixing");
       const done = await call<Mix>(api, "POST", `/teacher/activities-grid/${stage}/global-mix`, { apply: true, seed: preview.seed });
       setMixMsg(`Filled ${done.grid.cells} activity/level cells and ${done.answers.cells} answers. The class is checked - then "Save ready students to PARAKH".`);
-      setEye(done.answers.skipped.filter((s) => s.reason.startsWith("left blank")));
+      setEye(done.answers.skipped.filter((s) => s.reason.startsWith("left blank")));      // incl. "any other" words written
       setMixPhase("checking");                           // the panel stays until the check has finished
       setPre(null);
       await call(api, "POST", `/teacher/template/${stage}/check`);
@@ -242,8 +247,7 @@ export function TemplatePanel({ api, stage, total, onFix, onOpenSettings }: {
     : !(job.complete ?? job.ready) && top
       ? `0 can be saved: ${top.problem.replace(/: required$/, "")} (${top.students} student${top.students === 1 ? "" : "s"}). `
         + "Fill it with Global Mix or \"Fix what is missing\" below, then check the class again."
-    : !(job.complete ?? job.ready) ? "0 can be saved yet - see what is missing below, then check the class again."
-    : status?.register_changed ? "The School Register changed after this check: check the class again first." : "";
+    : !(job.complete ?? job.ready) ? "0 can be saved yet - see what is missing below, then check the class again." : "";
   const saveOff = !!saveWhy;
 
   return (
@@ -348,7 +352,7 @@ export function TemplatePanel({ api, stage, total, onFix, onOpenSettings }: {
           <CheckCircle2 size={15} aria-hidden="true" /> Save ready students to PARAKH ({job?.status === "COMPLETED" ? job.complete ?? job.ready : "?"})
         </button>
         <button type="button" className="btn btn-green" onClick={() => download(false)} disabled={!!why || busy}
-                aria-describedby={why ? "tp-why" : undefined}>
+                aria-describedby={why ? (why === saveWhy ? "tp-save-why" : "tp-why") : undefined}>
           <Download size={15} aria-hidden="true" /> Download template ({job?.status === "COMPLETED" ? `${job.ready} of ${job.total}` : `? of ${total}`} students)
         </button>
         <button type="button" className="btn btn-outline" onClick={() => download(true)}
@@ -372,7 +376,7 @@ export function TemplatePanel({ api, stage, total, onFix, onOpenSettings }: {
         </button>
       </div>
       {saveWhy && (
-        <p id="tp-save-why" className="tp-why" role="status">
+        <p id="tp-save-why" className="tp-why">
           <AlertCircle size={16} aria-hidden="true" /> <span><b>Why "Save" cannot be pressed:</b> {saveWhy}</span>
         </p>)}
       {mixMsg && <p className="tp-summary" role="status"><CheckCircle2 size={16} color="#046A38" aria-hidden="true" /> {mixMsg}</p>}

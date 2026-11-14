@@ -621,9 +621,11 @@ def _start_job(teacher: Teacher, db: Session, background_tasks: BackgroundTasks,
 
 
 def resume_interrupted(job_ids: List[str]) -> int:
-    """After a restart: each interrupted upload continues in a new upload of the same file, for the students it
-    had not saved yet (as 'Retry failed' does). When it cannot (PARAKH signed out, the file changed), those
-    students say to press 'Retry failed'. Returns how many uploads were continued."""
+    """After a restart: each interrupted upload goes on in a new upload of the same file, for the students it had
+    not saved yet (as 'Retry failed' does) - only when it was cut within the last few hours, and never a card that
+    PARAKH already shows complete. When it cannot (too old, PARAKH signed out, the file changed, any error),
+    those students say to press 'Retry failed'. Returns how many uploads went on."""
+    from datetime import timedelta
     from backend.database import SessionLocal
 
     class _Now:                                      # background_tasks for _start_job, outside a request
@@ -631,39 +633,72 @@ def resume_interrupted(job_ids: List[str]) -> int:
         def add_task(fn, *args):
             threading.Thread(target=fn, args=args, daemon=True).start()
 
+    def mark(db, job, text):
+        for r in job.records:
+            if r.status == "FAILED" and r.error_message == upload_jobs.INTERRUPTED:
+                r.error_message = text
+        db.commit()
+
     resumed = 0
     for job_id in job_ids:
         with SessionLocal() as db:
             job = db.get(UploadJob, job_id)
-            teacher = db.get(Teacher, job.teacher_id) if job else None
-            if job is None or teacher is None:
+            if job is None:
                 continue
-            todo = {r.admission_number for r in job.records
-                    if r.status == "FAILED" and r.error_message == upload_jobs.INTERRUPTED}
-            if not todo:
-                continue
-            why = ""
-            path = _upload_path(teacher, job.original_filename)
-            if not teacher.is_active or (teacher.school is not None and not teacher.school.is_active):
-                why = "account switched off"
-            elif not path.exists() or (job.file_hash and hashlib.sha256(path.read_bytes()).hexdigest() != job.file_hash):
-                why = "the file changed"
-            if not why:
-                try:
+            try:
+                teacher = db.get(Teacher, job.teacher_id)
+                todo = {r.admission_number for r in job.records
+                        if r.status == "FAILED" and r.error_message == upload_jobs.INTERRUPTED}
+                if not todo or teacher is None:
+                    continue
+                cut = job.completed_at or job.created_at
+                path = _upload_path(teacher, job.original_filename)
+                if cut and datetime.utcnow() - cut > timedelta(hours=upload_jobs.RESUME_WITHIN_H):
+                    raise RuntimeError("cut too long ago")
+                if not teacher.is_active or (teacher.school is not None and not teacher.school.is_active):
+                    raise RuntimeError("account switched off")
+                if not path.exists() or (job.file_hash and hashlib.sha256(path.read_bytes()).hexdigest() != job.file_hash):
+                    raise RuntimeError("the file changed")
+                done = _complete_on_parakh(teacher, job, todo)
+                for r in job.records:
+                    if r.admission_number in done and r.error_message == upload_jobs.INTERRUPTED:
+                        r.status, r.error_message = "SUCCESS", "PARAKH shows this card complete (checked after the restart)."
+                db.commit()
+                todo -= done
+                if todo:
                     _start_job(teacher, db, _Now(), job.original_filename, path, only=todo)
                     resumed += 1
-                    from backend.services import audit
-                    audit.record(f"teacher:{teacher.id}", "resume_upload", "upload_job", job.id, None,
-                                 {"students": len(todo)})
-                    continue
-                except HTTPException as exc:          # not connected to PARAKH, another upload running ...
-                    why = str(exc.detail)
-            for r in job.records:
-                if r.status == "FAILED" and r.error_message == upload_jobs.INTERRUPTED:
-                    r.error_message = upload_jobs.INTERRUPTED_BY_HAND
-            db.commit()
-            print(f"[startup] upload {job_id[:8]} not continued ({why}); the teacher can press Retry failed.")
+                mark(db, job, upload_jobs.RESUMED)
+                from backend.services import audit
+                audit.record(f"teacher:{teacher.id}", "resume_upload", "upload_job", job.id, None,
+                             {"students": len(todo), "already_complete": len(done)})
+            except Exception as exc:                  # never leave "continues by itself" standing for ever
+                db.rollback()
+                why = exc.detail if isinstance(exc, HTTPException) else exc
+                print(f"[startup] upload {job_id[:8]} not continued ({why}); the teacher can press Retry failed.")
+                try:
+                    mark(db, db.get(UploadJob, job_id), upload_jobs.INTERRUPTED_BY_HAND)
+                except Exception:
+                    db.rollback()
     return resumed
+
+
+def _complete_on_parakh(teacher: Teacher, job: UploadJob, ids) -> set:
+    """The students whose card PARAKH already shows complete (the save may have finished just before the stop)."""
+    if job.detected_stage not in ("Foundational", "Preparatory", "Middle"):
+        return set()
+    try:
+        client = _portal(teacher)
+    except HTTPException:
+        raise
+    done = set()
+    for sid in ids:
+        try:
+            if str(client.student(job.detected_stage, sid).get("current_part") or "") == "mc":
+                done.add(sid)
+        except PortalError:
+            pass
+    return done
 
 
 @router.post("/upload/jobs/{job_id}/retry", response_model=UploadJobResponse)

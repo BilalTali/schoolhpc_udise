@@ -772,6 +772,7 @@ def test_an_upload_cut_by_a_restart_continues_by_itself(world):
             r.status, r.error_message = "PENDING", None
         db.commit()
     portal.saved.clear()
+    portal.students[("PREPARATORY", "3001")]["record"]["current_part"] = "A3"   # the save had not finished on PARAKH
     ids = upload_jobs.recover_interrupted_jobs()
     assert first in ids
     assert teachers_router.resume_interrupted(ids) == 1
@@ -783,6 +784,13 @@ def test_an_upload_cut_by_a_restart_continues_by_itself(world):
     with SessionLocal() as db:
         again = db.query(UploadJob).filter(UploadJob.teacher_id == teacher.id, UploadJob.id != first).count()
         assert again >= 1
+    for _ in range(200):                                         # the new upload finished ...
+        with SessionLocal() as db:
+            if not db.query(UploadJob).filter(UploadJob.teacher_id == teacher.id,
+                                              UploadJob.status.in_(["PENDING", "IN_PROGRESS"])).count():
+                break
+        time.sleep(0.05)
+    assert upload_jobs.recover_interrupted_jobs() == []          # ... and a later restart does not send it again
 
 
 def test_the_check_says_how_many_students_have_random_attendance_or_marks(world):
@@ -797,3 +805,46 @@ def test_the_check_says_how_many_students_have_random_attendance_or_marks(world)
         assert dummy["students"] >= 1 and dummy["marks"] >= 1
     finally:
         _clear_register(teacher)
+
+
+
+def test_a_card_parakh_already_shows_complete_is_not_sent_again_and_old_cuts_wait(world):
+    """Review M1/H4: after a restart, a card PARAKH already shows complete is marked saved, not sent again; a cut
+    older than a few hours waits for the teacher ("Retry failed")."""
+    from datetime import datetime, timedelta
+    from backend.models.entities import StudentRecord, UploadJob
+    from backend.services import upload_jobs
+    client, portal, lookups, teacher, _ = world
+    client.put(f"{API}/teacher/settings/Preparatory", json={"values": SETTINGS})
+    whole = {k: v for k, v in filled_row("PREPARATORY").items() if not k.startswith(("b_act_", "b_lvl_", "b_replace"))}
+    hpc_cards.save_draft(teacher.id, portal.ay, "Preparatory", "3001", {**whole, **grid(), **ANSWERS})
+    run_check(client)
+
+    def cut(job_id, hours_ago=0):
+        with SessionLocal() as db:
+            job = db.get(UploadJob, job_id)
+            job.status, job.active_teacher_id = "IN_PROGRESS", teacher.id
+            job.created_at = datetime.utcnow() - timedelta(hours=hours_ago)
+            for r in db.query(StudentRecord).filter_by(job_id=job_id, admission_number="3001"):
+                r.status, r.error_message = "PENDING", None
+            db.commit()
+        ids = upload_jobs.recover_interrupted_jobs()
+        if hours_ago:
+            with SessionLocal() as db:
+                db.get(UploadJob, job_id).completed_at = datetime.utcnow() - timedelta(hours=hours_ago)
+                db.commit()
+        return ids
+
+    first = client.post(f"{API}/teacher/send/Preparatory").json()["job_id"]    # 3001 saved: PARAKH shows "mc"
+    portal.saved.clear()
+    assert teachers_router.resume_interrupted(cut(first)) == 0
+    assert not portal.saved                                                      # not sent again
+    with SessionLocal() as db:
+        r = db.query(StudentRecord).filter_by(job_id=first, admission_number="3001").one()
+        assert r.status == "SUCCESS" and "complete" in r.error_message
+
+    portal.students[("PREPARATORY", "3001")]["record"]["current_part"] = "A3"
+    assert teachers_router.resume_interrupted(cut(first, hours_ago=30)) == 0     # too long ago: the teacher decides
+    with SessionLocal() as db:
+        r = db.query(StudentRecord).filter_by(job_id=first, admission_number="3001").one()
+        assert r.status == "FAILED" and r.error_message == upload_jobs.INTERRUPTED_BY_HAND

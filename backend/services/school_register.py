@@ -97,12 +97,16 @@ def _run(school_id: str, client: Portal, stages: List[str]) -> None:
             with ThreadPoolExecutor(max_workers=4) as pool:
                 records = list(pool.map(record, rows))
             counts[stage] = upsert(school_id, stage, rows, records, lookups)
-            seen_udise.update(str((r or {}).get("sch_info", {}).get("school_udise") or "").strip() for r in records)
-            names = card_parents(client, stage, rows, records)
-            if names:
-                _set(school_id, step=f"{stage}: parents' names already on {len(names)} PARAKH cards")
-                from backend.services import register_data
-                register_data.fill_from_parakh(school_id, stage, names)
+            seen_udise.update(str(((r or {}).get("sch_info") or {}).get("school_udise") or "").strip() for r in records)
+            try:                                       # an extra: it never stops the fetch
+                names = card_parents(client, stage, rows, records)
+                if names:
+                    _set(school_id, step=f"{stage}: parents' names already on {len(names)} PARAKH cards")
+                    from backend.services import register_data
+                    register_data.fill_from_parakh(school_id, stage, names)
+            except Exception as exc:
+                with _lock:
+                    JOBS[school_id]["notes"].append(f"{stage}: parents' names on the PARAKH cards were not read ({exc}).")
             with _lock:
                 JOBS[school_id]["stages"][stage] = counts[stage]
         _keep_parakh_udise(school_id, seen_udise)
@@ -146,9 +150,9 @@ def card_parents(client: Portal, stage: str, rows: List[Dict[str, Any]], records
     def a1(sid):
         try:
             data = client.student(stage, sid, "part_a1")
-        except PortalError:
+            return sid, guardian_on_card((data or {}).get("formdata") if isinstance(data, dict) else None)
+        except Exception:                                  # PARAKH refused or answered oddly: this student only
             return sid, None
-        return sid, guardian_on_card(data.get("formdata"))
     with ThreadPoolExecutor(max_workers=4) as pool:
         found = list(pool.map(a1, started))
     return {sid: v for sid, v in found if v}

@@ -11,7 +11,7 @@ _connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite"
 # a busy school (the default 5 + 10 runs out with a few uploads and a full page of teachers)
 _pool = {} if DATABASE_URL.startswith("sqlite") else {"pool_size": 20, "max_overflow": 40, "pool_timeout": 20}
 engine = create_engine(DATABASE_URL, pool_pre_ping=True, pool_recycle=3600, connect_args=_connect_args, **_pool)
-if DATABASE_URL.startswith("mysql"):
+if DATABASE_URL.startswith(("mysql", "mariadb")):
     from sqlalchemy import event
 
     @event.listens_for(engine, "connect")

@@ -678,7 +678,6 @@ def register_dummy_fill(payload: DummyFillRequest, admin: School = Depends(requi
 @router.get("/register/data")
 def register_data_status(admin: School = Depends(require_school_admin)):
     from backend.services import register_data
-    register_data.fill_from_udise_quietly(admin.id)       # UDISE+ names fetched earlier reach empty boxes too
     return {"check": register_data.latest_check(admin.id), "history": register_data.history(admin.id),
             "parents_source": register_data.parents_source(admin.id)}
 

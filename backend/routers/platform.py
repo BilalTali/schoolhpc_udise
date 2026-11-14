@@ -138,6 +138,8 @@ def school_teachers(school_id: str, admin: PlatformAdmin = Depends(require_app_a
 def approve_school(school_id: str, admin: PlatformAdmin = Depends(require_app_admin), db: Session = Depends(get_db)):
     """A school that registered itself may sign in from now on."""
     school = _school_or_404(db, school_id)
+    if school.approval not in ("PENDING", "REJECTED"):
+        raise HTTPException(status.HTTP_409_CONFLICT, "This school is already approved. Use 'Switch on' if it is switched off.")
     school.approval, school.is_active = "APPROVED", True
     db.commit()
     _record(admin, "approve_school", "school", school.id, school_id=school.id)
@@ -150,6 +152,8 @@ def reject_school(school_id: str, admin: PlatformAdmin = Depends(require_app_adm
     school = _school_or_404(db, school_id)
     school.approval, school.is_active = "REJECTED", False
     end_all_sessions(db, school)
+    for t in db.query(Teacher).filter(Teacher.school_id == school.id).all():
+        end_all_sessions(db, t)
     db.commit()
     _record(admin, "reject_school", "school", school.id, school_id=school.id)
     return {"id": school.id, "approval": school.approval, "is_active": False}

@@ -57,8 +57,17 @@ def test_a_rejected_school_cannot_sign_in_and_switching_it_on_approves_it(platfo
     assert _login(TestClient(app), "55555555502").status_code == 200
 
 
-def test_schools_from_before_approvals_stay_approved():
+def test_a_school_from_before_approvals_signs_in_and_approve_does_not_switch_on_a_switched_off_school(platform):
+    """An empty approval (every school registered before approvals began) is approved: it signs in. Approve only
+    acts on a waiting or rejected school - a school switched off on purpose stays off."""
+    app, schools = platform
     with SessionLocal() as db:
-        old = db.query(School).filter(School.approval.is_(None)).first()
-    if old is not None:                                                  # empty approval counts as approved
-        assert old.approval is None
+        s = db.get(School, schools[0]["id"])
+        s.approval = None
+        db.commit()
+    assert _login(TestClient(app), schools[0]["udise"]).status_code == 200
+    admin = _app_admin(app)
+    assert admin.put(f"{API}/platform/schools/{schools[0]['id']}", json={"is_active": False}).status_code == 200
+    assert admin.post(f"{API}/platform/schools/{schools[0]['id']}/approve").status_code == 409
+    with SessionLocal() as db:
+        assert db.get(School, schools[0]["id"]).is_active is False
