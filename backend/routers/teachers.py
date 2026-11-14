@@ -620,6 +620,52 @@ def _start_job(teacher: Teacher, db: Session, background_tasks: BackgroundTasks,
     return _job_response(job)
 
 
+def resume_interrupted(job_ids: List[str]) -> int:
+    """After a restart: each interrupted upload continues in a new upload of the same file, for the students it
+    had not saved yet (as 'Retry failed' does). When it cannot (PARAKH signed out, the file changed), those
+    students say to press 'Retry failed'. Returns how many uploads were continued."""
+    from backend.database import SessionLocal
+
+    class _Now:                                      # background_tasks for _start_job, outside a request
+        @staticmethod
+        def add_task(fn, *args):
+            threading.Thread(target=fn, args=args, daemon=True).start()
+
+    resumed = 0
+    for job_id in job_ids:
+        with SessionLocal() as db:
+            job = db.get(UploadJob, job_id)
+            teacher = db.get(Teacher, job.teacher_id) if job else None
+            if job is None or teacher is None:
+                continue
+            todo = {r.admission_number for r in job.records
+                    if r.status == "FAILED" and r.error_message == upload_jobs.INTERRUPTED}
+            if not todo:
+                continue
+            why = ""
+            path = _upload_path(teacher, job.original_filename)
+            if not teacher.is_active or (teacher.school is not None and not teacher.school.is_active):
+                why = "account switched off"
+            elif not path.exists() or (job.file_hash and hashlib.sha256(path.read_bytes()).hexdigest() != job.file_hash):
+                why = "the file changed"
+            if not why:
+                try:
+                    _start_job(teacher, db, _Now(), job.original_filename, path, only=todo)
+                    resumed += 1
+                    from backend.services import audit
+                    audit.record(f"teacher:{teacher.id}", "resume_upload", "upload_job", job.id, None,
+                                 {"students": len(todo)})
+                    continue
+                except HTTPException as exc:          # not connected to PARAKH, another upload running ...
+                    why = str(exc.detail)
+            for r in job.records:
+                if r.status == "FAILED" and r.error_message == upload_jobs.INTERRUPTED:
+                    r.error_message = upload_jobs.INTERRUPTED_BY_HAND
+            db.commit()
+            print(f"[startup] upload {job_id[:8]} not continued ({why}); the teacher can press Retry failed.")
+    return resumed
+
+
 @router.post("/upload/jobs/{job_id}/retry", response_model=UploadJobResponse)
 def retry_failed(job_id: str, background_tasks: BackgroundTasks, teacher: Teacher = Depends(require_teacher),
                  db: Session = Depends(get_db)):

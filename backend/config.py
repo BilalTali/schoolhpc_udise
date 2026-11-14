@@ -77,6 +77,7 @@ ACCESS_COOKIE_MINUTES = 15                        # cookie session: short access
 REFRESH_DAYS_DEFAULT, REFRESH_DAYS_REMEMBER = 1, 30   # ...renewed by a refresh token
 # A school that registers itself waits until the app admin approves it (it cannot sign in before). Only tests
 # switch this off.
+RESUME_DELAY_S = float(os.getenv("HPC_RESUME_DELAY_S", "5"))   # after a restart, interrupted uploads continue then
 SCHOOL_APPROVAL = os.getenv("HPC_SCHOOL_APPROVAL", "true").lower() != "false"
 COOKIE_SECURE = os.getenv("HPC_COOKIE_SECURE", "false").lower() == "true"   # set true behind HTTPS
 

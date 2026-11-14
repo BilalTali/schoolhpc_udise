@@ -561,8 +561,13 @@ def _rewarm(client: Portal, owner: str, saved_by_stage: Dict[str, List[str]]) ->
             pass
 
 
-def recover_interrupted_jobs() -> int:
-    """Jobs left IN_PROGRESS by a server restart are marked FAILED (re-upload to continue)."""
+INTERRUPTED = "The app restarted during this save; it continues by itself in a new upload."
+INTERRUPTED_BY_HAND = "The app restarted during this save. Press 'Retry failed' to continue."
+
+
+def recover_interrupted_jobs() -> List[str]:
+    """Jobs left IN_PROGRESS by a restart: ended (FAILED), their unsaved students marked so - and continued by
+    resume_interrupted (main.py) in a new upload of the same file. Returns the jobs' ids."""
     db = SessionLocal()
     try:
         stuck = db.query(UploadJob).filter(UploadJob.status.in_(["PENDING", "IN_PROGRESS"])).all()
@@ -572,8 +577,8 @@ def recover_interrupted_jobs() -> int:
             job.active_teacher_id = None
             for r in job.records:
                 if r.status in ("PENDING", "IN_PROGRESS", "VALIDATED"):
-                    r.status, r.error_message = "FAILED", "Server restarted during upload. Upload the file again."
+                    r.status, r.error_message = "FAILED", INTERRUPTED
         db.commit()
-        return len(stuck)
+        return [j.id for j in stuck]
     finally:
         db.close()

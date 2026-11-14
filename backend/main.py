@@ -41,9 +41,17 @@ async def lifespan(app):
     # routes are plain functions run in worker threads, and an upload's sync runs in one for all its minutes: the
     # default 40 threads would let a few long uploads and PARAKH's slow answers hold up every other request
     anyio.to_thread.current_default_thread_limiter().total_tokens = config.WORKER_THREADS
-    count = recover_interrupted_jobs()
-    if count:
-        print(f"[startup] {count} upload(s) were interrupted by a restart and marked FAILED.")
+    interrupted = recover_interrupted_jobs()
+    if interrupted:
+        print(f"[startup] {len(interrupted)} upload(s) were interrupted by a restart: continuing them shortly.")
+
+        def _resume():
+            import time as _time
+            _time.sleep(config.RESUME_DELAY_S)        # the app is up and serving first
+            from backend.routers.teachers import resume_interrupted
+            print(f"[startup] continued {resume_interrupted(interrupted)} interrupted upload(s).")
+        import threading as _threading
+        _threading.Thread(target=_resume, daemon=True).start()
     if recover_interrupted_syncs():
         print("[startup] An activity sync was interrupted by a restart and marked FAILED.")
     from backend.services import audit, hpc_sessions

@@ -751,3 +751,35 @@ def test_a_restart_keeps_the_check_and_save_or_download_checks_again_by_itself(w
     sent = client.post(f"{API}/teacher/send/Preparatory")
     assert sent.status_code == 200, sent.text
     assert "3001" in {sid for _, sid, _ in portal.saved}
+
+
+def test_an_upload_cut_by_a_restart_continues_by_itself(world):
+    """A restart in the middle of a save: the unsaved students go on in a new upload of the same file, without the
+    teacher pressing anything (it used to end FAILED - "upload the file again")."""
+    from backend.models.entities import StudentRecord, UploadJob
+    from backend.services import upload_jobs
+    client, portal, lookups, teacher, _ = world
+    client.put(f"{API}/teacher/settings/Preparatory", json={"values": SETTINGS})
+    whole = {k: v for k, v in filled_row("PREPARATORY").items() if not k.startswith(("b_act_", "b_lvl_", "b_replace"))}
+    hpc_cards.save_draft(teacher.id, portal.ay, "Preparatory", "3001", {**whole, **grid(), **ANSWERS})
+    run_check(client)
+    first = client.post(f"{API}/teacher/send/Preparatory").json()["job_id"]
+    with SessionLocal() as db:                                  # as if the app stopped before 3001 was saved
+        job = db.get(UploadJob, first)
+        job.status = "IN_PROGRESS"
+        job.active_teacher_id = teacher.id
+        for r in db.query(StudentRecord).filter_by(job_id=first, admission_number="3001"):
+            r.status, r.error_message = "PENDING", None
+        db.commit()
+    portal.saved.clear()
+    ids = upload_jobs.recover_interrupted_jobs()
+    assert first in ids
+    assert teachers_router.resume_interrupted(ids) == 1
+    for _ in range(200):
+        if any(sid == "3001" for _, sid, _ in portal.saved):
+            break
+        time.sleep(0.05)
+    assert any(sid == "3001" for _, sid, _ in portal.saved)
+    with SessionLocal() as db:
+        again = db.query(UploadJob).filter(UploadJob.teacher_id == teacher.id, UploadJob.id != first).count()
+        assert again >= 1
