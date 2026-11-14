@@ -44,14 +44,17 @@ def _record(admin: PlatformAdmin, action: str, entity: str, entity_id: str, afte
 @router.get("/stats")
 def stats(admin: PlatformAdmin = Depends(require_app_admin), db: Session = Depends(get_db)):
     """Totals across every school."""
-    by_status = dict(db.query(StudentRecord.status, func.count()).group_by(StudentRecord.status).all())
+    from sqlalchemy import true
+    outcome = _students_by_outcome(db, true())
+    saved = sum(len(s) for s, _ in outcome.values())
+    failed = sum(len(f) for _, f in outcome.values())
     return {
         "schools": db.query(School).count(),
         "schools_pending": db.query(School).filter(School.approval == "PENDING").count(),
         "schools_active": db.query(School).filter(School.is_active == True).count(),  # noqa: E712
         "teachers": db.query(Teacher).count(), "teachers_active": db.query(Teacher).filter(Teacher.is_active == True).count(),  # noqa: E712
         "uploads": db.query(UploadJob).count(),
-        "cards_saved": by_status.get("SUCCESS", 0), "cards_failed": by_status.get("FAILED", 0) + by_status.get("INVALID", 0),
+        "cards_saved": saved, "cards_failed": failed,
         "last_upload_at": _iso(db.query(func.max(UploadJob.created_at)).scalar()),
         "activities_waiting": db.query(LibraryActivity).filter(LibraryActivity.share_state == "community").count(),
         "activities_offered": db.query(LibraryActivity).filter(LibraryActivity.share_state == "community_ok").count(),
@@ -80,18 +83,25 @@ def _saved_counts(db: Session, teacher_ids):
     """teacher id -> (cards saved to PARAKH, cards not saved, last upload)."""
     if not teacher_ids:
         return {}
-    rows = (db.query(UploadJob.teacher_id, StudentRecord.status, func.count())
-            .join(StudentRecord, StudentRecord.job_id == UploadJob.id)
-            .filter(UploadJob.teacher_id.in_(teacher_ids)).group_by(UploadJob.teacher_id, StudentRecord.status).all())
     last = dict(db.query(UploadJob.teacher_id, func.max(UploadJob.created_at))
                 .filter(UploadJob.teacher_id.in_(teacher_ids)).group_by(UploadJob.teacher_id).all())
     out = {t: [0, 0, last.get(t)] for t in teacher_ids}
-    for t, st, n in rows:
-        if st == "SUCCESS":
-            out[t][0] += n
-        elif st in ("FAILED", "INVALID"):
-            out[t][1] += n
+    for t, (saved, failed) in _students_by_outcome(db, UploadJob.teacher_id.in_(teacher_ids)).items():
+        out[t][0], out[t][1] = len(saved), len(failed)
     return out
+
+
+def _students_by_outcome(db: Session, where) -> dict:
+    """teacher id -> (students saved, students never saved after a failure): each student once, however many
+    attempts (a retry used to count twice)."""
+    rows = (db.query(UploadJob.teacher_id, StudentRecord.admission_number, StudentRecord.status)
+            .join(StudentRecord, StudentRecord.job_id == UploadJob.id).filter(where)
+            .filter(StudentRecord.status.in_(["SUCCESS", "FAILED", "INVALID"])).distinct().all())
+    out: dict = {}
+    for t, sid, st in rows:
+        saved, failed = out.setdefault(t, (set(), set()))
+        (saved if st == "SUCCESS" else failed).add(sid)
+    return {t: (saved, failed - saved) for t, (saved, failed) in out.items()}
 
 
 @router.get("/schools")

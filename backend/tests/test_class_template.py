@@ -783,3 +783,17 @@ def test_an_upload_cut_by_a_restart_continues_by_itself(world):
     with SessionLocal() as db:
         again = db.query(UploadJob).filter(UploadJob.teacher_id == teacher.id, UploadJob.id != first).count()
         assert again >= 1
+
+
+def test_the_check_says_how_many_students_have_random_attendance_or_marks(world):
+    """Dummy (random) attendance or marks in the School Register are counted for the teacher's class, so nobody
+    saves made-up numbers to PARAKH without knowing."""
+    client, portal, lookups, teacher, _ = world
+    _register(teacher)
+    from backend.services import register_data
+    register_data.dummy_fill(teacher.school_id, (80, 90), (20, 40), "Preparatory", apply=True, by="test")
+    try:
+        dummy = client.get(f"{API}/teacher/template/Preparatory/check").json()["dummy"]
+        assert dummy["students"] >= 1 and dummy["marks"] >= 1
+    finally:
+        _clear_register(teacher)

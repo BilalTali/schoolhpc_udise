@@ -96,11 +96,35 @@ def check_status(stage: str, teacher: Teacher = Depends(require_teacher)):
     stage = _stage(teacher, stage)
     settings = class_settings.view(stage, class_settings.load(teacher.id, stage), teacher.school_id)
     path = _roster_file(teacher, stage)
-    students = len(open_students(path))
+    open_ = open_students(path)
     job = class_template.latest(teacher.id, stage)
     return {"job": class_template.job_view(job),
-            "settings_complete": settings["complete"], "settings_missing": settings["missing"], "students": students,
-            "register_changed": _register_changed_since(teacher, job)}
+            "settings_complete": settings["complete"], "settings_missing": settings["missing"], "students": len(open_),
+            "register_changed": _register_changed_since(teacher, job),
+            "dummy": _dummy_counts(teacher, stage, [s["student_id"] for s in open_])}
+
+
+def _dummy_counts(teacher: Teacher, stage: str, ids) -> Dict[str, int]:
+    """How many of these students have RANDOM (dummy) attendance or marks in the School Register - shown before a
+    save, so nobody sends made-up numbers to PARAKH without knowing."""
+    from backend.database import SessionLocal
+    from backend.models.register import RegisterStudent, RegisterStudentData
+    out = {"students": 0, "attendance": 0, "marks": 0}
+    ids = [str(i) for i in ids]
+    if not ids or not teacher.school_id:
+        return out
+    with SessionLocal() as db:
+        rows = (db.query(RegisterStudentData.sources).join(RegisterStudent, RegisterStudent.id == RegisterStudentData.student_id)
+                .filter(RegisterStudent.school_id == teacher.school_id, RegisterStudent.stage == stage.capitalize(),
+                        RegisterStudent.parakh_student_id.in_(ids)).all())
+    for (sources,) in rows:
+        src = sources or {}
+        att = str(src.get("present") or "").startswith("dummy:")
+        mk = str(src.get("marks") or "").startswith("dummy:")
+        out["attendance"] += att
+        out["marks"] += mk
+        out["students"] += att or mk
+    return out
 
 
 def _register_changed_since(teacher: Teacher, job) -> bool:

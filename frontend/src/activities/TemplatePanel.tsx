@@ -33,7 +33,8 @@ interface CheckJob {
   blocking?: { problem: string; students: number }[];  // what keeps Part-B-complete students from being saved
   students: CheckStudent[];
 }
-interface CheckStatus { job: CheckJob | null; settings_complete: boolean; settings_missing: string[]; register_changed?: boolean }
+interface CheckStatus { job: CheckJob | null; settings_complete: boolean; settings_missing: string[]; register_changed?: boolean;
+                       dummy?: { students: number; attendance: number; marks: number } }
 
 const POLL_MS = 1500;
 const time = (iso: string | null) => (iso ? new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "");
@@ -164,6 +165,7 @@ export function TemplatePanel({ api, stage, total, onFix, onOpenSettings }: {
   // students), levels, every class-wide question and Part C (notes from its levels). Facts and anything already
   // entered are kept. Preview first, then apply, then the class is checked.
   const [mixMsg, setMixMsg] = useState<string | null>(null);
+  const [eye, setEye] = useState<{ label: string; reason: string }[]>([]);   // what Global Mix left for the teacher
   // While Global Mix works, a panel covers the page and says which step it is on, until the class check ends.
   const [mixPhase, setMixPhase] = useState<null | "reading" | "mixing" | "checking">(null);
   const [mixPlan, setMixPlan] = useState("");
@@ -177,6 +179,7 @@ export function TemplatePanel({ api, stage, total, onFix, onOpenSettings }: {
   const globalMix = async () => {
     setError(null);
     setMixMsg(null);
+    setEye([]);
     setBusy(true);
     setMixStart(Date.now());
     setMixClock(Date.now());
@@ -205,6 +208,7 @@ export function TemplatePanel({ api, stage, total, onFix, onOpenSettings }: {
       setMixPhase("mixing");
       const done = await call<Mix>(api, "POST", `/teacher/activities-grid/${stage}/global-mix`, { apply: true, seed: preview.seed });
       setMixMsg(`Filled ${done.grid.cells} activity/level cells and ${done.answers.cells} answers. The class is checked - then "Save ready students to PARAKH".`);
+      setEye(done.answers.skipped.filter((s) => s.reason.startsWith("left blank")));
       setMixPhase("checking");                           // the panel stays until the check has finished
       setPre(null);
       await call(api, "POST", `/teacher/template/${stage}/check`);
@@ -309,6 +313,15 @@ export function TemplatePanel({ api, stage, total, onFix, onOpenSettings }: {
             <div>The school changed the School Register (attendance, parents or marks) after this check, so the numbers
               below are out of date. Press <b>Check the class again</b>.</div>
           </div>)}
+        {job?.status === "COMPLETED" && !!status?.dummy?.students && (
+          <div className="alert-box alert-warning lib-inline-alert tp-dummy" role="status">
+            <AlertCircle size={18} aria-hidden="true" />
+            <div><b>Random numbers in this class:</b> {status.dummy.students} student{status.dummy.students === 1 ? " has" : "s have"}{" "}
+              {[status.dummy.attendance ? `attendance (${status.dummy.attendance})` : "", status.dummy.marks ? `marks (${status.dummy.marks})` : ""]
+                .filter(Boolean).join(" and ")} filled at random ("Dummy attendance &amp; marks" or "Fix what is missing"), not
+              from real records. They go to PARAKH as they are when you save - replace them in the School Register first if
+              real figures exist.</div>
+          </div>)}
         {job?.status === "COMPLETED" && (<>
           <p className="tp-summary"><CheckCircle2 size={16} color="#046A38" aria-hidden="true" /> Ready as of {time(job.finished_at)}: <b>{job.ready} of {job.total}</b> students have Part B complete.{" "}
             <b>{job.complete ?? 0}</b> can be saved to PARAKH now.</p>
@@ -363,6 +376,13 @@ export function TemplatePanel({ api, stage, total, onFix, onOpenSettings }: {
           <AlertCircle size={16} aria-hidden="true" /> <span><b>Why "Save" cannot be pressed:</b> {saveWhy}</span>
         </p>)}
       {mixMsg && <p className="tp-summary" role="status"><CheckCircle2 size={16} color="#046A38" aria-hidden="true" /> {mixMsg}</p>}
+      {eye.length > 0 && (
+        <div className="alert-box alert-warning lib-inline-alert" role="status">
+          <AlertCircle size={18} aria-hidden="true" />
+          <div><b>Needs your eye</b> - Global Mix left these for you (it never guesses a fact):
+            <ul className="tp-blocking">{eye.map((e) => <li key={e.label + e.reason}><b>{e.label}</b>: {e.reason}</li>)}</ul>
+          </div>
+        </div>)}
       {sent && <p className="tp-summary" role="status"><CheckCircle2 size={16} color="#046A38" aria-hidden="true" /> {sent}</p>}
 
       {picking && job?.status === "COMPLETED" && (
